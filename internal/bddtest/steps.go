@@ -15,12 +15,15 @@ import (
 // InitializeScenario registers every step definition against a fresh World.
 func InitializeScenario(t *testing.T, sc *godog.ScenarioContext) {
 	var w *World
+	ps := &parseState{}
 
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
+		*ps = parseState{}
 		var err error
 		w, err = newWorld(t)
 		return ctx, err
 	})
+	initParsingSteps(sc, func() *World { return w }, ps)
 	sc.After(func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
 		if w != nil {
 			w.cleanup()

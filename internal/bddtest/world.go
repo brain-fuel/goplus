@@ -25,6 +25,10 @@ type World struct {
 	Stderr   bytes.Buffer
 	ExitCode int
 
+	// LastGppFile is the most recently written G++ fixture file, the
+	// implicit subject of frontend steps like "I parse it".
+	LastGppFile string
+
 	origWD string
 }
 
