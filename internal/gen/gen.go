@@ -19,6 +19,7 @@ import (
 	"goforge.dev/gpp/internal/lower"
 	"goforge.dev/gpp/internal/naming"
 	"goforge.dev/gpp/internal/registry"
+	"goforge.dev/gpp/internal/resolve"
 	"goforge.dev/gpp/internal/syntax"
 )
 
@@ -50,53 +51,88 @@ func Run(opts Options) (*Result, error) {
 	}
 	pkgPathRoot, moduleRoot := modulePath(opts.Dir)
 
-	var touched []string // written or deleted, for -stage
+	// Pass 1: parse and lower declarations per package.
+	outputs := map[string][]byte{}
+	methodsByDir := map[string][]*registry.Method{}
+	anyMethods := false
+	var orphans []string
 	for _, dir := range dirs {
 		idx, diags := loadDir(dir)
 		res.Diags = append(res.Diags, diags...)
 		if idx != nil && len(diags) == 0 {
-			outputs, pdiags := processPackage(idx, pkgPath(pkgPathRoot, moduleRoot, dir))
+			outs, methods, pdiags := processPackage(idx, pkgPath(pkgPathRoot, moduleRoot, dir))
 			res.Diags = append(res.Diags, pdiags...)
-			if len(pdiags) == 0 {
-				paths := sortedKeys(outputs)
-				for _, path := range paths {
-					rel := relTo(opts.Dir, path)
-					if refusal := emit.CheckOverwrite(path); refusal != nil {
-						res.Diags = append(res.Diags, diag.Errorf("%s: %s", rel, refusal.Reason))
-						continue
-					}
-					if opts.Check {
-						existing, err := os.ReadFile(path)
-						if err != nil || string(existing) != string(outputs[path]) {
-							res.Stale = append(res.Stale, rel)
-						}
-						continue
-					}
-					wrote, err := emit.WriteIfChanged(path, outputs[path])
-					if err != nil {
-						return nil, err
-					}
-					if wrote {
-						res.Written = append(res.Written, rel)
-						touched = append(touched, path)
-					}
-				}
+			for path, content := range outs {
+				outputs[path] = content
+			}
+			methodsByDir[dir] = methods
+			if len(methods) > 0 {
+				anyMethods = true
 			}
 		}
-		// Orphaned outputs: generated files whose source is gone.
-		for _, orphan := range findOrphans(dir) {
-			rel := relTo(opts.Dir, orphan)
-			res.Orphans = append(res.Orphans, rel)
-			if opts.Check {
+		orphans = append(orphans, findOrphans(dir)...)
+	}
+	if len(res.Diags) > 0 {
+		res.Diags = diag.Sort(res.Diags)
+		return res, nil
+	}
+
+	// Pass 2: resolve method-syntax uses against type information. This
+	// needs a module context; without go.mod, generation stays syntactic.
+	if moduleRoot != "" && len(outputs) > 0 && anyMethods {
+		out, err := resolve.Fixpoint(&resolve.Input{
+			Dir:          opts.Dir,
+			Patterns:     loadPatterns(opts.Patterns),
+			Texts:        outputs,
+			MethodsByDir: methodsByDir,
+		})
+		if err != nil {
+			return nil, err
+		}
+		res.Diags = append(res.Diags, out.Diags...)
+		if len(res.Diags) > 0 {
+			res.Diags = diag.Sort(res.Diags)
+			return res, nil
+		}
+		outputs = out.Texts
+	}
+
+	// Pass 3: write, check, or stage.
+	var touched []string
+	for _, path := range sortedKeys(outputs) {
+		rel := relTo(opts.Dir, path)
+		if refusal := emit.CheckOverwrite(path); refusal != nil {
+			res.Diags = append(res.Diags, diag.Errorf("%s: %s", rel, refusal.Reason))
+			continue
+		}
+		if opts.Check {
+			existing, err := os.ReadFile(path)
+			if err != nil || string(existing) != string(outputs[path]) {
 				res.Stale = append(res.Stale, rel)
-				continue
 			}
-			if err := os.Remove(orphan); err != nil {
-				return nil, err
-			}
-			res.Written = append(res.Written, rel)
-			touched = append(touched, orphan)
+			continue
 		}
+		wrote, err := emit.WriteIfChanged(path, outputs[path])
+		if err != nil {
+			return nil, err
+		}
+		if wrote {
+			res.Written = append(res.Written, rel)
+			touched = append(touched, path)
+		}
+	}
+	for _, orphan := range orphans {
+		rel := relTo(opts.Dir, orphan)
+		res.Orphans = append(res.Orphans, rel)
+		if opts.Check {
+			res.Stale = append(res.Stale, rel)
+			continue
+		}
+		if err := os.Remove(orphan); err != nil {
+			return nil, err
+		}
+		res.Written = append(res.Written, rel)
+		touched = append(touched, orphan)
 	}
 
 	res.Diags = diag.Sort(res.Diags)
@@ -107,6 +143,23 @@ func Run(opts Options) (*Result, error) {
 		}
 	}
 	return res, nil
+}
+
+// loadPatterns normalizes CLI patterns for go/packages (relative directory
+// patterns need an explicit "./" prefix).
+func loadPatterns(patterns []string) []string {
+	if len(patterns) == 0 {
+		return []string{"./..."}
+	}
+	out := make([]string, len(patterns))
+	for i, p := range patterns {
+		p = filepath.ToSlash(p)
+		if p != "." && !strings.HasPrefix(p, "./") && !strings.HasPrefix(p, "/") {
+			p = "./" + p
+		}
+		out[i] = p
+	}
+	return out
 }
 
 // loadDir parses a directory's .gpp and authored .go files. Returns nil
@@ -170,8 +223,9 @@ func loadDir(dir string) (*pkgIndex, []diag.Diagnostic) {
 	return idx, diags
 }
 
-// processPackage lowers every .gpp file of one package to output bytes.
-func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []diag.Diagnostic) {
+// processPackage lowers every .gpp file of one package to output bytes,
+// also returning the package's generic methods for the resolution registry.
+func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*registry.Method, []diag.Diagnostic) {
 	var diags []diag.Diagnostic
 
 	tbl := naming.NewTable()
@@ -181,6 +235,7 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []diag.Di
 		}
 	}
 	methodNames := map[*syntax.GenericMethod]string{}
+	var allMethods []*registry.Method
 	for _, f := range idx.files {
 		if f.gpp == nil {
 			continue
@@ -189,6 +244,7 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []diag.Di
 		for _, err := range errs {
 			diags = append(diags, diag.Errorf("%s", err))
 		}
+		allMethods = append(allMethods, methods...)
 		// MethodsFromFile returns methods in file order, skipping errored
 		// ones; align by (type, method) name.
 		for _, m := range methods {
@@ -200,7 +256,7 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []diag.Di
 		}
 	}
 	if len(diags) > 0 {
-		return nil, diags
+		return nil, nil, diags
 	}
 
 	outputs := map[string][]byte{}
@@ -235,9 +291,9 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []diag.Di
 		outputs[emit.OutputPath(f.path)] = out
 	}
 	if len(diags) > 0 {
-		return nil, diags
+		return nil, nil, diags
 	}
-	return outputs, nil
+	return outputs, allMethods, nil
 }
 
 // markerFor renders the //gpp:method marker comment for a lowered method.
