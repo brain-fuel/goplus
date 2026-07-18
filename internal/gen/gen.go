@@ -20,6 +20,7 @@ import (
 	"goforge.dev/gpp/internal/naming"
 	"goforge.dev/gpp/internal/registry"
 	"goforge.dev/gpp/internal/resolve"
+	"goforge.dev/gpp/internal/sourcemap"
 	"goforge.dev/gpp/internal/syntax"
 )
 
@@ -54,6 +55,8 @@ func Run(opts Options) (*Result, error) {
 	// Pass 1: parse and lower declarations per package.
 	outputs := map[string][]byte{}
 	methodsByDir := map[string][]*registry.Method{}
+	gppSources := map[string][]byte{} // output abs path -> .gpp source bytes
+	gppPaths := map[string]string{}   // output abs path -> .gpp path (relative)
 	var orphans []string
 	for _, dir := range dirs {
 		idx, diags := loadDir(dir)
@@ -65,6 +68,13 @@ func Run(opts Options) (*Result, error) {
 				outputs[path] = content
 			}
 			methodsByDir[dir] = methods
+			for _, f := range idx.files {
+				if f.gpp != nil {
+					out := emit.OutputPath(f.path)
+					gppSources[out] = f.src
+					gppPaths[out] = relTo(opts.Dir, f.path)
+				}
+			}
 		}
 		orphans = append(orphans, findOrphans(dir)...)
 	}
@@ -78,12 +88,13 @@ func Run(opts Options) (*Result, error) {
 	// This needs a module context; without go.mod, generation stays
 	// syntactic.
 	if moduleRoot != "" && len(outputs) > 0 {
-		out, err := resolve.Fixpoint(&resolve.Input{
+		in := &resolve.Input{
 			Dir:          opts.Dir,
 			Patterns:     loadPatterns(opts.Patterns),
 			Texts:        outputs,
 			MethodsByDir: methodsByDir,
-		})
+		}
+		out, err := resolve.Fixpoint(in)
 		if err != nil {
 			return nil, err
 		}
@@ -93,6 +104,23 @@ func Run(opts Options) (*Result, error) {
 			return res, nil
 		}
 		outputs = out.Texts
+
+		// Strict backstop: go/types must accept the final result; its
+		// errors map back to .gpp positions before anything is written.
+		maps := map[string]*sourcemap.Map{}
+		for path, text := range outputs {
+			maps[path] = sourcemap.Build(gppPaths[path], gppSources[path], text)
+		}
+		in.Texts = outputs
+		bdiags, err := resolve.Backstop(in, maps)
+		if err != nil {
+			return nil, err
+		}
+		res.Diags = append(res.Diags, bdiags...)
+		if len(res.Diags) > 0 {
+			res.Diags = diag.Sort(res.Diags)
+			return res, nil
+		}
 	}
 
 	// Pass 3: write, check, or stage.
