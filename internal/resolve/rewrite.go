@@ -75,6 +75,8 @@ func (r *fileResolver) resolve() ([]lower.Edit, []diag.Diagnostic) {
 			r.dotCandidate(x)
 			r.composeCandidate(x)
 			r.partialCandidate(x)
+		case *ast.AssignStmt:
+			r.exprformCandidate(x)
 		case *ast.TypeSwitchStmt:
 			r.matchCandidate(x)
 		}

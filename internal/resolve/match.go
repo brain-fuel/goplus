@@ -356,6 +356,29 @@ func (r *fileResolver) refinementWraps(a *armAnalysis, resultIdents []string) ([
 			switch st := x.(type) {
 			case *ast.FuncLit:
 				return false
+			case *ast.AssignStmt:
+				// Expression-form arm assignment whose temp is (or will
+				// be) typed by a refined type parameter.
+				if st.Tok != token.ASSIGN || len(st.Lhs) != 1 || len(st.Rhs) != 1 {
+					return true
+				}
+				id, isID := st.Lhs[0].(*ast.Ident)
+				if !isID || !valTempName.MatchString(id.Name) {
+					return true
+				}
+				tp, isTP := r.tempTargetType(id.Name).(*types.TypeParam)
+				if !isTP {
+					return true
+				}
+				if _, refined := a.refined[tp.Obj().Name()]; !refined {
+					return true
+				}
+				rhs := st.Rhs[0]
+				edits = append(edits, lower.Edit{
+					Start: r.off(rhs.Pos()),
+					End:   r.off(rhs.End()),
+					New:   fmt.Sprintf("any(%s).(%s)", r.text(rhs.Pos(), rhs.End()), tp.Obj().Name()),
+				})
 			case *ast.ReturnStmt:
 				if len(st.Results) == 0 {
 					for _, ri := range resultIdents {

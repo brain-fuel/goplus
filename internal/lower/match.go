@@ -3,7 +3,6 @@ package lower
 import (
 	"fmt"
 
-	"goforge.dev/gpp/internal/diag"
 	"goforge.dev/gpp/internal/syntax"
 )
 
@@ -27,12 +26,8 @@ const PatternCarrier = "//gpp:pattern "
 // makes a direct type switch on Expr[T] an "impossible case" compile error
 // inside generic code, and the sealed default-panic arm keeps the erasure
 // safe regardless.
-func MatchSkeleton(f *syntax.File, m *syntax.MatchStmt, index int) ([]Edit, []diag.Diagnostic) {
+func skeletonEdits(f *syntax.File, m *syntax.MatchStmt, index int, subj string) []Edit {
 	var edits []Edit
-	subj, sdiags := ExprText(f, m.Subject) // subjects may contain pipelines
-	if len(sdiags) > 0 {
-		return nil, sdiags
-	}
 	edits = append(edits, Edit{
 		Start: f.Offset(m.Match),
 		End:   f.Offset(m.Lbrace) + 1,
@@ -50,5 +45,5 @@ func MatchSkeleton(f *syntax.File, m *syntax.MatchStmt, index int) ([]Edit, []di
 			New:   "case nil:\n" + PatternCarrier + pattern,
 		})
 	}
-	return edits, nil
+	return edits
 }

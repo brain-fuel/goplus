@@ -69,6 +69,16 @@ func InitializeScenario(t *testing.T, sc *godog.ScenarioContext) {
 		}
 		return nil
 	})
+	sc.Step(`^(stdout|stderr) contains:$`, func(stream string, doc *godog.DocString) error {
+		got := w.Stdout.String()
+		if stream == "stderr" {
+			got = w.Stderr.String()
+		}
+		if !strings.Contains(got, doc.Content) {
+			return fmt.Errorf("%s does not contain:\n%s\ngot:\n%s", stream, doc.Content, got)
+		}
+		return nil
+	})
 	sc.Step(`^a file "([^"]+)":$`, func(name string, doc *godog.DocString) error {
 		return w.writeFile(name, doc.Content)
 	})

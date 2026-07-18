@@ -297,10 +297,6 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*regist
 			diags = append(diags, diag.At(idx.fset.Position(f.gpp.Tries[0].QPos),
 				"? lowering is not implemented yet"))
 		}
-		if n := len(f.gpp.IfExprs) + len(f.gpp.SwitchExprs) + len(f.gpp.MatchExprs); n > 0 {
-			diags = append(diags, diag.At(idx.fset.Position(f.gpp.AST.Pos()),
-				"expression if/switch/match lowering is not implemented yet"))
-		}
 		for _, c := range f.gpp.Composes {
 			for _, k := range c.Ops {
 				if k == syntax.ComposeKleisli {
@@ -385,14 +381,9 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*regist
 				edits = append(edits, lower.EnumEdits(f.gpp, e, spec)...)
 			}
 		}
-		for mi, m := range f.gpp.Matches {
-			medits, mdiags := lower.MatchSkeleton(f.gpp, m, mi)
-			diags = append(diags, mdiags...)
-			edits = append(edits, medits...)
-		}
-		fedits, fdiags := lower.FlowEdits(f.gpp)
-		diags = append(diags, fdiags...)
-		edits = append(edits, fedits...)
+		hedits, hdiags := lower.NewHoister(f.gpp, len(f.gpp.Matches)).FileEdits()
+		diags = append(diags, hdiags...)
+		edits = append(edits, hedits...)
 		for _, gm := range append(append([]*syntax.GenericMethod{}, f.gpp.Methods...), enumMethods[f]...) {
 			funcName := methodNames[gm]
 			tparams, err := receiverTParams(idx, gm)
