@@ -7,6 +7,55 @@ Generated packages compile with the standard Go toolchain and may be
 distributed and consumed **without** G++ — the same interoperability story
 Kotlin, Scala, and Clojure have with Java.
 
+## v0.4.0 — Typed Failure
+
+Railway-Oriented error handling in the Wlaschin style: a shipped
+`Result[T, E]` library, track-aware pipelines, Kleisli composition,
+postfix `?` propagation, and expression-oriented control flow.
+
+```go
+import "goforge.dev/gpp/std/result"
+
+// Track-aware |>: once a Result flows, stages lift by shape —
+// T→Result binds, T→(U, error) adapts, T→U maps, T→() tees (Ok only),
+// dot segments see the raw Result. Err bypasses everything.
+n := s |> validate |> strings.TrimSpace |> strconv.Atoi |> audit |> .UnwrapOr(0)
+
+// Kleisli >=>: compose fallible steps; plain steps lift, the rail
+// opens at the first step that can fail, Err short-circuits.
+pipeline := strings.TrimSpace >=> validate >=> strconv.Atoi >=> save
+// (value, error) functions adapt automatically: strconv.Atoi >=> double
+
+// Postfix ?: propagate failure to the enclosing function.
+data := os.ReadFile(path)?          // (…, error) enclosing: zero-value early return
+n := parse(s)?                      // Result enclosing: returns Err, typed errors preserved
+
+// Expression-oriented if / switch / match — arms are single expressions.
+y := if x > 2 { "big" } else { "small" }
+grade := switch score {
+case 10:
+	"A"
+default:
+	"B"
+}
+area := match shape {
+case Circle(r):
+	3.14 * r * r
+case Rect(w, h):
+	w * h
+}
+```
+
+`goforge.dev/gpp/std` is a nested module with **zero dependencies**,
+written in G++ and shipped as generated Go (`go get goforge.dev/gpp/std`).
+`Result[T any, E error]` carries typed failures; `Of` enters the railway
+from a Go-shaped `(value, error)` pair, `Unpack` leaves it. `?` works with
+Result values, `(…, error)` calls, and bare errors, in both Go-shaped and
+Result-shaped functions. Expression forms hoist to statements before their
+anchor — hoisted sites evaluate before the rest of their statement, in
+source order — and a match expression gets the full v0.2.0 machinery:
+exhaustiveness, GADT refinement, nested patterns.
+
 ## v0.3.0 — Functional Flow
 
 Pipelines, composition, partial application, and placeholders — all
@@ -140,6 +189,12 @@ gpp version
 go install goforge.dev/gpp/cmd/gpp@latest
 ```
 
+The standard library is a separate, dependency-free module:
+
+```
+go get goforge.dev/gpp/std@latest
+```
+
 ## Keeping generated code fresh
 
 Use the [pre-commit](https://pre-commit.com) framework:
@@ -173,15 +228,20 @@ The spec is executable: the Godog/Cucumber feature suite under
   Go's rule for uninstantiated generic function values.
 - Match subjects may not start with `(`, `[`, `{`, or `<-` (those spellings
   stay valid Go); bind such subjects to a variable first. Literal patterns
-  and guards arrive with v0.4.0.
+  and guards arrive in a later milestone.
 - v0.2.0 GADT result-type arguments are the enum's own type parameter or a
   ground named type per position; refinement applies to `T`-typed returns
   (use `any(x).(T)` manually elsewhere).
 - `|>` and `>>>` are the lowest-precedence operators; `xs |> len > 0`
   parses as `xs |> (len > 0)` and gets a parenthesize hint. Placeholders
   cannot stand for variadic parameters, and `_.Method` receivers wait for
-  a later milestone. Fallible (multi-result) piping beyond Go's exact
-  spread rule arrives with v0.4.0 Typed Failure.
+  a later milestone.
+- `?` and expression if/switch/match lower by hoisting statements, so they
+  cannot appear where an early return or eager evaluation would change
+  semantics: for conditions/post statements, else-if conditions, the right
+  side of `&&`/`||`, case values, select communications, assignment
+  left-hand sides, whole deferred/go calls, or package level (each is a
+  guided error).
 
 ## Roadmap
 
@@ -190,7 +250,7 @@ The spec is executable: the Godog/Cucumber feature suite under
 | v0.1.0  | Generic methods — shipped |
 | v0.2.0  | Algebraic data types, exhaustive matching — shipped |
 | v0.3.0  | Pipelines, composition, partial application — shipped |
-| v0.4.0  | Typed failure: Result/error propagation, expression-oriented control flow, literal patterns and guards |
+| v0.4.0  | Typed failure: std/result, railway pipes, Kleisli `>=>`, postfix `?`, expression-oriented control flow — shipped |
 | v0.5.0  | Derived APIs: derivation, delegation, folds/visitors |
 
 ## License

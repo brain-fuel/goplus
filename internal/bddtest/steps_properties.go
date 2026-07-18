@@ -148,7 +148,10 @@ func initPropertySteps(sc *godog.ScenarioContext, w func() *World) {
 			if rerr != nil {
 				return rerr
 			}
-			for _, leftover := range []string{"__gpp_bare_", "__gpp_comp(", "//gpp:pattern", "case nil:"} {
+			for _, leftover := range []string{
+				"__gpp_bare_", "__gpp_comp(", "//gpp:pattern", "case nil:",
+				"__gpp_seg", "__gpp_dot(", "__gpp_kcomp_", "__gpp_try", "__gpp_val",
+			} {
 				if strings.Contains(string(out), leftover) {
 					return fmt.Errorf("sample %d: emitted file contains %q", sample, leftover)
 				}
