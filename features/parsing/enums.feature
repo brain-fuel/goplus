@@ -1,0 +1,136 @@
+Feature: Parsing enum declarations
+  G++ v0.2.0 adds sum types via a contextual `enum` keyword after a type
+  name (spec/grammar-v0.2.0.ebnf). Variants carry constructor parameters,
+  an optional GADT result type, and optional //gpp:name overrides.
+
+  Scenario: A plain enum with parameterized and bare variants
+    Given a G++ file "shape.gpp":
+      """
+      package shape
+
+      type Shape enum {
+      	// Circle is round.
+      	Circle(r float64)
+      	Rect(w, h float64)
+      	Point
+      }
+      """
+    When I parse it
+    Then parsing succeeds with 1 enum
+    And enum 1 is "Shape: Circle(r float64) | Rect(w, h float64) | Point"
+
+  Scenario: A generic enum
+    Given a G++ file "option.gpp":
+      """
+      package option
+
+      type Option[T any] enum {
+      	Some(value T)
+      	None
+      }
+      """
+    When I parse it
+    Then parsing succeeds with 1 enum
+    And enum 1 is "Option[T]: Some(value T) | None"
+
+  Scenario: GADT variants declare result types
+    Given a G++ file "expr.gpp":
+      """
+      package expr
+
+      type Expr[T any] enum {
+      	Lit(v int) Expr[int]
+      	Bl(b bool) Expr[bool]
+      	If(c Expr[bool], t, e Expr[T])
+      }
+      """
+    When I parse it
+    Then parsing succeeds with 1 enum
+    And enum 1 variant "Lit" has result type "Expr[int]"
+    And enum 1 variant "Bl" has result type "Expr[bool]"
+    And enum 1 variant "If" has result type ""
+
+  Scenario: Nullary variants may be written with or without parentheses
+    Given a G++ file "u.gpp":
+      """
+      package u
+
+      type Unit enum {
+      	U()
+      	V
+      }
+      """
+    When I parse it
+    Then parsing succeeds with 1 enum
+    And enum 1 is "Unit: U() | V"
+
+  Scenario: A //gpp:name directive renames a variant's lowered struct
+    Given a G++ file "named.gpp":
+      """
+      package named
+
+      type List[T any] enum {
+      	Cons(head T, tail List[T])
+      	//gpp:name Nil
+      	None
+      }
+      """
+    When I parse it
+    Then parsing succeeds with 1 enum
+    And enum 1 variant "None" has name override "Nil"
+
+  Scenario: Enums coexist with generic methods in one file
+    Given a G++ file "both.gpp":
+      """
+      package both
+
+      type Option[T any] enum {
+      	Some(value T)
+      	None
+      }
+
+      type Stack[T any] struct{ items []T }
+
+      func (s Stack[T]) Map[U any](f func(T) U) Stack[U] {
+      	return Stack[U]{}
+      }
+      """
+    When I parse it
+    Then parsing succeeds with 1 enum
+    And parsing succeeds with 1 generic method
+
+  Scenario: Unnamed variant fields are rejected
+    Given a G++ file "bad.gpp":
+      """
+      package bad
+
+      type Shape enum {
+      	Circle(float64)
+      }
+      """
+    When I parse it
+    Then parsing fails with an error containing "enum variant fields must be named"
+
+  Scenario: Variadic variant fields are rejected
+    Given a G++ file "bad.gpp":
+      """
+      package bad
+
+      type Bag enum {
+      	Of(xs ...int)
+      }
+      """
+    When I parse it
+    Then parsing fails with an error containing "enum variant fields cannot be variadic"
+
+  Scenario: Enum aliases are rejected
+    Given a G++ file "bad.gpp":
+      """
+      package bad
+
+      type Shape = enum {
+      	Point
+      }
+      """
+    When I parse it
+    Then parsing fails with an error containing "enum declarations cannot be type aliases"

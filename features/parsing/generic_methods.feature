@@ -93,7 +93,7 @@ Feature: Parsing generic methods
       }
       """
     When I parse it
-    Then parsing fails with an error containing "missing parameter name"
+    Then parsing fails with an error containing "missing ',' in parameter list"
 
   Scenario: A //gpp:name directive is captured from the method's doc comment
     Given a G++ file "named.gpp":

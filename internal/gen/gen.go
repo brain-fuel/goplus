@@ -266,6 +266,15 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*regist
 		if f.gpp == nil {
 			continue
 		}
+		// TODO(v0.2.0): removed as enum/match lowering lands (phases 2–6).
+		if len(f.gpp.Enums) > 0 {
+			diags = append(diags, diag.At(idx.fset.Position(f.gpp.Enums[0].EnumPos),
+				"enum lowering is not implemented yet"))
+		}
+		if len(f.gpp.Matches) > 0 {
+			diags = append(diags, diag.At(idx.fset.Position(f.gpp.Matches[0].Match),
+				"match lowering is not implemented yet"))
+		}
 		methods, errs := registry.MethodsFromFile(pkgPath, f.gpp, tbl)
 		for _, err := range errs {
 			diags = append(diags, diag.Errorf("%s", err))

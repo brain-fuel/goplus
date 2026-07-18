@@ -1,0 +1,85 @@
+(*
+  G++ grammar, v0.2.0 — expressed as a delta over the Go specification and
+  spec/grammar-v0.1.0.ebnf. Every production not listed here is exactly the
+  Go production; the v0.1.0 MethodDecl extension is carried forward
+  unchanged.
+
+  "enum" and "match" are contextual keywords: outside the positions defined
+  below they are ordinary identifiers, so every valid Go program remains a
+  valid G++ program (strict superset).
+
+  This file and the Godog feature suite under features/ are together the
+  authoritative specification of G++.
+*)
+
+(* ------------------------- Enum declarations ---------------------------- *)
+(* Go (for reference):  TypeDef = identifier [ TypeParameters ] Type .      *)
+
+TypeDef     = identifier [ TypeParameters ] ( Type | EnumType ) .
+
+EnumType    = "enum" "{" { VariantDecl ";" } "}" .
+VariantDecl = identifier [ Parameters ] [ Type ] .
+
+(*
+  - "enum" introduces an EnumType only when the next non-comment token is
+    "{"; otherwise it is an ordinary type name. EnumType is not permitted in
+    AliasDecl (`type X = enum { … }` is an error).
+  - Parameters is the Go production. Variant fields must be named and must
+    not be variadic. A variant without Parameters is nullary; `None` and
+    `None()` are equivalent.
+  - The optional trailing Type is the variant's result type (GADT
+    refinement), e.g. `Lit(v int) Expr[int]`. When absent it defaults to
+    the enum type applied to its own type parameters. In v0.2.0 each result
+    type argument must be either the corresponding enum type parameter or a
+    ground named type.
+  - Semicolons between VariantDecls follow Go's automatic-semicolon rules.
+  - A VariantDecl's doc comment may carry a GppNameDirective renaming the
+    lowered variant struct.
+*)
+
+(* --------------------------- Match statements --------------------------- *)
+(* Go (for reference):  Statement = Declaration | LabeledStmt | … .         *)
+
+Statement       = (* every Go alternative, unchanged *) MatchStmt .
+
+MatchStmt       = "match" Expression "{" { MatchCaseClause } "}" .
+MatchCaseClause = "case" MatchCase ":" StatementList .
+MatchCase       = "_" | [ identifier ":=" ] Pattern .
+Pattern         = PatternName [ "(" [ PatternList [ "," ] ] ")" ] .
+PatternName     = identifier [ "." identifier ] .
+PatternList     = PatternElem { "," PatternElem } .
+PatternElem     = "_" | Pattern .
+
+(*
+  - "match" introduces a MatchStmt only at statement position and only when
+    the following token can begin a subject expression and does not already
+    form valid Go with the identifier "match". Concretely, the following
+    token must be an identifier, a basic literal, "func", "struct", "map",
+    "chan", "interface", or one of the unary operators "+", "-", "*", "&",
+    "^", "!". In particular `match(x)` remains a call, `match{…}` a
+    composite literal, `match <- ch` a send, `match[i]` an index, `match.f`
+    a selector, and `match:` a label. Subjects that would require "(",
+    "[", "{", or "<-" must be bound to a variable first.
+  - As in switch statements, the subject Expression may not contain an
+    unparenthesized composite literal at its top level.
+  - There is no "default" clause; the wildcard arm `case _:` takes its
+    role and must be the last arm.
+  - A bare PatternName with no argument list is either a nullary
+    constructor or a field binder; the generator resolves it against the
+    enum's variant set (a constructor name shadows binding).
+  - The optional `identifier ":="` binder binds the whole subject value and
+    may appear only at the top of a MatchCase, not inside PatternList.
+  - v0.2.0 has no literal patterns and no guards (deferred to v0.4.0).
+
+  Construction sites need no grammar: `Some(41)`, `None`, `Circle(2.0)` and
+  the qualified fallbacks `Option.None` / `Option[int].None` are already
+  valid Go expression syntax; their G++ semantics are defined by the
+  feature suite.
+*)
+
+(* Directive comments (v0.1.0 forms unchanged; new marker forms): *)
+
+GppNameDirective = "//gpp:name" identifier .    (* on MethodDecl or VariantDecl *)
+GppMethodMarker  = "//gpp:method" "(" [ "*" ] TypeName [ TypeParameters ] ")" MethodName [ TypeParameters ] .
+GppEnumMarker    = "//gpp:enum" identifier [ TypeParameters ] .
+GppVariantMarker = "//gpp:variant" "(" identifier [ "[" IdentifierList "]" ] ")" VariantDecl .
