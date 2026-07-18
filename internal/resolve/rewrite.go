@@ -78,6 +78,7 @@ func (r *fileResolver) resolve() ([]lower.Edit, []diag.Diagnostic) {
 			r.segCandidate(x)
 			r.dotCandidate(x)
 			r.composeCandidate(x)
+			r.kcompCandidate(x)
 			r.partialCandidate(x)
 			r.tryCandidate(x)
 		case *ast.AssignStmt:

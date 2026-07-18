@@ -292,16 +292,6 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*regist
 		if f.gpp == nil {
 			continue
 		}
-		// TODO(v0.4.0): removed as kleisli lowering lands (phase 7).
-		for _, c := range f.gpp.Composes {
-			for _, k := range c.Ops {
-				if k == syntax.ComposeKleisli {
-					diags = append(diags, diag.At(idx.fset.Position(c.Bad.From),
-						"kleisli composition lowering is not implemented yet"))
-					break
-				}
-			}
-		}
 		// Enum receivers must be values: the lowered receiver type is the
 		// sealed interface.
 		for _, gm := range f.gpp.Methods {

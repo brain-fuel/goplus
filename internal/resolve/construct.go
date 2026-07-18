@@ -34,6 +34,10 @@ type ctorUse struct {
 
 	explicit []ast.Expr // explicit type argument exprs, nil if none
 	pkgAlias string     // file-local package qualifier for cross-package enums
+
+	// railE, on a kleisli railway link, binds a Result constructor's
+	// otherwise-unbound error parameter to the chain's error type.
+	railE types.Type
 }
 
 // ctorCandidate inspects an identifier or selector that may name a

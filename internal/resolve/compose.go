@@ -130,6 +130,7 @@ func (r *fileResolver) inferComposeCtor(op *composeOp, incoming types.Type) bool
 	// Infer type args: explicit instantiation, else unify the declared
 	// parameter type against the incoming type.
 	var targs []string
+	var boundTypes []types.Type // complete inferred type args, when available
 	if len(use.explicit) > 0 {
 		got, ok := r.explicitTargs(use)
 		if !ok {
@@ -158,6 +159,9 @@ func (r *fileResolver) inferComposeCtor(op *composeOp, incoming types.Type) bool
 				}
 			}
 		}
+		if use.railE != nil && len(bound) == 2 && bound[1] == nil {
+			bound[1] = use.railE // expected-result inference (kleisli rail)
+		}
 		for i := range targs {
 			if targs[i] != "" {
 				continue
@@ -173,6 +177,15 @@ func (r *fileResolver) inferComposeCtor(op *composeOp, incoming types.Type) bool
 				return false
 			}
 			targs[i] = text
+		}
+		complete := len(bound) == len(e.TParams)
+		for _, b := range bound {
+			if b == nil {
+				complete = false
+			}
+		}
+		if complete {
+			boundTypes = bound
 		}
 	}
 
@@ -209,6 +222,19 @@ func (r *fileResolver) inferComposeCtor(op *composeOp, incoming types.Type) bool
 	// Synthesize the operand's signature for the chain walk.
 	incomingParam := types.NewVar(0, nil, "", incoming)
 	result := r.evalInPkg(r.pkg.PkgPath, enumText)
+	if result == nil && boundTypes != nil {
+		// Cross-package enums: evalInPkg cannot see file-scoped import
+		// names, so instantiate from the loaded package directly.
+		if pkg := r.typesByPath[e.PkgPath]; pkg != nil {
+			if tn, isTN := pkg.Scope().Lookup(e.Name).(*types.TypeName); isTN {
+				if named, isNamed := tn.Type().(*types.Named); isNamed {
+					if inst, err := types.Instantiate(nil, named, boundTypes, true); err == nil {
+						result = inst
+					}
+				}
+			}
+		}
+	}
 	if result == nil {
 		result = incoming // fallback: only used for chain-walk continuation
 	}

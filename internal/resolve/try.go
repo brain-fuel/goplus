@@ -444,6 +444,24 @@ func (r *fileResolver) insideUnresolvedMatch(n ast.Node) bool {
 	return false
 }
 
+// requireResultPkg makes sure the std/result package participates in
+// typing before an emission that introduces Result values: it adds the
+// import and waits an iteration, or reports the missing module.
+func (r *fileResolver) requireResultPkg(at token.Pos) bool {
+	if r.typesByPath[resultPkgPath] != nil {
+		return true
+	}
+	for _, imp := range r.file.Imports {
+		if path, err := strconv.Unquote(imp.Path.Value); err == nil && path == resultPkgPath {
+			// Imported but not loadable: the module lacks the std library.
+			r.errorf(at, "the gpp standard library is not available in this module; run: go get goforge.dev/gpp/std@latest")
+			return false
+		}
+	}
+	r.ensureResultImport()
+	return false // wait for the import to load next iteration
+}
+
 // ensureResultImport returns the local package name for
 // goforge.dev/gpp/std/result, adding the import (one edit per file per
 // iteration) when missing.
