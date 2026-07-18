@@ -69,6 +69,8 @@ func (r *fileResolver) resolve() ([]lower.Edit, []diag.Diagnostic) {
 			r.ctorCandidate(x)
 		case *ast.Ident:
 			r.ctorCandidate(x)
+		case *ast.CallExpr:
+			r.pipeCandidate(x)
 		case *ast.TypeSwitchStmt:
 			r.matchCandidate(x)
 		}
@@ -118,23 +120,13 @@ func (r *fileResolver) candidate(sel *ast.SelectorExpr) {
 	// Find the method: directly on the receiver's type, on the enum a
 	// variant struct belongs to (Some(41).Map(f)), or promoted through
 	// embedded fields.
-	var h *hit
-	if m, named, ok := lookupDirect(r.reg, tv.Type, sel.Sel.Name); ok {
-		_, wasPtr := asNamed(tv.Type)
-		h = &hit{method: m, named: named, finalPtr: wasPtr}
-	} else if m, named, e, ok := r.lookupViaVariant(tv.Type, sel.Sel.Name); ok {
-		_, wasPtr := asNamed(tv.Type)
-		h = &hit{method: m, named: named, finalPtr: wasPtr, viaEnum: e}
-	} else {
-		promoted, perr := promote(r.reg, tv.Type, sel.Sel.Name)
-		if perr != nil {
-			r.errorf(sel.Pos(), "%v", perr)
-			return
-		}
-		if promoted == nil {
-			return // not a gpp method use; the backstop will judge it
-		}
-		h = promoted
+	h, perr := r.memberHit(tv.Type, sel.Sel.Name)
+	if perr != nil {
+		r.errorf(sel.Pos(), "%v", perr)
+		return
+	}
+	if h == nil {
+		return // not a gpp method use; the backstop will judge it
 	}
 
 	// Classify the syntactic context.
@@ -240,6 +232,21 @@ func (r *fileResolver) rewriteCall(call *ast.CallExpr, sel *ast.SelectorExpr, ty
 		End:   r.off(call.End()),
 		New:   funcRef + targsText + "(" + recvArg + argsText + ")",
 	})
+}
+
+// memberHit finds a gpp method reachable from a receiver type: declared
+// directly, on the enum a variant struct belongs to, or promoted through
+// embedded fields. Returns (nil, nil) when there is no gpp member.
+func (r *fileResolver) memberHit(t types.Type, name string) (*hit, error) {
+	if m, named, ok := lookupDirect(r.reg, t, name); ok {
+		_, wasPtr := asNamed(t)
+		return &hit{method: m, named: named, finalPtr: wasPtr}, nil
+	}
+	if m, named, e, ok := r.lookupViaVariant(t, name); ok {
+		_, wasPtr := asNamed(t)
+		return &hit{method: m, named: named, finalPtr: wasPtr, viaEnum: e}, nil
+	}
+	return promote(r.reg, t, name)
 }
 
 // lookupViaVariant finds an enum method when the receiver is a variant

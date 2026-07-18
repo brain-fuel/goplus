@@ -26,8 +26,9 @@ import (
 )
 
 // maxIterations caps the fixpoint loop; each iteration resolves at least
-// one nesting level, so real code terminates far earlier.
-const maxIterations = 32
+// one nesting level (pipeline stages resolve left-to-right, a few
+// iterations per stage), so real code terminates far earlier.
+const maxIterations = 64
 
 // Input configures a fixpoint run.
 type Input struct {
