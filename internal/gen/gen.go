@@ -292,15 +292,6 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*regist
 		if f.gpp == nil {
 			continue
 		}
-		// TODO(v0.3.0): removed when flow lowering lands (phases 2–5).
-		if len(f.gpp.Pipes) > 0 {
-			diags = append(diags, diag.At(idx.fset.Position(f.gpp.Pipes[0].Bad.From),
-				"pipeline lowering is not implemented yet"))
-		}
-		if len(f.gpp.Composes) > 0 {
-			diags = append(diags, diag.At(idx.fset.Position(f.gpp.Composes[0].Bad.From),
-				"composition lowering is not implemented yet"))
-		}
 		// Enum receivers must be values: the lowered receiver type is the
 		// sealed interface.
 		for _, gm := range f.gpp.Methods {
@@ -377,8 +368,13 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*regist
 			}
 		}
 		for mi, m := range f.gpp.Matches {
-			edits = append(edits, lower.MatchSkeleton(f.gpp, m, mi)...)
+			medits, mdiags := lower.MatchSkeleton(f.gpp, m, mi)
+			diags = append(diags, mdiags...)
+			edits = append(edits, medits...)
 		}
+		fedits, fdiags := lower.FlowEdits(f.gpp)
+		diags = append(diags, fdiags...)
+		edits = append(edits, fedits...)
 		for _, gm := range append(append([]*syntax.GenericMethod{}, f.gpp.Methods...), enumMethods[f]...) {
 			funcName := methodNames[gm]
 			tparams, err := receiverTParams(idx, gm)
