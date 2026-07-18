@@ -54,7 +54,6 @@ func Run(opts Options) (*Result, error) {
 	// Pass 1: parse and lower declarations per package.
 	outputs := map[string][]byte{}
 	methodsByDir := map[string][]*registry.Method{}
-	anyMethods := false
 	var orphans []string
 	for _, dir := range dirs {
 		idx, diags := loadDir(dir)
@@ -66,9 +65,6 @@ func Run(opts Options) (*Result, error) {
 				outputs[path] = content
 			}
 			methodsByDir[dir] = methods
-			if len(methods) > 0 {
-				anyMethods = true
-			}
 		}
 		orphans = append(orphans, findOrphans(dir)...)
 	}
@@ -77,9 +73,11 @@ func Run(opts Options) (*Result, error) {
 		return res, nil
 	}
 
-	// Pass 2: resolve method-syntax uses against type information. This
-	// needs a module context; without go.mod, generation stays syntactic.
-	if moduleRoot != "" && len(outputs) > 0 && anyMethods {
+	// Pass 2: resolve method-syntax uses against type information —
+	// including generic methods advertised by dependencies via markers.
+	// This needs a module context; without go.mod, generation stays
+	// syntactic.
+	if moduleRoot != "" && len(outputs) > 0 {
 		out, err := resolve.Fixpoint(&resolve.Input{
 			Dir:          opts.Dir,
 			Patterns:     loadPatterns(opts.Patterns),

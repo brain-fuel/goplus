@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -40,6 +41,12 @@ func InitializeScenario(t *testing.T, sc *godog.ScenarioContext) {
 	sc.Step(`^I run gpp with arguments "([^"]*)"$`, func(args string) error {
 		return w.runGpp(splitArgs(args))
 	})
+	sc.Step(`^I run gpp in "([^"]+)" with arguments "([^"]*)"$`, func(sub, args string) error {
+		return w.runGppIn(sub, splitArgs(args))
+	})
+	sc.Step(`^the file "([^"]+)" is deleted$`, func(name string) error {
+		return os.Remove(filepath.Join(w.Dir, filepath.FromSlash(name)))
+	})
 	sc.Step(`^the exit code is (\d+)$`, func(want int) error {
 		if w.ExitCode != want {
 			return fmt.Errorf("exit code = %d, want %d\nstdout:\n%s\nstderr:\n%s",
@@ -64,9 +71,13 @@ func InitializeScenario(t *testing.T, sc *godog.ScenarioContext) {
 
 // runGpp invokes the CLI in-process with the scenario dir as working directory.
 func (w *World) runGpp(args []string) error {
+	return w.runGppIn(".", args)
+}
+
+func (w *World) runGppIn(sub string, args []string) error {
 	w.Stdout.Reset()
 	w.Stderr.Reset()
-	if err := os.Chdir(w.Dir); err != nil {
+	if err := os.Chdir(filepath.Join(w.Dir, filepath.FromSlash(sub))); err != nil {
 		return err
 	}
 	defer os.Chdir(w.origWD)
