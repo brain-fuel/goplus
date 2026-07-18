@@ -2890,6 +2890,14 @@ func (p *parser) parseDecl(sync map[token.Token]bool) ast.Decl {
 		defer un(trace(p, "Declaration"))
 	}
 
+	// gpp:begin — instance declarations (v0.5.0). No valid Go top-level
+	// declaration begins with an identifier (the default arm below errors),
+	// so this claim is a strict superset.
+	if p.tok == token.IDENT && p.lit == "instance" && p.peekNonComment() == token.IDENT {
+		return p.parseInstanceDecl()
+	}
+	// gpp:end
+
 	var f parseSpecFunction
 	switch p.tok {
 	case token.IMPORT:

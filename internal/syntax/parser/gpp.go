@@ -56,10 +56,14 @@ func (p *parser) peekNonCommentTok() aheadTok {
 // ── Enum declarations ──────────────────────────────────────────────────────
 
 // parseTypeSpecType parses the Type of a type spec, recognizing the G++
-// `enum { … }` form via the contextual keyword.
+// `enum { … }` and `class { … }` forms via contextual keywords.
 func (p *parser) parseTypeSpecType(spec *ast.TypeSpec) {
 	if p.tok == token.IDENT && p.lit == "enum" && p.peekNonComment() == token.LBRACE {
 		p.parseEnumType(spec)
+		return
+	}
+	if p.tok == token.IDENT && p.lit == "class" && p.peekNonComment() == token.LBRACE {
+		p.parseClassType(spec)
 		return
 	}
 	spec.Type = p.parseType()
@@ -100,6 +104,155 @@ func (p *parser) parseVariant() *Variant {
 	}
 	v.Comment = p.expectSemi()
 	return v
+}
+
+// ── Class and instance declarations (v0.5.0) ───────────────────────────────
+
+// parseClassType parses `class { … }` in a type spec's type position. The
+// claim is a strict superset: in that position `class` followed by `{` can
+// only be an identifier type followed by a block, which is never valid Go.
+func (p *parser) parseClassType(spec *ast.TypeSpec) {
+	if spec.Assign.IsValid() {
+		p.error(spec.Assign, "class declarations cannot be type aliases")
+	}
+	decl := &ClassDecl{Spec: spec, ClassPos: p.pos}
+	p.next() // consume `class`
+	decl.Lbrace = p.expect(token.LBRACE)
+	for p.tok != token.RBRACE && p.tok != token.EOF {
+		if m := p.parseClassMember(); m != nil {
+			decl.Members = append(decl.Members, m)
+		}
+	}
+	decl.Rbrace = p.expect(token.RBRACE)
+	spec.Type = &ast.BadExpr{From: decl.ClassPos, To: decl.Rbrace + 1}
+	p.ext.Classes = append(p.ext.Classes, decl)
+}
+
+// parseClassMember parses one embed, operation, or law. Disambiguation is
+// local to the claimed body: `law` + identifier begins a law; identifier +
+// `(` begins an operation; anything else is an embedded class reference.
+func (p *parser) parseClassMember() *ClassMember {
+	m := &ClassMember{Doc: p.leadComment}
+	if p.tok == token.IDENT && p.lit == "law" && p.peekNonComment() == token.IDENT {
+		m.LawPos = p.pos
+		p.next() // consume `law`
+		m.Name = p.parseIdent()
+		m.Params = p.parseParameters(false)
+		if p.tok != token.LBRACE {
+			p.error(p.pos, "a law requires a body")
+			p.advanceClassMember()
+			return nil
+		}
+		m.Body = p.parseBody()
+		m.Comment = p.expectSemi()
+		return m
+	}
+	if p.tok == token.IDENT && p.peekNonComment() == token.LPAREN {
+		m.Name = p.parseIdent()
+		m.Params = p.parseParameters(false)
+		if p.tok != token.LBRACE && p.tok != token.SEMICOLON && p.tok != token.RBRACE && p.tok != token.EOF {
+			m.Result = p.parseType()
+		}
+		if p.tok == token.LBRACE {
+			m.Body = p.parseBody() // default implementation
+		}
+		m.Comment = p.expectSemi()
+		return m
+	}
+	// Embedded class reference: Semigroup[T] or pkg.Semigroup[T].
+	embed := p.parseType()
+	if !validClassRef(embed, false) {
+		p.error(embed.Pos(), "expected a class member: an embedded class, an operation, or a law")
+		p.advanceClassMember()
+		return nil
+	}
+	m.Embed = embed
+	m.Comment = p.expectSemi()
+	return m
+}
+
+// advanceClassMember skips to the next member boundary after an error.
+func (p *parser) advanceClassMember() {
+	for p.tok != token.SEMICOLON && p.tok != token.RBRACE && p.tok != token.EOF {
+		p.next()
+	}
+	if p.tok == token.SEMICOLON {
+		p.next()
+	}
+}
+
+// validClassRef reports whether e has the shape of a class reference:
+// an identifier or selector, with type arguments iff instantiated is
+// required (instance heads must be applied; embeds may name the tparam).
+func validClassRef(e ast.Expr, needArgs bool) bool {
+	switch t := e.(type) {
+	case *ast.Ident:
+		return !needArgs
+	case *ast.SelectorExpr:
+		_, ok := t.X.(*ast.Ident)
+		return ok && !needArgs
+	case *ast.IndexExpr:
+		return validClassRef(t.X, false)
+	case *ast.IndexListExpr:
+		return validClassRef(t.X, false)
+	}
+	return false
+}
+
+// parseInstanceDecl parses a top-level
+// `instance Name [TParams] Class[Args] { … }` declaration. Claimed via the
+// parseDecl hunk: no valid Go declaration begins with an identifier, so the
+// claim is trivially a strict superset.
+func (p *parser) parseInstanceDecl() ast.Decl {
+	d := &InstanceDecl{Doc: p.leadComment, InstancePos: p.pos}
+	p.next() // consume `instance`
+	d.Name = p.parseIdent()
+	if p.tok == token.LBRACK {
+		d.TParams = p.parseTypeParameters()
+	}
+	d.Class = p.parseType()
+	if !validClassRef(d.Class, true) {
+		p.error(d.Class.Pos(), "an instance names a fully applied class; write Monoid[int]")
+	}
+	d.Lbrace = p.expect(token.LBRACE)
+	for p.tok != token.RBRACE && p.tok != token.EOF {
+		if m := p.parseInstanceMember(); m != nil {
+			d.Members = append(d.Members, m)
+		}
+	}
+	d.Rbrace = p.expect(token.RBRACE)
+	p.expectSemi()
+	d.Decl = &ast.BadDecl{From: d.InstancePos, To: d.Rbrace + 1}
+	p.ext.Instances = append(p.ext.Instances, d)
+	return d.Decl
+}
+
+// parseInstanceMember parses one operation implementation.
+func (p *parser) parseInstanceMember() *InstanceMember {
+	m := &InstanceMember{Doc: p.leadComment}
+	if p.tok != token.IDENT {
+		p.error(p.pos, "expected an operation implementation")
+		p.advanceClassMember()
+		return nil
+	}
+	m.Name = p.parseIdent()
+	if p.tok != token.LPAREN {
+		p.error(p.pos, "expected an operation's parameters")
+		p.advanceClassMember()
+		return nil
+	}
+	m.Params = p.parseParameters(false)
+	if p.tok != token.LBRACE && p.tok != token.SEMICOLON && p.tok != token.RBRACE && p.tok != token.EOF {
+		m.Result = p.parseType()
+	}
+	if p.tok != token.LBRACE {
+		p.error(p.pos, "instance members must have a body")
+		p.advanceClassMember()
+		return nil
+	}
+	m.Body = p.parseBody()
+	m.Comment = p.expectSemi()
+	return m
 }
 
 // ── Match statements ───────────────────────────────────────────────────────

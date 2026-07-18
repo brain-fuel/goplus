@@ -29,13 +29,17 @@ func plainGoSource(rt *rapid.T) string {
 	for i := 0; i < nDecls; i++ {
 		t := rapid.SampledFrom(simpleTypes).Draw(rt, "type")
 		doc := rapid.SampledFrom(docComments).Draw(rt, "doc")
-		switch rapid.IntRange(0, 3).Draw(rt, "kind") {
+		switch rapid.IntRange(0, 4).Draw(rt, "kind") {
 		case 0:
 			fmt.Fprintf(&b, "%stype Alias%d = %s\n\n", doc, i, t)
 		case 1:
 			fmt.Fprintf(&b, "%svar Value%d %s\n\n", doc, i, t)
 		case 2:
 			fmt.Fprintf(&b, "%sfunc Func%d(a %s) %s {\n\tvar z %s // inline comment\n\treturn z\n}\n\n", doc, i, t, t, t)
+		case 3:
+			// The v0.5.0 contextual keywords as ordinary Go identifiers.
+			name := rapid.SampledFrom([]string{"class", "instance", "law"}).Draw(rt, "ctxword")
+			fmt.Fprintf(&b, "%sfunc Ctx%d(%s %s) %s {\n\treturn %s\n}\n\n", doc, i, name, t, t, name)
 		default:
 			fmt.Fprintf(&b, "%stype Struct%d struct {\n\tField %s\n}\n\nfunc (s Struct%d) Plain%d() %s {\n\treturn s.Field\n}\n\n",
 				doc, i, t, i, i, t)

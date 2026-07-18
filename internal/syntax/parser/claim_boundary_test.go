@@ -218,3 +218,122 @@ func exprShape(e ast.Expr) string {
 	}
 	return "other"
 }
+
+// TestClassClaimBoundary pins the v0.5.0 class/instance claims: valid Go
+// using `class`, `instance`, and `law` as ordinary identifiers is untouched
+// (zero claims, error parity), while the claimed forms parse with the
+// expected structure.
+func TestClassClaimBoundary(t *testing.T) {
+	t.Run("valid Go stays Go", func(t *testing.T) {
+		for _, src := range []string{
+			"package b\n\nvar class = 1\n",
+			"package b\n\nvar instance = 2\n",
+			"package b\n\nvar law = 3\n",
+			"package b\n\ntype class struct{ law int }\n",
+			"package b\n\ntype instance int\n",
+			"package b\n\nfunc f() { instance := g(); _ = instance }\nfunc g() int { return 0 }\n",
+			"package b\n\ntype T class // identifier type named class, no brace\n",
+			"package b\n\nfunc f(class, law int) int { return class + law }\n",
+		} {
+			stockErr, forkErr, ext := parseBoth(t, src)
+			if (stockErr == nil) != (forkErr == nil) {
+				t.Errorf("%q: error presence mismatch:\nstock: %v\nfork:  %v", src, stockErr, forkErr)
+				continue
+			}
+			if stockErr != nil && forkErr.Error() != stockErr.Error() {
+				t.Errorf("%q: error parity broken:\nstock: %v\nfork:  %v", src, stockErr, forkErr)
+			}
+			if ext != nil && (len(ext.Classes) > 0 || len(ext.Instances) > 0) {
+				t.Errorf("%q: valid Go was claimed", src)
+			}
+		}
+	})
+
+	t.Run("invalid instance-like Go keeps stock-shaped errors", func(t *testing.T) {
+		// `instance` followed by a non-identifier is NOT claimed.
+		for _, src := range []string{
+			"package b\n\ninstance := 1\n",
+			"package b\n\ninstance + 2\n",
+		} {
+			stockErr, forkErr, ext := parseBoth(t, src)
+			if stockErr == nil || forkErr == nil {
+				t.Errorf("%q: expected errors from both parsers (stock %v, fork %v)", src, stockErr, forkErr)
+				continue
+			}
+			if forkErr.Error() != stockErr.Error() {
+				t.Errorf("%q: error parity broken:\nstock: %v\nfork:  %v", src, stockErr, forkErr)
+			}
+			if ext != nil && len(ext.Instances) > 0 {
+				t.Errorf("%q: near-miss was claimed", src)
+			}
+		}
+	})
+
+	t.Run("claimed forms parse with structure", func(t *testing.T) {
+		src := `package b
+
+type Magma[T any] class {
+	Combine(a, b T) T
+}
+
+type Monoid[T any] class {
+	Semigroup[T]
+	pkg.UnitalMagma[T]
+	Empty() T
+	law LeftId(a T) { return Combine(Empty(), a) == a }
+	LeftDiv(a, b T) T { return Combine(Invert(b), a) }
+}
+
+instance IntAdd Monoid[int] {
+	Combine(a, b int) int { return a + b }
+	Empty() int { return 0 }
+}
+
+instance SliceConcat[T any] Monoid[[]T] {
+	Combine(a, b []T) []T { return append(a, b...) }
+	Empty() []T { return nil }
+}
+`
+		_, forkErr, ext := parseBoth(t, src)
+		if forkErr != nil {
+			t.Fatalf("fork parse: %v", forkErr)
+		}
+		if len(ext.Classes) != 2 || len(ext.Instances) != 2 {
+			t.Fatalf("classes=%d instances=%d, want 2/2", len(ext.Classes), len(ext.Instances))
+		}
+		m := ext.Classes[1]
+		if len(m.Members) != 5 {
+			t.Fatalf("monoid members = %d, want 5", len(m.Members))
+		}
+		if m.Members[0].Embed == nil || m.Members[1].Embed == nil {
+			t.Fatalf("embeds not recognized")
+		}
+		if m.Members[2].Name.Name != "Empty" || m.Members[2].Body != nil {
+			t.Fatalf("op member wrong: %+v", m.Members[2])
+		}
+		if !m.Members[3].LawPos.IsValid() || m.Members[3].Body == nil {
+			t.Fatalf("law member wrong")
+		}
+		if m.Members[4].Body == nil {
+			t.Fatalf("default body missing")
+		}
+		if ext.Instances[0].TParams != nil || ext.Instances[1].TParams == nil {
+			t.Fatalf("instance tparams wrong")
+		}
+	})
+
+	t.Run("class error cases", func(t *testing.T) {
+		for _, tc := range []struct{ src, want string }{
+			{"package b\n\ntype M[T any] = class {\n\tCombine(a, b T) T\n}\n", "class declarations cannot be type aliases"},
+			{"package b\n\ntype M[T any] class {\n\tlaw Assoc(a T)\n}\n", "a law requires a body"},
+			{"package b\n\ninstance X Monoid {\n\tCombine(a, b int) int { return a }\n}\n", "an instance names a fully applied class"},
+			{"package b\n\ninstance X Monoid[int] {\n\tCombine(a, b int) int\n}\n", "instance members must have a body"},
+			{"package b\n\ntype M[T any] class {\n\t[]int\n}\n", "expected a class member"},
+		} {
+			_, forkErr, _ := parseBoth(t, tc.src)
+			if forkErr == nil || !strings.Contains(forkErr.Error(), tc.want) {
+				t.Errorf("%q: error = %v, want containing %q", tc.src, forkErr, tc.want)
+			}
+		}
+	})
+}

@@ -30,6 +30,55 @@ type Variant struct {
 	NameOverride string // //gpp:name from Doc; filled by syntax.ParseFile
 }
 
+// ClassDecl is one `type Name[T any] class { … }` declaration (v0.5.0).
+type ClassDecl struct {
+	Gen      *ast.GenDecl  // enclosing declaration; filled by syntax.ParseFile
+	Spec     *ast.TypeSpec // Name/TypeParams are real; Spec.Type is an *ast.BadExpr spanning the class body
+	ClassPos token.Pos     // position of the `class` keyword
+	Lbrace   token.Pos
+	Members  []*ClassMember
+	Rbrace   token.Pos
+}
+
+// ClassMember is one embed, operation, or law inside a class body.
+// Exactly one of Embed / Name is set: embeds carry only Embed; ops and
+// laws carry Name (+ Params, and for ops an optional Result and optional
+// default Body; laws always have a Body and an implicit bool result).
+type ClassMember struct {
+	Doc     *ast.CommentGroup
+	LawPos  token.Pos      // position of `law`; NoPos for ops and embeds
+	Embed   ast.Expr       // Semigroup[T] / pkg.Semigroup[T]; nil for ops/laws
+	Name    *ast.Ident     // op or law name; nil for embeds
+	Params  *ast.FieldList // ops/laws; nil for embeds
+	Result  ast.Expr       // op result type; nil for void ops and laws
+	Body    *ast.BlockStmt // law: required; op: optional default; embed: nil
+	Comment *ast.CommentGroup
+}
+
+// InstanceDecl is one top-level `instance Name [TParams] Class[Args] { … }`
+// declaration (v0.5.0).
+type InstanceDecl struct {
+	Decl        *ast.BadDecl // placeholder occupying this instance's slot in File.Decls
+	Doc         *ast.CommentGroup
+	InstancePos token.Pos
+	Name        *ast.Ident
+	TParams     *ast.FieldList // generic instances (SliceConcat[T any]); nil otherwise
+	Class       ast.Expr       // IndexExpr/IndexListExpr over Ident or SelectorExpr
+	Lbrace      token.Pos
+	Members     []*InstanceMember
+	Rbrace      token.Pos
+}
+
+// InstanceMember is one operation implementation inside an instance body.
+type InstanceMember struct {
+	Doc     *ast.CommentGroup
+	Name    *ast.Ident
+	Params  *ast.FieldList
+	Result  ast.Expr       // nil for void ops
+	Body    *ast.BlockStmt // required
+	Comment *ast.CommentGroup
+}
+
 // MatchStmt is one `match subject { case … }` statement.
 type MatchStmt struct {
 	Stmt    *ast.BadStmt // placeholder occupying this match's slot in the enclosing block
@@ -199,6 +248,9 @@ type Extensions struct {
 	IfExprs     []*IfExpr // roots only; else-if links via ElseIf
 	SwitchExprs []*SwitchExpr
 	MatchExprs  []*MatchExpr
+	// v0.5.0 — source order.
+	Classes   []*ClassDecl
+	Instances []*InstanceDecl
 }
 
 // ParseFileExt parses G++ source: stock Go grammar plus enum declarations,

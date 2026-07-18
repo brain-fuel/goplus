@@ -292,6 +292,15 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*regist
 		if f.gpp == nil {
 			continue
 		}
+		// TODO(v0.5.0): removed as class lowering lands (phase 2+).
+		if len(f.gpp.Classes) > 0 {
+			diags = append(diags, diag.At(idx.fset.Position(f.gpp.Classes[0].ClassPos),
+				"class lowering is not implemented yet"))
+		}
+		if len(f.gpp.Instances) > 0 {
+			diags = append(diags, diag.At(idx.fset.Position(f.gpp.Instances[0].InstancePos),
+				"instance lowering is not implemented yet"))
+		}
 		// Enum receivers must be values: the lowered receiver type is the
 		// sealed interface.
 		for _, gm := range f.gpp.Methods {

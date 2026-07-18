@@ -18,6 +18,10 @@ import (
 // Re-exported extension node types; see internal/syntax/parser/ext.go.
 type (
 	EnumDecl           = parser.EnumDecl
+	ClassDecl          = parser.ClassDecl
+	ClassMember        = parser.ClassMember
+	InstanceDecl       = parser.InstanceDecl
+	InstanceMember     = parser.InstanceMember
 	Variant            = parser.Variant
 	MatchStmt          = parser.MatchStmt
 	CaseClause         = parser.CaseClause
@@ -51,6 +55,8 @@ type File struct {
 	AST     *ast.File // stock AST; enum bodies are BadExpr, matches BadStmt
 	Methods []*GenericMethod
 	Enums   []*EnumDecl  // source order
+	Classes   []*ClassDecl    // source order (v0.5.0)
+	Instances []*InstanceDecl // source order (v0.5.0)
 	Matches []*MatchStmt // pre-order (nested matches follow their parent)
 
 	// Pipes and Composes are in creation order (extensions nested in a
@@ -253,6 +259,8 @@ func ParseFile(fset *token.FileSet, path string, src []byte) (*File, error) {
 		TokFile:   fset.File(astFile.Pos()),
 		AST:       astFile,
 		Enums:     ext.Enums,
+		Classes:   ext.Classes,
+		Instances: ext.Instances,
 		Matches:   ext.Matches,
 		Pipes:       ext.Pipes,
 		Composes:    ext.Composes,
@@ -300,6 +308,9 @@ func ParseFile(fset *token.FileSet, path string, src []byte) (*File, error) {
 				}
 			}
 		}
+	}
+	for _, c := range ext.Classes {
+		c.Gen = specToGen[c.Spec]
 	}
 	for _, e := range ext.Enums {
 		e.Gen = specToGen[e.Spec]

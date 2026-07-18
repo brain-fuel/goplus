@@ -67,9 +67,10 @@ func TestForkEquivalence(t *testing.T) {
 			t.Errorf("%s: error text mismatch:\nstock: %v\nfork:  %v", path, stockErr, forkErr)
 			continue
 		}
-		if forkExt != nil && (len(forkExt.Enums) > 0 || len(forkExt.Matches) > 0) {
-			t.Errorf("%s: pure Go produced extensions: %d enums, %d matches",
-				path, len(forkExt.Enums), len(forkExt.Matches))
+		if forkExt != nil && (len(forkExt.Enums) > 0 || len(forkExt.Matches) > 0 ||
+			len(forkExt.Classes) > 0 || len(forkExt.Instances) > 0) {
+			t.Errorf("%s: pure Go produced extensions: %d enums, %d matches, %d classes, %d instances",
+				path, len(forkExt.Enums), len(forkExt.Matches), len(forkExt.Classes), len(forkExt.Instances))
 		}
 		if !reflect.DeepEqual(normalize(stockAST), normalize(forkAST)) {
 			t.Errorf("%s: AST mismatch", path)
