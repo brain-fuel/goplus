@@ -12,21 +12,25 @@ import (
 	"goforge.dev/gpp/internal/syntax"
 )
 
-// Match resolution. Pass 1 lowers each match to a type switch whose case
+// Match resolution. Pass 1 lowers every match to a type switch whose case
 // heads are `case nil:` placeholders followed by `//gpp:pattern` carrier
 // comments. Once the scrutinee's type is known, one pass resolves the
-// whole match: case heads gain instantiated variant types, arms gain
-// binding prologues, carriers are deleted (the progress signal), a sealed
-// default-panic arm is added, and exhaustiveness and strictness rules are
-// checked against the GADT-filtered variant universe.
+// whole match. Flat matches stay type switches (idiomatic output); a match
+// with nested patterns is regenerated as a goto chain — type switches
+// cannot fall through on a failed nested check, and two arms may share a
+// head constructor. Exhaustiveness and reachability run on Maranget
+// usefulness over the GADT-filtered universe; GADT-refined arms wrap
+// T-typed returns in any(x).(T).
 
-// matchArm is one clause of a skeleton match under resolution.
-type matchArm struct {
-	clause   *ast.CaseClause
-	pat      syntax.PatText
-	carrier  [2]int // byte range of the carrier line (incl. newline)
-	variant  *registry.EnumVariant
-	wildcard bool
+// armAnalysis is one fully analyzed arm.
+type armAnalysis struct {
+	clause     *ast.CaseClause
+	carrier    [2]int
+	pat        *rpat
+	binderName string
+	body       string // verbatim body text (chain mode)
+	nested     bool
+	refined    map[string]string // scrutinee tparam name -> ground type text
 }
 
 // matchCandidate inspects a type switch produced by lower.MatchSkeleton.
@@ -35,7 +39,7 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 	if !ok {
 		return
 	}
-	arms, allCarriers := r.collectArms(sw)
+	rawArms, allCarriers := r.collectArms(sw)
 	if !allCarriers {
 		return // already resolved (or not ours)
 	}
@@ -77,124 +81,165 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 		}
 		return
 	}
+	tparamNames := map[string]bool{}
+	for _, t := range targTypes {
+		if tp, isTP := t.(*types.TypeParam); isTP {
+			tparamNames[tp.Obj().Name()] = true
+		}
+	}
+	rootCol := patCol{enum: e, targs: targTexts}
 
-	// GADT filter: which variants can inhabit this instantiation?
 	possible := map[string]bool{}
 	for _, v := range e.Variants {
 		possible[v.Name] = r.variantPossible(e, v, targTypes, targTexts)
 	}
 
-	// Resolve arms.
-	matchPos := sw.Pos()
 	failed := false
 	fail := func(pos token.Pos, format string, args ...any) {
 		r.errorf(pos, format, args...)
 		failed = true
 	}
-	covered := map[string]bool{}
-	sawWildcard := false
-	totalBindings := 0
-	type armPlan struct {
-		arm      *matchArm
-		head     string   // "default" or the instantiated case type
-		bindings []string // prologue lines
-	}
-	var plans []armPlan
 
-	for i, arm := range arms {
+	// Analyze arms.
+	var arms []*armAnalysis
+	sawWildcard := false
+	anyNested := false
+	for i, raw := range rawArms {
 		if sawWildcard {
-			fail(arm.clause.Case, "'case _:' must be the last arm of a match")
+			fail(raw.clause.Case, "'case _:' must be the last arm of a match")
 			break
 		}
-		if bad := bareBreak(arm.clause.Body); bad != token.NoPos {
+		if bad := bareBreak(raw.clause.Body); bad != token.NoPos {
 			fail(bad, "break is not supported directly inside a match arm in v0.2.0; label the enclosing loop")
 		}
-		if arm.pat.Root.Wild {
+		a := &armAnalysis{clause: raw.clause, carrier: raw.carrier, binderName: raw.pat.Binder}
+		a.body = r.armBodyText(sw, raw)
+		if raw.pat.Root.Wild {
 			sawWildcard = true
-			if i != len(arms)-1 {
-				fail(arm.clause.Case, "'case _:' must be the last arm of a match")
+			if i != len(rawArms)-1 {
+				fail(raw.clause.Case, "'case _:' must be the last arm of a match")
 			}
-			plans = append(plans, armPlan{arm: arm, head: "default"})
+			a.pat = &rpat{wild: true, col: rootCol}
+			arms = append(arms, a)
 			continue
 		}
-		v, verr := r.armVariant(e, arm)
-		if verr != "" {
-			fail(arm.clause.Case, "%s", verr)
+		rp, errMsg := r.resolveRPat(raw.pat.Root, rootCol, true, tparamNames)
+		if errMsg != "" {
+			fail(raw.clause.Case, "%s", errMsg)
 			continue
 		}
-		arm.variant = v
-		if !possible[v.Name] {
-			fail(arm.clause.Case, "pattern %s can never match a value of type %s: %s constructs %s[%s]",
-				arm.pat.Root.String(), r.localTypeString(tv.Type), v.Name, e.Name, strings.Join(v.ResultArgs, ", "))
+		a.pat = rp
+		if !possible[rp.variant.Name] {
+			fail(raw.clause.Case, "pattern %s can never match a value of type %s: %s constructs %s[%s]",
+				raw.pat.Root.String(), r.localTypeString(tv.Type), rp.variant.Name, e.Name, strings.Join(rp.variant.ResultArgs, ", "))
 			continue
 		}
-		if covered[v.Name] {
-			fail(arm.clause.Case, "unreachable match arm: %s is already covered by the arms above", arm.pat.Root.String())
-			continue
+		if patNested(rp) {
+			a.nested = true
+			anyNested = true
 		}
-		covered[v.Name] = true
-
-		// Field patterns: binders and wildcards in v0.2.0 phase 5;
-		// nested constructor patterns arrive with the GADT phase.
-		if arm.pat.Root.HasArgs && len(arm.pat.Root.Args) != len(v.Params) {
-			fail(arm.clause.Case, "pattern %s has %d fields but %s declares %d",
-				arm.pat.Root.String(), len(arm.pat.Root.Args), v.Name, len(v.Params))
-			continue
-		}
-		if !arm.pat.Root.HasArgs && len(v.Params) > 0 {
-			fail(arm.clause.Case, "pattern %s must bind %d fields (or use %s(_%s))",
-				v.Name, len(v.Params), v.Name, strings.Repeat(", _", len(v.Params)-1))
-			continue
-		}
-
-		var bindings []string
-		if arm.pat.Binder != "" {
-			bindings = append(bindings, fmt.Sprintf("%s := %s", arm.pat.Binder, varName))
-		}
-		bodyText := r.armBodyText(sw, arm)
-		for fi, argPat := range arm.pat.Root.Args {
-			switch {
-			case argPat.Wild:
-			case argPat.HasArgs || argPat.Qual != "":
-				fail(arm.clause.Case, "nested patterns are not implemented yet")
-			default:
-				if identReferencedInText(bodyText, argPat.Name) {
-					bindings = append(bindings, fmt.Sprintf("%s := %s.%s", argPat.Name, varName, v.Params[fi].FieldName))
-				}
-			}
-		}
-		totalBindings += len(bindings)
-		if arm.pat.Binder != "" && !identReferencedInText(bodyText, arm.pat.Binder) {
-			// bound but unused would trip the compiler; drop it
-			bindings = bindings[1:]
-			totalBindings--
-		}
-		head, ok := r.caseTypeText(e, v, targTexts)
-		if !ok {
-			failed = true
-			continue
-		}
-		plans = append(plans, armPlan{arm: arm, head: head, bindings: bindings})
+		a.refined = refinements(e, rp.variant, targTypes)
+		arms = append(arms, a)
+	}
+	if failed {
+		return
 	}
 
-	// Exhaustiveness (flat patterns: per-variant coverage is exact).
-	if !failed && !sawWildcard {
-		var missing []string
-		for _, v := range e.Variants {
-			if possible[v.Name] && !covered[v.Name] {
-				missing = append(missing, witness(v))
-			}
+	// Usefulness: reachability per arm, then exhaustiveness.
+	u := &usefulCtx{r: r, tparamNames: tparamNames}
+	cols := []patCol{rootCol}
+	var rows [][]syntax.PatNode
+	for _, a := range arms {
+		row := []syntax.PatNode{normPat(a.pat)}
+		if ok, _ := u.useful(cols, rows, row); !ok && !u.overflow {
+			fail(a.clause.Case, "unreachable match arm: %s is already covered by the arms above", renderWitness(row))
 		}
-		if len(missing) > 0 {
-			fail(matchPos, "non-exhaustive match on %s: missing %s; add the missing cases or a 'case _:' arm",
-				r.localTypeString(tv.Type), strings.Join(missing, ", "))
+		rows = append(rows, row)
+	}
+	if !failed {
+		if ok, w := u.useful(cols, rows, []syntax.PatNode{{Wild: true}}); ok {
+			fail(sw.Pos(), "non-exhaustive match on %s: missing %s; add the missing cases or a 'case _:' arm",
+				r.localTypeString(tv.Type), renderWitness(w))
+		}
+	}
+	if u.overflow {
+		fail(sw.Pos(), "match is too complex to check exhaustively; add a 'case _:' arm")
+	}
+	if failed {
+		return
+	}
+
+	// Refinement: wrap T-typed returns; reject naked returns in refined arms.
+	resultIdents := r.enclosingResultIdents(sw)
+	for _, a := range arms {
+		if len(a.refined) == 0 {
+			continue
+		}
+		wraps, nakedPos := r.refinementWraps(a, resultIdents)
+		if nakedPos != token.NoPos {
+			fail(nakedPos, "naked return inside a refined match arm is not supported in v0.2.0")
+			continue
+		}
+		if anyNested {
+			// Chain mode consumes body text: apply wraps relative to it.
+			bodyStart := a.carrier[1]
+			var rel []lower.Edit
+			for _, w := range wraps {
+				rel = append(rel, lower.Edit{Start: w.Start - bodyStart, End: w.End - bodyStart, New: w.New})
+			}
+			if len(rel) > 0 {
+				if applied, err := lower.Apply([]byte(a.body), rel); err == nil {
+					a.body = string(applied)
+				}
+			}
+		} else {
+			r.edits = append(r.edits, wraps...)
 		}
 	}
 	if failed {
 		return
 	}
 
-	// Emit the resolution edits.
+	subjText := r.text(subj.Pos(), subj.End())
+	if anyNested {
+		r.edits = append(r.edits, lower.Edit{
+			Start: r.off(sw.Pos()),
+			End:   r.off(sw.End()),
+			New:   r.chainEmit(sw, varName, subjText, arms, sawWildcard),
+		})
+		return
+	}
+
+	// Flat: in-place type-switch resolution.
+	totalBindings := 0
+	type armPlan struct {
+		arm      *armAnalysis
+		head     string
+		bindings []string
+	}
+	var plans []armPlan
+	for _, a := range arms {
+		if a.pat.wild {
+			plans = append(plans, armPlan{arm: a, head: "default"})
+			continue
+		}
+		var bindings []string
+		if a.binderName != "" && identReferencedInText(a.body, a.binderName) {
+			bindings = append(bindings, fmt.Sprintf("%s := %s", a.binderName, varName))
+		}
+		for fi, argPat := range a.pat.args {
+			if argPat.binder != "" && identReferencedInText(a.body, argPat.binder) {
+				bindings = append(bindings, fmt.Sprintf("%s := %s.%s", argPat.binder, varName, a.pat.variant.Params[fi].FieldName))
+			}
+		}
+		totalBindings += len(bindings)
+		head, headOK := r.rpatCaseType(a.pat)
+		if !headOK {
+			return
+		}
+		plans = append(plans, armPlan{arm: a, head: head, bindings: bindings})
+	}
+
 	for _, p := range plans {
 		head := "default:"
 		if p.head != "default" {
@@ -229,6 +274,125 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 			New:   "",
 		})
 	}
+}
+
+// patNested reports whether any argument is itself a constructor pattern.
+func patNested(p *rpat) bool {
+	for _, a := range p.args {
+		if a.variant != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// refinements computes scrutinee-tparam refinements a variant implies:
+// ground result positions whose scrutinee argument is a type parameter.
+func refinements(e *registry.Enum, v *registry.EnumVariant, targTypes []types.Type) map[string]string {
+	if v.ResultArgs == nil {
+		return nil
+	}
+	out := map[string]string{}
+	for i, arg := range v.ResultArgs {
+		if i >= len(e.TParams) || arg == e.TParams[i] {
+			continue
+		}
+		if tp, isTP := targTypes[i].(*types.TypeParam); isTP {
+			out[tp.Obj().Name()] = arg
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// enclosingResultIdents finds the enclosing function's result types that
+// are plain identifiers, by result index.
+func (r *fileResolver) enclosingResultIdents(sw *ast.TypeSwitchStmt) []string {
+	var node ast.Node = sw
+	for node != nil {
+		node = r.parents[node]
+		var ftype *ast.FuncType
+		switch fn := node.(type) {
+		case *ast.FuncDecl:
+			ftype = fn.Type
+		case *ast.FuncLit:
+			ftype = fn.Type
+		default:
+			continue
+		}
+		if ftype.Results == nil {
+			return nil
+		}
+		var out []string
+		for _, field := range ftype.Results.List {
+			name := ""
+			if id, ok := field.Type.(*ast.Ident); ok {
+				name = id.Name
+			}
+			n := len(field.Names)
+			if n == 0 {
+				n = 1
+			}
+			for i := 0; i < n; i++ {
+				out = append(out, name)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// refinementWraps builds any(expr).(T) edits for returns inside a refined
+// arm whose enclosing result type is a refined type parameter. Returns
+// inside nested function literals are untouched.
+func (r *fileResolver) refinementWraps(a *armAnalysis, resultIdents []string) ([]lower.Edit, token.Pos) {
+	var edits []lower.Edit
+	naked := token.NoPos
+	var walk func(n ast.Node)
+	walk = func(n ast.Node) {
+		ast.Inspect(n, func(x ast.Node) bool {
+			switch st := x.(type) {
+			case *ast.FuncLit:
+				return false
+			case *ast.ReturnStmt:
+				if len(st.Results) == 0 {
+					for _, ri := range resultIdents {
+						if _, refined := a.refined[ri]; refined {
+							naked = st.Pos()
+						}
+					}
+					return true
+				}
+				for i, res := range st.Results {
+					if i >= len(resultIdents) {
+						break
+					}
+					if _, refined := a.refined[resultIdents[i]]; !refined {
+						continue
+					}
+					edits = append(edits, lower.Edit{
+						Start: r.off(res.Pos()),
+						End:   r.off(res.End()),
+						New:   fmt.Sprintf("any(%s).(%s)", r.text(res.Pos(), res.End()), resultIdents[i]),
+					})
+				}
+			}
+			return true
+		})
+	}
+	for _, st := range a.clause.Body {
+		walk(st)
+	}
+	return edits, naked
+}
+
+// matchArm is one clause of a skeleton match, textually collected.
+type matchArm struct {
+	clause  *ast.CaseClause
+	pat     syntax.PatText
+	carrier [2]int // byte range of the carrier line (incl. newline)
 }
 
 // skeletonGuard recognizes `switch __gpp_mN := any(subj).(type)`.
@@ -293,50 +457,9 @@ func (r *fileResolver) collectArms(sw *ast.TypeSwitchStmt) ([]*matchArm, bool) {
 	return arms, len(arms) > 0
 }
 
-// armVariant resolves an arm's constructor name against the enum.
-func (r *fileResolver) armVariant(e *registry.Enum, arm *matchArm) (*registry.EnumVariant, string) {
-	root := arm.pat.Root
-	if root.Qual != "" {
-		// Qualified: pkg.Variant or Enum.Variant — accept when the
-		// qualifier plausibly names the enum's package or the enum.
-		if root.Qual != e.Name {
-			if alias, ok := r.importName(e.PkgPath); !ok || alias != root.Qual {
-				return nil, fmt.Sprintf("pattern %s does not name a variant of %s", root.String(), e.Name)
-			}
-		}
-	}
-	if v, ok := e.Variant(root.Name); ok {
-		return v, ""
-	}
-	// Also accept the lowered struct type name spelling.
-	for _, v := range e.Variants {
-		if v.TypeName == root.Name {
-			return v, ""
-		}
-	}
-	return nil, fmt.Sprintf("%s is not a variant of %s", root.Name, e.Name)
-}
-
-// caseTypeText renders the instantiated variant type for a case head.
-func (r *fileResolver) caseTypeText(e *registry.Enum, v *registry.EnumVariant, targTexts []string) (string, bool) {
-	name := v.TypeName
-	if e.PkgPath != r.pkg.PkgPath {
-		alias, ok := r.importName(e.PkgPath)
-		if !ok {
-			r.errorf(token.NoPos, "matching %s requires importing %q", e.Name, e.PkgPath)
-			return "", false
-		}
-		name = alias + "." + name
-	}
-	kept := keptIndices(e, v)
-	if len(kept) == 0 {
-		return name, true
-	}
-	parts := make([]string, len(kept))
-	for i, ki := range kept {
-		parts[i] = targTexts[ki]
-	}
-	return name + "[" + strings.Join(parts, ", ") + "]", true
+// localTypeString renders a type with package-local names.
+func (r *fileResolver) localTypeString(t types.Type) string {
+	return types.TypeString(t, types.RelativeTo(r.pkg.Types))
 }
 
 // variantPossible applies GADT filtering: can this variant inhabit the
@@ -349,10 +472,8 @@ func (r *fileResolver) variantPossible(e *registry.Enum, v *registry.EnumVariant
 		if i >= len(e.TParams) || arg == e.TParams[i] {
 			continue // kept position
 		}
-		// Ground position: the scrutinee's argument must be that type —
-		// or a type parameter, which may be refined to it at runtime.
 		if _, isTP := targTypes[i].(*types.TypeParam); isTP {
-			continue
+			continue // refinable at runtime
 		}
 		if targTexts[i] == arg {
 			continue
@@ -363,11 +484,6 @@ func (r *fileResolver) variantPossible(e *registry.Enum, v *registry.EnumVariant
 		return false
 	}
 	return true
-}
-
-// localTypeString renders a type with package-local names.
-func (r *fileResolver) localTypeString(t types.Type) string {
-	return types.TypeString(t, types.RelativeTo(r.pkg.Types))
 }
 
 // evalInPkg evaluates a type expression in another package's scope.
@@ -381,14 +497,6 @@ func (r *fileResolver) evalInPkg(pkgPath, text string) types.Type {
 		return nil
 	}
 	return tv.Type
-}
-
-// witness renders the canonical missing-case pattern for a variant.
-func witness(v *registry.EnumVariant) string {
-	if len(v.Params) == 0 {
-		return v.Name
-	}
-	return v.Name + "(_" + strings.Repeat(", _", len(v.Params)-1) + ")"
 }
 
 // armBodyText slices the source of an arm's body.
