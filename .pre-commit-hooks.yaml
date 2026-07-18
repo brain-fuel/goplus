@@ -1,0 +1,27 @@
+# Hooks for consumer repositories using the pre-commit framework
+# (https://pre-commit.com). Reference this repo in .pre-commit-config.yaml:
+#
+#   repos:
+#     - repo: https://github.com/brain-fuel/gpp
+#       rev: v0.1.0
+#       hooks:
+#         - id: gpp-gen
+#
+# Note on gpp-gen: pre-commit fails any hook whose run modifies files. When
+# outputs are stale, the first `git commit` attempt regenerates AND stages the
+# fixed files, then aborts; simply retry the commit and it passes. This is the
+# standard auto-fixer UX (same as gofmt/black hooks).
+- id: gpp-gen
+  name: gpp generate (auto-regenerate and stage)
+  description: Regenerate Go from .gpp sources and stage the results.
+  entry: gpp gen -stage ./...
+  language: golang
+  files: '\.gpp$'
+  pass_filenames: false
+- id: gpp-check
+  name: gpp generate check
+  description: Fail if committed generated Go is stale relative to .gpp sources.
+  entry: gpp gen -check ./...
+  language: golang
+  files: '\.(gpp|go)$'
+  pass_filenames: false

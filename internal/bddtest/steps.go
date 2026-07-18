@@ -1,0 +1,91 @@
+package bddtest
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/cucumber/godog"
+
+	"goforge.dev/gpp/internal/cli"
+)
+
+// InitializeScenario registers every step definition against a fresh World.
+func InitializeScenario(t *testing.T, sc *godog.ScenarioContext) {
+	var w *World
+
+	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
+		var err error
+		w, err = newWorld(t)
+		return ctx, err
+	})
+	sc.After(func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
+		if w != nil {
+			w.cleanup()
+		}
+		return ctx, nil
+	})
+
+	sc.Step(`^I run gpp with arguments "([^"]*)"$`, func(args string) error {
+		return w.runGpp(splitArgs(args))
+	})
+	sc.Step(`^the exit code is (\d+)$`, func(want int) error {
+		if w.ExitCode != want {
+			return fmt.Errorf("exit code = %d, want %d\nstdout:\n%s\nstderr:\n%s",
+				w.ExitCode, want, w.Stdout.String(), w.Stderr.String())
+		}
+		return nil
+	})
+	sc.Step(`^(stdout|stderr) contains "([^"]*)"$`, func(stream, want string) error {
+		got := w.Stdout.String()
+		if stream == "stderr" {
+			got = w.Stderr.String()
+		}
+		if !strings.Contains(got, want) {
+			return fmt.Errorf("%s does not contain %q; got:\n%s", stream, want, got)
+		}
+		return nil
+	})
+	sc.Step(`^a file "([^"]+)":$`, func(name string, doc *godog.DocString) error {
+		return w.writeFile(name, doc.Content)
+	})
+}
+
+// runGpp invokes the CLI in-process with the scenario dir as working directory.
+func (w *World) runGpp(args []string) error {
+	w.Stdout.Reset()
+	w.Stderr.Reset()
+	if err := os.Chdir(w.Dir); err != nil {
+		return err
+	}
+	defer os.Chdir(w.origWD)
+	w.ExitCode = cli.Run(args, &w.Stdout, &w.Stderr)
+	return nil
+}
+
+// splitArgs splits a step's argument string on whitespace, honoring single
+// quotes for arguments that contain spaces.
+func splitArgs(s string) []string {
+	var out []string
+	var cur strings.Builder
+	inQuote := false
+	for _, r := range s {
+		switch {
+		case r == '\'':
+			inQuote = !inQuote
+		case !inQuote && (r == ' ' || r == '\t'):
+			if cur.Len() > 0 {
+				out = append(out, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if cur.Len() > 0 {
+		out = append(out, cur.String())
+	}
+	return out
+}

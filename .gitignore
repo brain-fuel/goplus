@@ -1,0 +1,5 @@
+# Binaries
+/gpp
+/dist/
+
+# Never ignore generated Go — emitted *_gpp.go files are committed artifacts.
