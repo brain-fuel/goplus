@@ -46,6 +46,9 @@ type Input struct {
 type Output struct {
 	Texts map[string][]byte
 	Diags []diag.Diagnostic
+	// Reg is the fully-populated registry (local + dependency markers);
+	// law-test generation consumes it after the fixpoint.
+	Reg *registry.Registry
 }
 
 // Fixpoint resolves all method-syntax uses across the loaded packages.
@@ -145,7 +148,7 @@ func Fixpoint(in *Input) (*Output, error) {
 			}
 		}
 	}
-	return &Output{Texts: texts, Diags: diags}, nil
+	return &Output{Texts: texts, Diags: diags, Reg: reg}, nil
 }
 
 // buildRegistry registers local methods and enums under their real package

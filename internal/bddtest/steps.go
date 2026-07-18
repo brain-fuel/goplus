@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -89,6 +90,19 @@ func InitializeScenario(t *testing.T, sc *godog.ScenarioContext) {
 		content := fmt.Sprintf(
 			"module %s\n\ngo 1.24\n\nrequire goforge.dev/gpp/std v0.0.0\n\nreplace goforge.dev/gpp/std => %s\n",
 			mod, filepath.Join(w.origWD, "std"))
+		return w.writeFile("go.mod", content)
+	})
+	// A go.mod that requires rapid (for generated law tests), replaced by
+	// the repo's module-cache copy so scenarios stay offline.
+	sc.Step(`^a module "([^"]+)" using rapid for law tests$`, func(mod string) error {
+		out, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "pgregory.net/rapid").Output()
+		if err != nil {
+			return fmt.Errorf("locating rapid in the module cache: %v", err)
+		}
+		dir := strings.TrimSpace(string(out))
+		content := fmt.Sprintf(
+			"module %s\n\ngo 1.24\n\nrequire pgregory.net/rapid v1.3.0\n\nreplace pgregory.net/rapid => %s\n",
+			mod, dir)
 		return w.writeFile("go.mod", content)
 	})
 }

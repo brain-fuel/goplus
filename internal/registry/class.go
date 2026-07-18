@@ -59,6 +59,8 @@ type Instance struct {
 	Generic     bool   // lowered to a function
 	TParamsText string // e.g. "T any" for generic instances
 	LawsMode    string // raw //gpp:laws directive value; "" = default
+	SrcPath     string // declaring .gpp path (local instances; lawgen)
+	PkgName     string // declaring package's name (local instances; lawgen)
 }
 
 // Exported reports whether the instance value is exported.
@@ -428,6 +430,21 @@ func ClassesFromMarkers(pkgPath, filename string, src []byte) (classes []*Class,
 		}
 	}
 	return classes, instances, fns, nil
+}
+
+// Param is one parsed parameter of a law.
+type Param struct {
+	Name string
+	Type string
+}
+
+// ParseParams parses a law's verbatim parameter text.
+func ParseParams(params string) []Param {
+	var out []Param
+	for _, p := range parseParamList(params) {
+		out = append(out, Param{Name: p.Name, Type: p.Type})
+	}
+	return out
 }
 
 func firstIdent(s string) string {

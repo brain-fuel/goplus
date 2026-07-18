@@ -17,9 +17,10 @@ import (
 // knowledge — witness fields and methods render from verbatim source
 // slices; embed flattening, default filling, and dictionary wiring happen
 // at resolve.
-func planClasses(idx *pkgIndex, tbl *naming.Table) ([]*registry.Class, []*registry.Instance, []diag.Diagnostic) {
+func planClasses(idx *pkgIndex, tbl *naming.Table) ([]*registry.Class, []*registry.Instance, string, []diag.Diagnostic) {
 	var classModels []*registry.Class
 	var instModels []*registry.Instance
+	lawsOut := ""
 	var diags []diag.Diagnostic
 	errAt := func(pos token.Pos, format string, args ...any) {
 		diags = append(diags, diag.At(idx.fset.Position(pos), format, args...))
@@ -28,6 +29,15 @@ func planClasses(idx *pkgIndex, tbl *naming.Table) ([]*registry.Class, []*regist
 	for _, f := range idx.files {
 		if f.gpp == nil {
 			continue
+		}
+		if f.gpp.AST.Doc != nil {
+			for _, c := range f.gpp.AST.Doc.List {
+				if rest, ok := strings.CutPrefix(strings.TrimSpace(c.Text), "//gpp:laws"); ok {
+					if out, found := strings.CutPrefix(strings.TrimSpace(rest), "out="); found {
+						lawsOut = strings.TrimSpace(out)
+					}
+				}
+			}
 		}
 		for _, c := range f.gpp.Classes {
 			name := c.Spec.Name.Name
@@ -129,10 +139,12 @@ func planClasses(idx *pkgIndex, tbl *naming.Table) ([]*registry.Class, []*regist
 			}
 			model.Class, model.ClassArgs = ref, args
 			model.LawsMode = lawsDirective(d.Doc)
+			model.SrcPath = f.path
+			model.PkgName = f.gpp.AST.Name.Name
 			instModels = append(instModels, model)
 		}
 	}
-	return classModels, instModels, diags
+	return classModels, instModels, lawsOut, diags
 }
 
 // embedClassRef interprets an embed expression as a class reference
