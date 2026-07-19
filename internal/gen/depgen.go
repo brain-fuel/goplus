@@ -82,7 +82,32 @@ func processDeps(f *sourceFile, pkgPath string, totals map[*ast.FuncDecl]bool, p
 				params = append(params, param{field: fld, name: n, quantity: q, typeText: tt})
 			}
 		}
-		if !hasQuantity && len(natIdents) == 0 {
+		indexedSig := false
+		checkIndexed := func(fl *ast.FieldList) {
+			if fl == nil {
+				return
+			}
+			for _, fld := range fl.List {
+				base, args := instantiationOf(text(fld.Type, fld.Type))
+				if base == "" {
+					continue
+				}
+				if idxPos, arity, ok := plan.isIndexed(base); ok && len(args) == arity && len(idxPos) > 0 {
+					indexedSig = true
+				}
+				// Imported indexed enums are unknown here, but a
+				// term-shaped argument marks the instantiation (walk-2's
+				// rule); the marker preserves the unerased signature.
+				for _, a := range args {
+					if termShapedText(a) {
+						indexedSig = true
+					}
+				}
+			}
+		}
+		checkIndexed(fd.Type.Params)
+		checkIndexed(fd.Type.Results)
+		if !hasQuantity && len(natIdents) == 0 && !indexedSig {
 			continue
 		}
 		if fd.Recv != nil {
@@ -227,13 +252,14 @@ func guardEdits(f *sourceFile, fd *ast.FuncDecl, params []guardParam, plan *enum
 				typeArgs = append(typeArgs, a)
 			}
 		}
+		tagOf := planTagOf(plan)
 		for _, v := range enum.Variants {
 			if len(v.IndexArgs) != len(idxTerms) {
 				continue
 			}
 			impossible := false
 			for i := range idxTerms {
-				if indexClash(idxTerms[i], v.IndexArgs[i]) {
+				if core.IndexClash(idxTerms[i], v.IndexArgs[i], tagOf) {
 					impossible = true
 				}
 			}
@@ -283,54 +309,6 @@ func instantiationOf(text string) (string, []string) {
 	return base, args
 }
 
-// indexClash reports whether a caller-side index term and a variant's
-// index term can NEVER unify: both elaborate with free variables as
-// non-negative atoms, and their difference is a linear form that cannot
-// be zero, or ground constructor tags that differ.
-func indexClash(callerTerm, variantTerm string) bool {
-	ct, err1 := core.ParseIndexTerm(callerTerm, permissiveResolver)
-	vt, err2 := core.ParseIndexTerm(variantTerm, permissiveResolver)
-	if err1 != nil || err2 != nil {
-		return false
-	}
-	cv, vv := symbolicValue(ct), symbolicValue(vt)
-	if cv == nil || vv == nil {
-		return false
-	}
-	if cc, ok1 := cv.(core.VCtor); ok1 {
-		if vc, ok2 := vv.(core.VCtor); ok2 {
-			return cc.Name != vc.Name
-		}
-		return false
-	}
-	return core.LinNeverZero(cv, vv)
-}
-
-func permissiveResolver(fun ast.Expr) (string, bool) {
-	switch fn := fun.(type) {
-	case *ast.Ident:
-		return fn.Name, true
-	case *ast.SelectorExpr:
-		return fn.Sel.Name, true
-	}
-	return "", false
-}
-
-// symbolicValue evaluates a term with every free variable as a nat atom
-// and unknown calls treated as constructors of arity-matching tags
-// (permissive: nil on anything else).
-func symbolicValue(t core.Term) core.Value {
-	env := core.Env{}
-	for _, fv := range core.FreeVars(t) {
-		env[fv] = core.NatVar(fv)
-	}
-	v, err := core.EvalSymbolic(t, env)
-	if err != nil {
-		return nil
-	}
-	return v
-}
-
 // splitTopLevelText splits on a separator at bracket/paren depth zero.
 func splitTopLevelText(s string, sep byte) []string {
 	var out []string
@@ -350,4 +328,32 @@ func splitTopLevelText(s string, sep byte) []string {
 	}
 	out = append(out, s[start:])
 	return out
+}
+
+// termShapedText reports whether an argument text can only be a term.
+func termShapedText(a string) bool {
+	if a == "" {
+		return false
+	}
+	if a[0] >= '0' && a[0] <= '9' {
+		return true
+	}
+	return strings.ContainsAny(a, "+-*()")
+}
+
+// planTagOf builds a tag table over the package's index domains.
+func planTagOf(plan *enumPlan) func(string) (string, bool) {
+	return func(name string) (string, bool) {
+		for _, m := range plan.models {
+			if len(m.TParams) != 0 || len(m.Indices) != 0 {
+				continue
+			}
+			for _, v := range m.Variants {
+				if v.Name == name {
+					return m.Name, true
+				}
+			}
+		}
+		return "", false
+	}
 }

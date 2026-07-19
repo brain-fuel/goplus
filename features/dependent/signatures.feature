@@ -32,8 +32,6 @@ Feature: Dependent signatures
       	case Cons(h, t):
       		_ = t
       		return h
-      	case _:
-      		panic("unreachable")
       	}
       }
 
@@ -82,8 +80,6 @@ Feature: Dependent signatures
       	case Cons(h, t):
       		_ = t
       		return h
-      	case _:
-      		panic("unreachable")
       	}
       }
       """
@@ -127,8 +123,6 @@ Feature: Dependent signatures
       	case Cons(h, t):
       		_ = t
       		return h
-      	case _:
-      		panic("unreachable")
       	}
       }
 
@@ -164,8 +158,6 @@ Feature: Dependent signatures
       	case Cons(h, t):
       		_ = t
       		return h
-      	case _:
-      		panic("unreachable")
       	}
       }
 
@@ -198,8 +190,6 @@ Feature: Dependent signatures
       	case Cons(h, t):
       		_ = t
       		return h
-      	case _:
-      		panic("unreachable")
       	}
       }
       """
@@ -225,3 +215,33 @@ Feature: Dependent signatures
     When I run gpp with arguments "run ."
     Then the exit code is 0
     And stdout contains "recovered: gpp: Head: v with index n+1 cannot be Nil"
+
+  Scenario: The scrutinee's index makes impossible arms an error and wildcards unnecessary
+    Given a G++ file "main.gpp":
+      """
+      package main
+
+      import "fmt"
+
+      type Vec[T any, n nat] enum {
+      	Nil() Vec[T, 0]
+      	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+      }
+
+      func Head[T any](0 n nat, v Vec[T, n+1]) T {
+      	match v {
+      	case Nil():
+      		panic("empty")
+      	case Cons(h, t):
+      		_ = t
+      		return h
+      	}
+      }
+
+      func main() {
+      	fmt.Println(Head(0, Cons(1, Nil[int]())))
+      }
+      """
+    When I run gpp with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "pattern Nil() can never match: the scrutinee's index (n+1) rules out Nil (its index is 0)"

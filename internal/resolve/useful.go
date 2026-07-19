@@ -4,6 +4,7 @@ import (
 	"go/token"
 	"strings"
 
+	"goforge.dev/gpp/internal/core"
 	"goforge.dev/gpp/internal/registry"
 	"goforge.dev/gpp/internal/syntax"
 )
@@ -19,9 +20,10 @@ import (
 // patCol describes one matrix column's type: an enum instance (with type
 // argument texts) or opaque (only wildcards can match it).
 type patCol struct {
-	enum  *registry.Enum
-	targs []string
-	pos   token.Pos // diagnostic anchor (the match subject / parent pattern)
+	enum     *registry.Enum
+	targs    []string
+	idxTerms []string // scrutinee index terms when known (v0.7.0); nil otherwise
+	pos      token.Pos // diagnostic anchor (the match subject / parent pattern)
 }
 
 // usefulCtx carries the per-match context the engine needs.
@@ -191,7 +193,7 @@ func (u *usefulCtx) fieldColumns(col patCol, v *registry.EnumVariant) []patCol {
 func (u *usefulCtx) possibleVariants(col patCol) []*registry.EnumVariant {
 	var out []*registry.EnumVariant
 	for _, v := range col.enum.Variants {
-		if u.variantPossibleText(col, v) {
+		if u.variantPossibleText(col, v) && !indexRulesOut(u.r.reg, col, v) {
 			out = append(out, v)
 		}
 	}
@@ -291,4 +293,40 @@ func renderWitness(w []syntax.PatNode) string {
 		parts[i] = n.String()
 	}
 	return strings.Join(parts, ", ")
+}
+
+// indexRulesOut reports whether the column's known index terms make a
+// variant impossible (v0.7.0).
+func indexRulesOut(reg *registry.Registry, col patCol, v *registry.EnumVariant) bool {
+	if len(col.idxTerms) == 0 || len(v.IndexArgs) != len(col.idxTerms) {
+		return false
+	}
+	tagOf := registryTagOf(reg, col.enum)
+	for i := range col.idxTerms {
+		if core.IndexClash(col.idxTerms[i], v.IndexArgs[i], tagOf) {
+			return true
+		}
+	}
+	return false
+}
+
+// registryTagOf builds a tag table over the enum's index-domain sorts.
+func registryTagOf(reg *registry.Registry, e *registry.Enum) func(string) (string, bool) {
+	return func(name string) (string, bool) {
+		for _, ib := range e.Indices {
+			if ib.Sort == "nat" {
+				continue
+			}
+			dom, ok := reg.LookupEnum(e.PkgPath, ib.Sort)
+			if !ok {
+				continue
+			}
+			for _, v := range dom.Variants {
+				if v.Name == name {
+					return ib.Sort, true
+				}
+			}
+		}
+		return "", false
+	}
 }

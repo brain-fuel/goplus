@@ -128,6 +128,10 @@ func (e *elaborator) expr(x ast.Expr) (Term, error) {
 		return Nat{N: n}, nil
 	case *ast.ParenExpr:
 		return e.expr(v.X)
+	case *ast.SelectorExpr:
+		// Qualified index vocabulary (net.Open, pkg.N): identity is the
+		// final name; tag tables resolve it where one is in scope.
+		return Var{Name: v.Sel.Name}, nil
 	case *ast.BinaryExpr:
 		switch v.Op {
 		case token.ADD, token.SUB, token.MUL:

@@ -42,10 +42,7 @@ Feature: Enum-tag indices (typestate)
       	match s {
       	case net.Fresh():
       		return "fresh"
-      	case net.Done(r):
-      		return r
       	}
-      	return "?"
       }
 
       func main() {

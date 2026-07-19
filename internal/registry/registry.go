@@ -45,6 +45,7 @@ type Registry struct {
 	classIdxV   *classIndex
 	totalIdx    *totalIndex
 	depIdx      *depIndex
+	paramIdx    map[paramIndexKey][2][]string
 }
 
 func New() *Registry {

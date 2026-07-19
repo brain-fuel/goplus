@@ -166,3 +166,25 @@ func DepFnsFromMarkers(pkgPath, filename string, src []byte) ([]*DepFn, error) {
 	}
 	return out, nil
 }
+
+// ParamIndexKey identifies one function parameter.
+type paramIndexKey struct{ pkg, fn, param string }
+
+// AddParamIndex records the index terms of a function parameter typed
+// at an imported indexed enum — discovered by resolve when it erases
+// the instantiation (pass 1 cannot know an imported enum is indexed).
+func (r *Registry) AddParamIndex(pkgPath, fn, param, enum string, terms []string) {
+	if r.paramIdx == nil {
+		r.paramIdx = map[paramIndexKey][2][]string{}
+	}
+	r.paramIdx[paramIndexKey{pkgPath, fn, param}] = [2][]string{{enum}, terms}
+}
+
+// LookupParamIndex finds a parameter's recorded enum and index terms.
+func (r *Registry) LookupParamIndex(pkgPath, fn, param string) (enum string, terms []string, ok bool) {
+	v, found := r.paramIdx[paramIndexKey{pkgPath, fn, param}]
+	if !found {
+		return "", nil, false
+	}
+	return v[0][0], v[1], true
+}

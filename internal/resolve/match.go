@@ -88,11 +88,17 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 			tparamNames[tp.Obj().Name()] = true
 		}
 	}
-	rootCol := patCol{enum: e, targs: targTexts, pos: subj.Pos()}
+	idxTerms := r.scrutineeIndexTerms(e, subj)
+	rootCol := patCol{enum: e, targs: targTexts, idxTerms: idxTerms, pos: subj.Pos()}
 
 	possible := map[string]bool{}
+	idxOut := map[string]bool{}
 	for _, v := range e.Variants {
 		possible[v.Name] = r.variantPossible(e, v, targTypes, targTexts)
+		if possible[v.Name] && indexRulesOut(r.reg, rootCol, v) {
+			possible[v.Name] = false
+			idxOut[v.Name] = true
+		}
 	}
 
 	failed := false
@@ -131,8 +137,13 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 		}
 		a.pat = rp
 		if !possible[rp.variant.Name] {
-			fail(raw.clause.Case, "pattern %s can never match a value of type %s: %s constructs %s[%s]",
-				raw.pat.Root.String(), r.localTypeString(tv.Type), rp.variant.Name, e.Name, strings.Join(rp.variant.ResultArgs, ", "))
+			if idxOut[rp.variant.Name] {
+				fail(raw.clause.Case, "pattern %s can never match: the scrutinee's index (%s) rules out %s (its index is %s)",
+					raw.pat.Root.String(), strings.Join(idxTerms, ", "), rp.variant.Name, strings.Join(rp.variant.IndexArgs, ", "))
+			} else {
+				fail(raw.clause.Case, "pattern %s can never match a value of type %s: %s constructs %s[%s]",
+					raw.pat.Root.String(), r.localTypeString(tv.Type), rp.variant.Name, e.Name, strings.Join(rp.variant.ResultArgs, ", "))
+			}
 			continue
 		}
 		if patNested(rp) {

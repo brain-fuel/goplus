@@ -2,8 +2,10 @@ package resolve
 
 import (
 	"go/ast"
+	"strings"
 
 	"goforge.dev/gpp/internal/lower"
+	"goforge.dev/gpp/internal/registry"
 )
 
 // Dependent call sites (v0.7.0). The surface passes every argument —
@@ -78,4 +80,94 @@ func pureIndexArg(e ast.Expr) bool {
 		return pureIndexArg(x.Fun)
 	}
 	return false
+}
+
+// scrutineeIndexTerms recovers a match scrutinee's index terms when the
+// scrutinee is a parameter of the enclosing dependent function — its
+// //gpp:dep marker preserves the unerased type. Unknown otherwise
+// (conservative: every variant stays possible).
+func (r *fileResolver) scrutineeIndexTerms(e *registry.Enum, subj ast.Expr) []string {
+	if len(e.Indices) == 0 {
+		return nil
+	}
+	id, ok := subj.(*ast.Ident)
+	if !ok {
+		return nil
+	}
+	var encl *ast.FuncDecl
+	for _, decl := range r.file.Decls {
+		if fd, isFn := decl.(*ast.FuncDecl); isFn && fd.Pos() <= subj.Pos() && subj.Pos() < fd.End() {
+			encl = fd
+		}
+	}
+	if encl == nil {
+		return nil
+	}
+	if enum, terms, found := r.reg.LookupParamIndex(r.pkg.PkgPath, encl.Name.Name, id.Name); found {
+		if enum == e.Name && len(terms) == len(e.Indices) {
+			return terms
+		}
+	}
+	d, ok := r.reg.LookupDepFn(r.pkg.PkgPath, encl.Name.Name)
+	if !ok {
+		return nil
+	}
+	for _, p := range d.Params {
+		if p.Name != id.Name {
+			continue
+		}
+		base, args := instantiationBase(p.Type)
+		if base != e.Name || len(args) != len(e.TParams)+len(e.Indices) {
+			return nil
+		}
+		idxPos := map[int]bool{}
+		for _, ib := range e.Indices {
+			idxPos[ib.Pos] = true
+		}
+		var terms []string
+		for i, a := range args {
+			if idxPos[i] {
+				terms = append(terms, a)
+			}
+		}
+		return terms
+	}
+	return nil
+}
+
+// instantiationBase splits "Vec[T, n+1]" into base name and args.
+func instantiationBase(text string) (string, []string) {
+	open := strings.IndexByte(text, '[')
+	if open <= 0 || !strings.HasSuffix(text, "]") {
+		return "", nil
+	}
+	base := strings.TrimSpace(text[:open])
+	if i := strings.LastIndexByte(base, '.'); i >= 0 {
+		base = base[i+1:]
+	}
+	var args []string
+	for _, part := range splitArgsTopLevel(text[open+1 : len(text)-1]) {
+		args = append(args, strings.TrimSpace(part))
+	}
+	return base, args
+}
+
+// splitArgsTopLevel splits comma-separated args at bracket depth zero.
+func splitArgsTopLevel(s string) []string {
+	var out []string
+	depth, start := 0, 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '[', '(':
+			depth++
+		case ']', ')':
+			depth--
+		case ',':
+			if depth == 0 {
+				out = append(out, s[start:i])
+				start = i + 1
+			}
+		}
+	}
+	return append(out, s[start:])
 }

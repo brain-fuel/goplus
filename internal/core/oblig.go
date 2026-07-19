@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"go/ast"
 	"math/big"
 )
 
@@ -144,4 +145,85 @@ func obligLin(t Term) VLin {
 		}
 	}
 	return linAtom(VNeu{N: NVar{Name: t.String()}})
+}
+
+// IndexClash reports whether a use-site index term and a variant's
+// index term can NEVER unify: both normalize symbolically (free
+// variables as non-negative nat atoms, unknown calls neutral) and
+// either ground constructor tags differ or the difference is a linear
+// form with no root.
+func IndexClash(useTerm, variantTerm string, tagOf func(string) (string, bool)) bool {
+	ct, err1 := ParseIndexTerm(useTerm, permissiveResolver)
+	vt, err2 := ParseIndexTerm(variantTerm, permissiveResolver)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	if tagOf != nil {
+		ct = ResolveTags(ct, tagOf)
+		vt = ResolveTags(vt, tagOf)
+	}
+	// The variant's binders are its own scope: α-rename them apart so a
+	// caller-side variable that happens to share a name never aliases.
+	vt = renameFree(vt, "gpp·v·")
+	cv, vv := symbolicValue(ct), symbolicValue(vt)
+	if cv == nil || vv == nil {
+		return false
+	}
+	if cc, ok1 := cv.(VCtor); ok1 {
+		if vc, ok2 := vv.(VCtor); ok2 {
+			return cc.Name != vc.Name
+		}
+		return false
+	}
+	return LinNeverZero(cv, vv)
+}
+
+func permissiveResolver(fun ast.Expr) (string, bool) {
+	switch fn := fun.(type) {
+	case *ast.Ident:
+		return fn.Name, true
+	case *ast.SelectorExpr:
+		return fn.Sel.Name, true
+	}
+	return "", false
+}
+
+// symbolicValue evaluates a term with every free variable as a nat atom.
+func symbolicValue(t Term) Value {
+	env := Env{}
+	for _, fv := range FreeVars(t) {
+		env[fv] = NatVar(fv)
+	}
+	v, err := EvalSymbolic(t, env)
+	if err != nil {
+		return nil
+	}
+	return v
+}
+
+// renameFree prefixes every free variable of a term.
+func renameFree(t Term, prefix string) Term {
+	switch x := t.(type) {
+	case Var:
+		return Var{Name: prefix + x.Name}
+	case Prim:
+		args := make([]Term, len(x.Args))
+		for i, a := range x.Args {
+			args[i] = renameFree(a, prefix)
+		}
+		return Prim{Op: x.Op, Args: args}
+	case Ctor:
+		args := make([]Term, len(x.Args))
+		for i, a := range x.Args {
+			args[i] = renameFree(a, prefix)
+		}
+		return Ctor{Type: x.Type, Name: x.Name, Args: args}
+	case Call:
+		args := make([]Term, len(x.Args))
+		for i, a := range x.Args {
+			args[i] = renameFree(a, prefix)
+		}
+		return Call{Fn: x.Fn, Args: args}
+	}
+	return t
 }

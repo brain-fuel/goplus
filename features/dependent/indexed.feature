@@ -32,8 +32,6 @@ Feature: Indexed enums (nat indices)
       func sum(v Vec[int, 2]) int {
       	total := 0
       	match v {
-      	case Nil():
-      		total = -1
       	case Cons(h, t):
       		total = h
       		match t {
@@ -91,23 +89,17 @@ Feature: Indexed enums (nat indices)
 
       func depth(c Counter[2]) int {
       	match c {
-      	case Start():
-      		return 0
       	case Tick(p):
       		return depthAny(p) + 1
       	}
-      	return -1
       }
 
       func depthAny(c Counter[1]) int {
       	match c {
-      	case Start():
-      		return 0
       	case Tick(p):
       		_ = p
       		return 1
       	}
-      	return -1
       }
 
       func main() {
@@ -149,8 +141,6 @@ Feature: Indexed enums (nat indices)
       func sum(v vec.Vec[int, 2]) int {
       	total := 0
       	match v {
-      	case vec.Nil():
-      		total = -1
       	case vec.Cons(h, t):
       		total = h
       		_ = t
@@ -247,16 +237,9 @@ Feature: Indexed enums (nat indices)
 
       func name(r geo.Region[geo.Circle(3), 3]) string {
       	match r {
-      	case geo.Origin():
-      		return "origin"
       	case geo.Disc(rad):
       		return fmt.Sprint("disc", rad)
-      	case geo.Box(w, h):
-      		_ = w
-      		_ = h
-      		return "box"
       	}
-      	return "?"
       }
 
       func main() {
