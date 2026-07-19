@@ -29,7 +29,7 @@ Feature: Quantity prefixes and total functions parse and strip
       	return x + s
       }
 
-      func through(q f func() int) int {
+      func through[q mult](q f func() int) int {
       	return f()
       }
 

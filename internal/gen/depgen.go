@@ -125,6 +125,56 @@ func processDeps(f *sourceFile, pkgPath string, totals map[*ast.FuncDecl]bool, p
 			continue
 		}
 
+		// Multiplicity variables: `[m mult]` binders erase from the
+		// type-parameter list; every non-numeric quantity must name one.
+		multVars := map[string]bool{}
+		if tp := fd.Type.TypeParams; tp != nil {
+			var multFields []*ast.Field
+			for _, fld := range tp.List {
+				if id, isID := fld.Type.(*ast.Ident); isID && id.Name == "mult" {
+					multFields = append(multFields, fld)
+					for _, n := range fld.Names {
+						multVars[n.Name] = true
+					}
+				}
+			}
+			if len(multFields) == len(tp.List) && len(multFields) > 0 {
+				edits = append(edits, lower.Edit{Start: src.Offset(tp.Opening), End: src.Offset(tp.Closing) + 1, New: ""})
+			} else {
+				for i, fld := range tp.List {
+					if id, isID := fld.Type.(*ast.Ident); !isID || id.Name != "mult" {
+						continue
+					}
+					start, end := src.Offset(fld.Pos()), src.Offset(fld.End())
+					if i+1 < len(tp.List) {
+						end = src.Offset(tp.List[i+1].Pos())
+					} else if i > 0 {
+						start = src.Offset(tp.List[i-1].End())
+					}
+					edits = append(edits, lower.Edit{Start: start, End: end, New: ""})
+				}
+			}
+		}
+		quantities := map[string]string{}
+		badQ := false
+		for _, p := range params {
+			if p.quantity == "" {
+				continue
+			}
+			if p.quantity != "0" && p.quantity != "1" && !multVars[p.quantity] {
+				errf(p.name, "quantity %s of parameter %s is not 0, 1, or a declared multiplicity variable ([%s mult])", p.quantity, p.name.Name, p.quantity)
+				badQ = true
+				continue
+			}
+			quantities[p.name.Name] = p.quantity
+		}
+		if badQ {
+			continue
+		}
+		for _, qerr := range checkQuantities(fd, quantities) {
+			errf(fd, "%v", qerr)
+		}
+
 		// Marker: flattened original signature with quantities.
 		var parts []string
 		for _, p := range params {
