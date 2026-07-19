@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"goforge.dev/gpp/internal/core"
 	"goforge.dev/gpp/internal/diag"
 	"goforge.dev/gpp/internal/directive"
 	"goforge.dev/gpp/internal/emit"
@@ -59,6 +60,7 @@ func Run(opts Options) (*Result, error) {
 	enumsByDir := map[string][]*registry.Enum{}
 	classesByDir := map[string][]*registry.Class{}
 	instancesByDir := map[string][]*registry.Instance{}
+	totalsByDir := map[string][]*registry.Total{}
 	lawsOutByDir := map[string]string{}
 	gppSources := map[string][]byte{} // output abs path -> .gpp source bytes
 	gppPaths := map[string]string{}   // output abs path -> .gpp path (relative)
@@ -67,7 +69,7 @@ func Run(opts Options) (*Result, error) {
 		idx, diags := loadDir(dir)
 		res.Diags = append(res.Diags, diags...)
 		if idx != nil && len(diags) == 0 {
-			outs, methods, enums, classes, instances, lawsOut, pdiags := processPackage(idx, pkgPath(pkgPathRoot, moduleRoot, dir))
+			outs, methods, enums, classes, instances, totals, lawsOut, pdiags := processPackage(idx, pkgPath(pkgPathRoot, moduleRoot, dir))
 			res.Diags = append(res.Diags, pdiags...)
 			for path, content := range outs {
 				outputs[path] = content
@@ -76,6 +78,7 @@ func Run(opts Options) (*Result, error) {
 			enumsByDir[dir] = enums
 			classesByDir[dir] = classes
 			instancesByDir[dir] = instances
+			totalsByDir[dir] = totals
 			lawsOutByDir[dir] = lawsOut
 			for _, f := range idx.files {
 				if f.gpp != nil {
@@ -105,6 +108,7 @@ func Run(opts Options) (*Result, error) {
 			EnumsByDir:     enumsByDir,
 			ClassesByDir:   classesByDir,
 			InstancesByDir: instancesByDir,
+			TotalsByDir:    totalsByDir,
 		}
 		out, err := resolve.Fixpoint(in)
 		if err != nil {
@@ -298,7 +302,7 @@ func loadDir(dir string) (*pkgIndex, []diag.Diagnostic) {
 // processPackage lowers every .gpp file of one package to output bytes,
 // also returning the package's generic methods and enums for the
 // resolution registry.
-func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*registry.Method, []*registry.Enum, []*registry.Class, []*registry.Instance, string, []diag.Diagnostic) {
+func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*registry.Method, []*registry.Enum, []*registry.Class, []*registry.Instance, []*registry.Total, string, []diag.Diagnostic) {
 	var diags []diag.Diagnostic
 
 	tbl := naming.NewTable()
@@ -352,6 +356,20 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*regist
 	for _, err := range planFolds(idx, enums, tbl, shared) {
 		diags = append(diags, diag.Errorf("%s", err))
 	}
+
+	// Total functions (v0.7.0): every total's key is known before any
+	// file is processed so cross-file same-package calls check.
+	totalLocals := map[string]bool{}
+	for _, f := range idx.files {
+		if f.gpp == nil {
+			continue
+		}
+		for _, t := range f.gpp.Totals {
+			totalLocals[pkgPath+"."+t.Decl.Name.Name] = true
+		}
+	}
+	totalDefs := core.Defs{}
+	var allTotals []*registry.Total
 
 	methodNames := map[*syntax.GenericMethod]string{}
 	enumMethods := map[*sourceFile][]*syntax.GenericMethod{}
@@ -421,7 +439,7 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*regist
 		}
 	}
 	if len(diags) > 0 {
-		return nil, nil, nil, nil, nil, "", diags
+		return nil, nil, nil, nil, nil, nil, "", diags
 	}
 
 	outputs := map[string][]byte{}
@@ -447,9 +465,10 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*regist
 		for _, q := range f.gpp.Quantities {
 			edits = append(edits, lower.QuantityEdits(f.gpp, q)...)
 		}
-		for _, t := range f.gpp.Totals {
-			edits = append(edits, lower.TotalEdits(f.gpp, t)...)
-		}
+		tedits, ttotals, tdiags := processTotals(f, pkgPath, totalLocals, totalDefs)
+		edits = append(edits, tedits...)
+		allTotals = append(allTotals, ttotals...)
+		diags = append(diags, tdiags...)
 		hedits, hdiags := lower.NewHoister(f.gpp, len(f.gpp.Matches)).FileEdits()
 		diags = append(diags, hdiags...)
 		edits = append(edits, hedits...)
@@ -479,9 +498,9 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*regist
 		outputs[emit.OutputPath(f.path)] = out
 	}
 	if len(diags) > 0 {
-		return nil, nil, nil, nil, nil, "", diags
+		return nil, nil, nil, nil, nil, nil, "", diags
 	}
-	return outputs, allMethods, enums.models, classModels, instModels, lawsOut, nil
+	return outputs, allMethods, enums.models, classModels, instModels, allTotals, lawsOut, nil
 }
 
 // markerFor renders the //gpp:method marker comment for a lowered method.

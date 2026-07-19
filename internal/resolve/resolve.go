@@ -40,6 +40,7 @@ type Input struct {
 	// v0.5.0 typeclasses (PkgPath provisional, cloned on registration).
 	ClassesByDir   map[string][]*registry.Class
 	InstancesByDir map[string][]*registry.Instance
+	TotalsByDir    map[string][]*registry.Total
 }
 
 // Output is the fixpoint result.
@@ -189,6 +190,11 @@ func buildRegistry(reg *registry.Registry, roots []*packages.Package, in *Input)
 				clone.PkgPath = pkg.PkgPath
 				record(reg.AddInstance(&clone))
 			}
+			for _, t := range in.TotalsByDir[dir] {
+				clone := *t
+				clone.PkgPath = pkg.PkgPath
+				record(reg.AddTotal(&clone))
+			}
 			return
 		}
 		// Dependency package: scan distributed sources for markers.
@@ -210,6 +216,14 @@ func buildRegistry(reg *registry.Registry, roots []*packages.Package, in *Input)
 				if err == nil {
 					for _, e := range enums {
 						record(reg.AddEnum(e))
+					}
+				}
+			}
+			if strings.Contains(string(src), registry.TotalPrefix) {
+				totals, err := registry.TotalsFromMarkers(pkg.PkgPath, file, src)
+				if err == nil { // marker damage in a dep is not fatal
+					for _, t := range totals {
+						record(reg.AddTotal(t))
 					}
 				}
 			}

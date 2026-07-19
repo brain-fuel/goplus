@@ -72,7 +72,9 @@ func Decide(goal Fact, hyps []Fact) bool {
 				facts[j].L = substAtom(facts[j].L, k, repl)
 			}
 			g.L = substAtom(g.L, k, repl)
-			facts[i].L = linConst(big.NewInt(0)) // consumed
+			// The eliminated atom was a nat (≥ 0): its definition
+			// survives as repl ≥ 0 or the entailment weakens.
+			facts[i] = Fact{Op: FactGe, L: repl}
 			changed = true
 		}
 	}

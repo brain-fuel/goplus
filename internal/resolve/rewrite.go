@@ -96,6 +96,7 @@ func (r *fileResolver) resolve() ([]lower.Edit, []diag.Diagnostic) {
 		case *ast.FuncDecl:
 			r.dictDeclCandidate(x)
 			r.instanceCandidate(x, x.Doc)
+			r.totalCandidate(x)
 		}
 		return true
 	})

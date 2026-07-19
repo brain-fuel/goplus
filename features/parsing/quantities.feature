@@ -21,7 +21,7 @@ Feature: Quantity prefixes and total functions parse and strip
 
       import "fmt"
 
-      total func Twice(a int) int {
+      total func Twice(a nat) nat {
       	return a + a
       }
 

@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"math/big"
+	"strings"
 )
 
 // Termination checking (v0.7.0): every self-recursive call must shrink
@@ -18,10 +19,12 @@ import (
 // functions must be to already-checked definitions (dependency order),
 // and only self-calls are inspected for descent.
 
-// CheckTotal verifies structural termination of def. known holds the
-// already-checked definitions (for arity checks of non-recursive calls).
-func CheckTotal(def *Def, known Defs) error {
-	c := &totalChecker{def: def, known: known}
+// CheckTotal verifies structural termination of def. callable reports
+// whether a non-self callee is a known total function (existence of
+// import-qualified callees may be deferred to a later pass by answering
+// true; nil admits nothing).
+func CheckTotal(def *Def, callable func(string) bool) error {
+	c := &totalChecker{def: def, callable: callable}
 	// smaller[v] = index of the parameter v strictly descends from.
 	smaller := map[string]int{}
 	roots := map[string]int{}
@@ -32,8 +35,8 @@ func CheckTotal(def *Def, known Defs) error {
 }
 
 type totalChecker struct {
-	def   *Def
-	known Defs
+	def      *Def
+	callable func(string) bool
 }
 
 // walk descends the body. roots maps names that ARE a parameter (or an
@@ -99,20 +102,20 @@ func (c *totalChecker) walk(t Term, roots, smaller map[string]int) error {
 			}
 		}
 		if x.Fn != c.def.Name {
-			if _, ok := c.known[x.Fn]; !ok {
-				return fmt.Errorf("total function %s calls %s, which is not a previously declared total function (mutual recursion is not yet supported)", c.def.Name, x.Fn)
+			if c.callable == nil || !c.callable(x.Fn) {
+				return fmt.Errorf("total function %s calls %s, which is not a total function (only total functions may be called here; mutual recursion is not yet supported)", ShortName(c.def.Name), ShortName(x.Fn))
 			}
 			return nil
 		}
 		if len(x.Args) != len(c.def.Params) {
-			return fmt.Errorf("total function %s calls itself with %d arguments, expected %d", c.def.Name, len(x.Args), len(c.def.Params))
+			return fmt.Errorf("total function %s calls itself with %d arguments, expected %d", ShortName(c.def.Name), len(x.Args), len(c.def.Params))
 		}
 		for i, a := range x.Args {
 			if c.decreases(a, i, roots, smaller) {
 				return nil
 			}
 		}
-		return fmt.Errorf("total function %s does not terminate: the recursive call %s shrinks no argument (destructure a parameter with match, or recurse on p-1 for a nat parameter p)", c.def.Name, x)
+		return fmt.Errorf("total function %s does not terminate: this recursive call shrinks no argument (destructure a parameter with match, or recurse on p-1 for a nat parameter p)", ShortName(c.def.Name))
 	}
 	return fmt.Errorf("gpp internal: unknown term %T in termination check", t)
 }
@@ -175,6 +178,15 @@ func symbolicLin(t Term) (VLin, bool) {
 		return out, true
 	}
 	return VLin{}, false
+}
+
+// ShortName strips a canonical "pkgpath.Name" key to its bare name for
+// user-facing messages.
+func ShortName(key string) string {
+	if i := strings.LastIndex(key, "."); i >= 0 {
+		return key[i+1:]
+	}
+	return key
 }
 
 func cloneIdx(m map[string]int) map[string]int {
