@@ -92,17 +92,18 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 			}
 			return
 		}
+		resolveKey := fileCallResolver(r.pkg.PkgPath, r.file)
 		sub := map[string]core.Term{}
 		for j, p := range d.Params {
 			if j == i || j >= len(call.Args) {
 				continue
 			}
 			argText := string(r.src[r.off(call.Args[j].Pos()):r.off(call.Args[j].End())])
-			if t, err := core.ParseIndexTerm(argText, nil); err == nil {
+			if t, err := core.ParseIndexTerm(argText, resolveKey); err == nil {
 				sub[p.Name] = t
 			}
 		}
-		ok, err := core.DecideEqTexts(eqArgs[0], eqArgs[1], sub)
+		ok, err := core.DecideEqTexts(eqArgs[0], eqArgs[1], sub, r.reg.TotalDefs(), resolveKey)
 		if err != nil || !ok {
 			if r.report {
 				r.errorf(a.Pos(), "cannot prove %s = %s at this call to %s; the arithmetic decider could not discharge refl (rephrase the indices or pass values that make the equality manifest)",
@@ -279,4 +280,24 @@ func importAliasFor(file *ast.File, path string) (string, bool) {
 		return p[strings.LastIndex(p, "/")+1:], true
 	}
 	return "", false
+}
+
+// fileCallResolver canonicalizes callee names against a file's imports
+// (the marker-side twin lives in registry).
+func fileCallResolver(pkgPath string, file *ast.File) core.CallResolver {
+	return func(fun ast.Expr) (string, bool) {
+		switch f := fun.(type) {
+		case *ast.Ident:
+			return pkgPath + "." + f.Name, true
+		case *ast.SelectorExpr:
+			alias, ok := f.X.(*ast.Ident)
+			if !ok {
+				return "", false
+			}
+			if path, found := fileImportPath(file, alias.Name); found {
+				return path + "." + f.Sel.Name, true
+			}
+		}
+		return "", false
+	}
 }

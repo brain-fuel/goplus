@@ -109,3 +109,34 @@ MultVar       = identifier  (* names a multiplicity type parameter [m mult] *) .
     checking (termination, usage, 0-erasure of parameters) is the
     dependent core's work.
 *)
+
+(* ---------------- Indexed enums, Eq, and linear cells --------------------- *)
+
+EnumTParam  = identifier ( Constraint | IndexSort ) .
+IndexSort   = "nat" | DomainEnumName .
+IndexTerm   = nat_lit | IndexVar | Tag [ "(" IndexTerm { "," IndexTerm } ")" ]
+            | IndexTerm ("+"|"-"|"*") IndexTerm | TotalCall .
+
+(*
+  - An enum tparam constrained by nat (or by a zero-tparam enum whose
+    variant parameters are all index-sorted — a DOMAIN) is a value
+    index. Variant results and fields instantiate the enum at index
+    TERMS; erasure drops binders and arguments everywhere, and the
+    unerased declaration travels in the markers.
+  - A match whose scrutinee's index is known (via //gpp:dep or the
+    resolver's param-index table) prunes impossible variants from
+    exhaustiveness; an explicit impossible arm is an error naming both
+    indices.
+  - Eq[a, b] is a proposition usable only as a 0-quantity parameter,
+    discharged at call sites by `refl` through the decider under
+    parameter substitution.
+  - total-function bodies admit guarded nat subtraction: a - b where
+    the path facts prove a ≥ b.
+  - A linear (1) parameter erases to a generated use-once cell:
+    `1 f T` becomes `f Lin[T]`, the single consumption becomes
+    f.Use(), call sites wrap with LinOf, and //gpp:once marks the
+    generated trio. Variadic parameters cannot be linear.
+  - Exported dependent functions guard erased preconditions at runtime:
+    variants their parameter indices make impossible panic with a
+    precise message when plain Go passes them.
+*)

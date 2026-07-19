@@ -265,18 +265,19 @@ func SubstVars(t Term, sub map[string]Term) Term {
 
 // DecideEqTexts parses two index terms, substitutes caller argument
 // terms for callee parameter names, and asks the decider whether the
-// equality holds symbolically (free variables as non-negative nats).
-func DecideEqTexts(aText, bText string, sub map[string]Term) (bool, error) {
-	a, err := ParseIndexTerm(aText, permissiveResolver)
+// equality holds symbolically (free variables as non-negative nats;
+// total calls unfold through defs when their arguments ground).
+func DecideEqTexts(aText, bText string, sub map[string]Term, defs Defs, resolve CallResolver) (bool, error) {
+	a, err := ParseIndexTerm(aText, resolve)
 	if err != nil {
 		return false, err
 	}
-	b, err := ParseIndexTerm(bText, permissiveResolver)
+	b, err := ParseIndexTerm(bText, resolve)
 	if err != nil {
 		return false, err
 	}
 	a, b = SubstVars(a, sub), SubstVars(b, sub)
-	av, bv := symbolicValue(a), symbolicValue(b)
+	av, bv := symbolicValueDefs(a, defs), symbolicValueDefs(b, defs)
 	if av == nil || bv == nil {
 		return false, nil
 	}

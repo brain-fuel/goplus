@@ -7,6 +7,53 @@ Generated packages compile with the standard Go toolchain and may be
 distributed and consumed **without** G++ — the same interoperability story
 Kotlin, Scala, and Clojure have with Java.
 
+## v0.7.0 — The Dependent Core
+
+```go
+// Length-indexed vectors: the index is real, checked, and erased.
+type Vec[T any, n nat] enum {
+	Nil() Vec[T, 0]
+	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+}
+
+// 0-quantity parameters exist only at check time:
+func Head[T any](0 n nat, v Vec[T, n+1]) T {
+	match v {
+	case Cons(h, t): // Nil is impossible at n+1 — no other arm needed
+		return h
+	}
+}
+
+// Compiler-verified termination; callable in types:
+total func Plus(a, b nat) nat {
+	if a == 0 { return b }
+	return Plus(a-1, b) + 1
+}
+
+// Propositional equality, discharged by the decider:
+func Cast[T any](0 n nat, 0 m nat, 0 p Eq[n, m], v Vec[T, n]) Vec[T, m] {
+	return v
+}
+w := Cast(1+1, 2, refl, v) // proves 1+1 = 2; erases to the identity
+
+// Linearity — consumed exactly once, statically AND at runtime:
+func Process(1 f *os.File) error { return f.Close() }
+```
+
+gpp now carries a real dependent core: quantities (QTT's 0/1/ω plus
+multiplicity variables), total functions with structural termination
+and guarded nat subtraction, enums indexed by nats, enum tags
+(typestate: `Socket[Open]`), and structured first-order data
+(`Region[Circle(n), n]`), a normalization-by-evaluation engine where
+`n+m ≡ m+n` is definitional, and a sound linear-arithmetic decider
+that prunes impossible match arms, discharges `refl` proofs, and
+justifies subtraction. Everything erases: indices vanish from the
+generated Go, exported dependent functions grow precise runtime guards
+for plain-Go callers, and linear values travel as generated use-once
+Lin[T] cells that panic on reuse. `std/vec` ships the length-indexed
+sequence. Where the decider cannot prove an obligation, the error names
+both sides and the workaround — stuck-with-guidance, never silent.
+
 ## v0.6.0 — Folds, Full GADTs, Existentials, Delegation
 
 ```go
@@ -357,7 +404,8 @@ The spec is executable: the Godog/Cucumber feature suite under
 | v0.4.0  | Typed failure: std/result, railway pipes, Kleisli `>=>`, postfix `?`, expression-oriented control flow — shipped |
 | v0.5.0  | Typeclasses: classes, instances, implicit dispatch, laws, std/algebra — shipped |
 | v0.6.0  | Folds, structural GADTs, bounded existentials, delegation — shipped |
-| v0.7.0  | std/parsec: parser combinators |
+| v0.7.0  | The dependent core: QTT quantities, total functions, indexed enums, Eq, linearity, std/vec — shipped |
+| v0.8.0  | std/parsec: parser combinators |
 
 ## License
 

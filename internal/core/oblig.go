@@ -189,12 +189,17 @@ func permissiveResolver(fun ast.Expr) (string, bool) {
 }
 
 // symbolicValue evaluates a term with every free variable as a nat atom.
-func symbolicValue(t Term) Value {
+func symbolicValue(t Term) Value { return symbolicValueDefs(t, nil) }
+
+// symbolicValueDefs is symbolicValue with total definitions available:
+// ground total calls unfold; unknown or stuck calls stay neutral.
+func symbolicValueDefs(t Term, defs Defs) Value {
 	env := Env{}
 	for _, fv := range FreeVars(t) {
 		env[fv] = NatVar(fv)
 	}
-	v, err := EvalSymbolic(t, env)
+	ev := &Evaluator{Defs: defs, Fuel: 1 << 16, Permissive: true}
+	v, err := ev.Eval(t, env)
 	if err != nil {
 		return nil
 	}
