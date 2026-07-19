@@ -295,30 +295,30 @@ func (r *fileResolver) receiverTypeArgs(at token.Pos, h *hit) ([]string, bool) {
 		return nil, true
 	}
 	if h.viaEnum != nil {
-		// Variant-struct receiver: rebuild the enum's type arguments from
-		// the variant's kept arguments plus its ground result positions.
+		// Variant-struct receiver: rebuild the enum's type arguments by
+		// substituting the struct's instantiation (occurring tparams) into
+		// the variant's result-arg patterns.
 		v := variantByTypeName(h.viaEnum, h.named.Obj().Name())
 		if v == nil {
 			return nil, false
 		}
-		out := make([]string, len(h.viaEnum.TParams))
-		if v.ResultArgs != nil {
-			for i, arg := range v.ResultArgs {
-				out[i] = arg
-			}
-		}
-		kept := keptIndices(h.viaEnum, v)
+		occ := v.OccursIn(h.viaEnum)
 		ta := h.named.TypeArgs()
-		if ta == nil || ta.Len() != len(kept) {
+		if (ta == nil && len(occ) != 0) || (ta != nil && ta.Len() != len(occ)) {
 			return nil, false
 		}
-		for i, ki := range kept {
+		bind := map[string]string{}
+		for i, oi := range occ {
 			text, err := r.typeText(ta.At(i))
 			if err != nil {
 				r.errorf(at, "%v", err)
 				return nil, false
 			}
-			out[ki] = text
+			bind[h.viaEnum.TParams[oi]] = text
+		}
+		out, ok := enumArgsFromBind(h.viaEnum, v, bind)
+		if !ok {
+			return nil, false
 		}
 		return out, true
 	}

@@ -152,9 +152,9 @@ func (r *fileResolver) inferComposeCtor(op *composeOp, incoming types.Type) bool
 		}
 		targs = make([]string, len(e.TParams))
 		if v.ResultArgs != nil {
-			kept := keptSet(e, v)
+			tset := tparamSetOf(e)
 			for i, arg := range v.ResultArgs {
-				if !kept[i] {
+				if !textHasTParam(arg, tset) {
 					targs[i] = arg
 				}
 			}
@@ -207,9 +207,10 @@ func (r *fileResolver) inferComposeCtor(op *composeOp, incoming types.Type) bool
 	if len(e.TParams) > 0 {
 		enumText += "[" + strings.Join(targs, ", ") + "]"
 	}
-	subst := map[string]string{}
-	for i, n := range e.TParams {
-		subst[n] = targs[i]
+	subst, sok := variantSubst(e, v, targs)
+	if !sok {
+		r.errorf(op.expr.Pos(), "cannot infer the type arguments of constructor %s; instantiate it: %s[...]", v.Name, v.Name)
+		return false
 	}
 	paramText, serr := substTypeTextLite(v.Params[0].Type, subst)
 	if serr != nil {

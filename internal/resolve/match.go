@@ -3,6 +3,7 @@ package resolve
 import (
 	"fmt"
 	"go/ast"
+	"go/parser"
 	"go/token"
 	"go/types"
 	"strings"
@@ -87,7 +88,7 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 			tparamNames[tp.Obj().Name()] = true
 		}
 	}
-	rootCol := patCol{enum: e, targs: targTexts}
+	rootCol := patCol{enum: e, targs: targTexts, pos: subj.Pos()}
 
 	possible := map[string]bool{}
 	for _, v := range e.Variants {
@@ -138,7 +139,7 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 			a.nested = true
 			anyNested = true
 		}
-		a.refined = refinements(e, rp.variant, targTypes)
+		a.refined = r.refinements(e, rp.variant, targTypes)
 		arms = append(arms, a)
 	}
 	if failed {
@@ -233,7 +234,7 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 			}
 		}
 		totalBindings += len(bindings)
-		head, headOK := r.rpatCaseType(a.pat)
+		head, headOK := r.rpatCaseType(a.pat, a.clause.Case)
 		if !headOK {
 			return
 		}
@@ -286,25 +287,82 @@ func patNested(p *rpat) bool {
 	return false
 }
 
-// refinements computes scrutinee-tparam refinements a variant implies:
-// ground result positions whose scrutinee argument is a type parameter.
-func refinements(e *registry.Enum, v *registry.EnumVariant, targTypes []types.Type) map[string]string {
+// refinements computes scrutinee-tparam refinements a variant implies,
+// structurally: wherever a scrutinee-side type parameter aligns with a
+// GROUND subterm of the variant's result-arg pattern, the parameter
+// refines to that subterm's text.
+func (r *fileResolver) refinements(e *registry.Enum, v *registry.EnumVariant, targTypes []types.Type) map[string]string {
 	if v.ResultArgs == nil {
 		return nil
 	}
+	tset := map[string]bool{}
+	for _, n := range e.TParams {
+		tset[n] = true
+	}
 	out := map[string]string{}
 	for i, arg := range v.ResultArgs {
-		if i >= len(e.TParams) || arg == e.TParams[i] {
+		if i >= len(targTypes) {
 			continue
 		}
-		if tp, isTP := targTypes[i].(*types.TypeParam); isTP {
-			out[tp.Obj().Name()] = arg
+		pat, err := parser.ParseExpr(arg)
+		if err != nil {
+			continue
 		}
+		r.refineFromPat(pat, targTypes[i], tset, out)
 	}
 	if len(out) == 0 {
 		return nil
 	}
 	return out
+}
+
+// refineFromPat walks a pattern against a scrutinee type, recording
+// refinements where a scrutinee type parameter aligns with a ground
+// pattern subterm.
+func (r *fileResolver) refineFromPat(pat ast.Expr, actual types.Type, tset map[string]bool, out map[string]string) {
+	if tp, isTP := types.Unalias(actual).(*types.TypeParam); isTP {
+		text := exprText(pat)
+		if !textHasTParam(text, tset) {
+			out[tp.Obj().Name()] = text
+		}
+		return
+	}
+	switch p := pat.(type) {
+	case *ast.StarExpr:
+		if a, ok := types.Unalias(actual).(*types.Pointer); ok {
+			r.refineFromPat(p.X, a.Elem(), tset, out)
+		}
+	case *ast.ArrayType:
+		switch a := types.Unalias(actual).(type) {
+		case *types.Slice:
+			if p.Len == nil {
+				r.refineFromPat(p.Elt, a.Elem(), tset, out)
+			}
+		case *types.Array:
+			if p.Len != nil {
+				r.refineFromPat(p.Elt, a.Elem(), tset, out)
+			}
+		}
+	case *ast.MapType:
+		if a, ok := types.Unalias(actual).(*types.Map); ok {
+			r.refineFromPat(p.Key, a.Key(), tset, out)
+			r.refineFromPat(p.Value, a.Elem(), tset, out)
+		}
+	case *ast.ChanType:
+		if a, ok := types.Unalias(actual).(*types.Chan); ok {
+			r.refineFromPat(p.Value, a.Elem(), tset, out)
+		}
+	case *ast.IndexExpr:
+		if a, ok := types.Unalias(actual).(*types.Named); ok && a.TypeArgs() != nil && a.TypeArgs().Len() == 1 {
+			r.refineFromPat(p.Index, a.TypeArgs().At(0), tset, out)
+		}
+	case *ast.IndexListExpr:
+		if a, ok := types.Unalias(actual).(*types.Named); ok && a.TypeArgs() != nil && a.TypeArgs().Len() == len(p.Indices) {
+			for i, idx := range p.Indices {
+				r.refineFromPat(idx, a.TypeArgs().At(i), tset, out)
+			}
+		}
+	}
 }
 
 // enclosingResultIdents finds the enclosing function's result types that
@@ -486,25 +544,33 @@ func (r *fileResolver) localTypeString(t types.Type) string {
 }
 
 // variantPossible applies GADT filtering: can this variant inhabit the
-// scrutinee's instantiation?
+// scrutinee's instantiation? Structural under v0.6.0: each result-arg
+// pattern must be lax-compatible with the scrutinee's argument (pattern
+// tparams and scrutinee type parameters match anything; ground leaves
+// compare by identity in the enum's package).
 func (r *fileResolver) variantPossible(e *registry.Enum, v *registry.EnumVariant, targTypes []types.Type, targTexts []string) bool {
 	if v.ResultArgs == nil {
 		return true
 	}
+	patWild := map[string]bool{}
+	for _, n := range e.TParams {
+		patWild[n] = true
+	}
+	groundEq := func(a, b string) bool {
+		ga := r.evalInPkg(e.PkgPath, a)
+		gb := r.evalInPkg(e.PkgPath, b)
+		return ga != nil && gb != nil && types.Identical(ga, gb)
+	}
 	for i, arg := range v.ResultArgs {
-		if i >= len(e.TParams) || arg == e.TParams[i] {
-			continue // kept position
+		if i >= len(targTypes) {
+			return false
 		}
 		if _, isTP := targTypes[i].(*types.TypeParam); isTP {
-			continue // refinable at runtime
+			continue // refinable (or unmatchable) at this position
 		}
-		if targTexts[i] == arg {
-			continue
+		if !laxCompatible(arg, targTexts[i], patWild, nil, groundEq) {
+			return false
 		}
-		if ground := r.evalInPkg(e.PkgPath, arg); ground != nil && types.Identical(ground, targTypes[i]) {
-			continue
-		}
-		return false
 	}
 	return true
 }

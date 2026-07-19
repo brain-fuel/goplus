@@ -156,7 +156,7 @@ func (r *fileResolver) chainPattern(b *strings.Builder, arm *armAnalysis, rootVa
 
 // emitPatChecks recursively emits assert-and-test lines for a pattern.
 func (r *fileResolver) emitPatChecks(b *strings.Builder, p *rpat, val string, temps *int, bindings *[]string, closers *int, binder, bodyText string) bool {
-	head, headOK := r.rpatCaseType(p)
+	head, headOK := r.rpatCaseType(p, p.col.pos)
 	if !headOK {
 		return false
 	}
@@ -202,7 +202,7 @@ func (r *fileResolver) emitPatChecks(b *strings.Builder, p *rpat, val string, te
 
 // rpatCaseType renders the (instantiated, possibly package-qualified)
 // struct type a pattern node asserts to.
-func (r *fileResolver) rpatCaseType(p *rpat) (string, bool) {
+func (r *fileResolver) rpatCaseType(p *rpat, at token.Pos) (string, bool) {
 	name := p.variant.TypeName
 	if p.col.enum.PkgPath != r.pkg.PkgPath {
 		alias, ok := r.importName(p.col.enum.PkgPath)
@@ -212,18 +212,17 @@ func (r *fileResolver) rpatCaseType(p *rpat) (string, bool) {
 		}
 		name = alias + "." + name
 	}
-	kept := keptIndices(p.col.enum, p.variant)
-	if len(kept) == 0 {
+	occ := p.variant.OccursIn(p.col.enum)
+	if len(occ) == 0 {
 		return name, true
 	}
-	parts := make([]string, len(kept))
-	for i, ki := range kept {
-		if ki >= len(p.col.targs) {
-			return "", false
-		}
-		parts[i] = p.col.targs[ki]
+	bind, ok := variantSubst(p.col.enum, p.variant, p.col.targs)
+	if !ok {
+		r.errorf(at, "pattern %s cannot be matched against %s[%s]: the type arguments do not determine the variant's type parameters under Go's erasure; match on a scrutinee whose type reveals them, or use 'case _:'",
+			p.variant.Name, p.col.enum.Name, strings.Join(p.col.targs, ", "))
+		return "", false
 	}
-	return name + "[" + strings.Join(parts, ", ") + "]", true
+	return name + "[" + strings.Join(structArgs(p.col.enum, p.variant, bind), ", ") + "]", true
 }
 
 // enumColFromTypeText resolves a field's type text (in declaring-package
@@ -428,4 +427,3 @@ func (r *fileResolver) resolveRPat(node syntax.PatNode, col patCol, topLevel boo
 	}
 	return rp, ""
 }
-

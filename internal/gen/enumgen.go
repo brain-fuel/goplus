@@ -97,16 +97,20 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 				continue
 			}
 
-			kept, markerArgs, subst, resultArgs, rerr := analyzeResult(src, e, v, tparamNames)
+			occurs, markerArgs, subst, resultArgs, rerr := analyzeResult(src, e, v, tparamNames)
 			if rerr != nil {
 				errAt(v.Name.Pos(), "%v", rerr)
 				ok = false
 				continue
 			}
+			occursNames := map[string]bool{}
+			for _, oi := range occurs {
+				occursNames[tparamNames[oi]] = true
+			}
 
 			vs := lower.EnumVariantSpec{TypeName: typeName, MarkerArgs: markerArgs}
 			var keptSrcs []string
-			for _, ki := range kept {
+			for _, ki := range occurs {
 				keptSrcs = append(keptSrcs, tparamNames[ki]+" "+tparamConstraints[ki])
 				vs.TParamNames = append(vs.TParamNames, tparamNames[ki])
 			}
@@ -117,6 +121,7 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 				TypeName:   typeName,
 				HasParams:  v.Params != nil,
 				ResultArgs: resultArgs,
+				Occurs:     occurs,
 			}
 			exported := ast.IsExported(typeName)
 			paramsSrc := ""
@@ -124,6 +129,27 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 				paramsSrc = string(src.Src[src.Offset(v.Params.Opening)+1 : src.Offset(v.Params.Closing)])
 				for _, field := range v.Params.List {
 					declType := string(src.Src[src.Offset(field.Type.Pos()):src.Offset(field.Type.End())])
+					// A field referencing an enum tparam the variant neither
+					// carries nor grounds is an implicit unbounded
+					// existential — impossible under Go's erasure.
+					for _, name := range tparamOccurrences(field.Type) {
+						_, isTP := func() (int, bool) {
+							for i, n := range tparamNames {
+								if n == name {
+									return i, true
+								}
+							}
+							return 0, false
+						}()
+						if isTP && !occursNames[name] {
+							if _, grounded := subst[name]; !grounded {
+								errAt(field.Type.Pos(),
+									"variant %s: type parameter %s does not appear in the result type %s and is unconstrained; pin it in the result type or declare a bounded variant-level type parameter",
+									vName, name, string(src.Src[src.Offset(v.Result.Pos()):src.Offset(v.Result.End())]))
+								ok = false
+							}
+						}
+					}
 					fieldType, serr := substituteTypeText(declType, subst)
 					if serr != nil {
 						errAt(field.Type.Pos(), "%v", serr)
@@ -173,20 +199,24 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 	return plan, diags
 }
 
-// analyzeResult validates a variant's (explicit or defaulted) result type
-// under the v0.2.0 restriction and reports which enum type parameters the
-// variant keeps, the sealed-method argument texts, the substitution for
-// fixed parameters, and the raw result argument texts (nil if defaulted).
+// analyzeResult analyzes a variant's (explicit or defaulted) result type
+// under the v0.6.0 structural model: each result position may be an
+// arbitrary type expression. It reports the OCCURRING enum type
+// parameters (those appearing anywhere in the result arguments — the
+// variant struct's type parameters, in enum order), the sealed-method
+// argument texts (verbatim), the ground substitution for eliminated
+// parameters (a fully ground position whose own parameter occurs
+// nowhere), and the raw result argument texts (nil if defaulted).
 func analyzeResult(src *syntax.File, e *syntax.EnumDecl, v *syntax.Variant, tparamNames []string) (
-	kept []int, markerArgs []string, subst map[string]string, resultArgs []string, err error) {
+	occurs []int, markerArgs []string, subst map[string]string, resultArgs []string, err error) {
 
 	enumName := e.Spec.Name.Name
 	if v.Result == nil {
 		for i, n := range tparamNames {
-			kept = append(kept, i)
+			occurs = append(occurs, i)
 			markerArgs = append(markerArgs, n)
 		}
-		return kept, markerArgs, nil, nil, nil
+		return occurs, markerArgs, nil, nil, nil
 	}
 
 	base, args := decomposeResult(v.Result)
@@ -201,36 +231,56 @@ func analyzeResult(src *syntax.File, e *syntax.EnumDecl, v *syntax.Variant, tpar
 	for i, n := range tparamNames {
 		tparamSet[n] = i
 	}
-	subst = map[string]string{}
+
+	occursSet := map[int]bool{}
+	ground := make([]bool, len(args))
 	for i, arg := range args {
 		text := string(src.Src[src.Offset(arg.Pos()):src.Offset(arg.End())])
-		switch a := arg.(type) {
-		case *ast.Ident:
-			if a.Name == tparamNames[i] {
-				kept = append(kept, i)
-				markerArgs = append(markerArgs, a.Name)
-				resultArgs = append(resultArgs, text)
-				continue
+		markerArgs = append(markerArgs, text)
+		resultArgs = append(resultArgs, text)
+		ground[i] = true
+		for _, name := range tparamOccurrences(arg) {
+			if _, isTP := tparamSet[name]; isTP {
+				occursSet[tparamSet[name]] = true
+				ground[i] = false
 			}
-			if _, isTParam := tparamSet[a.Name]; isTParam {
-				return nil, nil, nil, nil, fmt.Errorf(
-					"variant %s: unsupported result type %s: v0.2.0 supports the enum's own type parameter (in its own position) or a named type in each position",
-					v.Name.Name, text)
-			}
-			markerArgs = append(markerArgs, text)
-			subst[tparamNames[i]] = text
-			resultArgs = append(resultArgs, text)
-		case *ast.SelectorExpr:
-			markerArgs = append(markerArgs, text)
-			subst[tparamNames[i]] = text
-			resultArgs = append(resultArgs, text)
-		default:
-			return nil, nil, nil, nil, fmt.Errorf(
-				"variant %s: unsupported result type argument %s: v0.2.0 supports the enum's own type parameter or a named type in each position",
-				v.Name.Name, text)
 		}
 	}
-	return kept, markerArgs, subst, resultArgs, nil
+	for i := range tparamNames {
+		if occursSet[i] {
+			occurs = append(occurs, i)
+		}
+	}
+	subst = map[string]string{}
+	for i := range args {
+		if ground[i] && !occursSet[i] {
+			subst[tparamNames[i]] = resultArgs[i]
+		}
+	}
+	return occurs, markerArgs, subst, resultArgs, nil
+}
+
+// tparamOccurrences lists identifier names occurring free in a type
+// expression (selector .Sel names skipped — qualified types never name a
+// type parameter).
+func tparamOccurrences(e ast.Expr) []string {
+	var out []string
+	ast.Inspect(e, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.SelectorExpr:
+			ast.Inspect(x.X, func(m ast.Node) bool {
+				if id, ok := m.(*ast.Ident); ok {
+					out = append(out, id.Name)
+				}
+				return true
+			})
+			return false
+		case *ast.Ident:
+			out = append(out, x.Name)
+		}
+		return true
+	})
+	return out
 }
 
 // decomposeResult splits `Expr[int, T]` (or bare `Shape`) into base ident

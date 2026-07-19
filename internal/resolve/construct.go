@@ -284,9 +284,12 @@ func (r *fileResolver) inferTargs(use *ctorUse) ([]string, bool) {
 	targs := make([]string, len(e.TParams))
 	filled := 0
 	if v.ResultArgs != nil {
-		kept := keptSet(e, v)
+		tset := map[string]bool{}
+		for _, n := range e.TParams {
+			tset[n] = true
+		}
 		for i, arg := range v.ResultArgs {
-			if !kept[i] {
+			if !textHasTParam(arg, tset) {
 				targs[i] = arg
 				filled++
 			}
@@ -498,34 +501,24 @@ func (r *fileResolver) ctorTypeText(use *ctorUse, targs []string) (string, bool)
 		}
 		name = alias + "." + name
 	}
-	kept := keptIndices(use.enum, use.variant)
-	if len(kept) == 0 {
+	occ := use.variant.OccursIn(use.enum)
+	if len(occ) == 0 {
 		return name, true
 	}
-	parts := make([]string, len(kept))
-	for i, ki := range kept {
-		parts[i] = targs[ki]
+	bind, ok := variantSubst(use.enum, use.variant, targs)
+	if !ok {
+		r.errorf(use.name.Pos(), "constructor %s cannot be instantiated at %s[%s]: the type arguments do not determine the variant's type parameters under Go's erasure",
+			use.variant.Name, use.enum.Name, strings.Join(targs, ", "))
+		return "", false
 	}
-	return name + "[" + strings.Join(parts, ", ") + "]", true
+	return name + "[" + strings.Join(structArgs(use.enum, use.variant, bind), ", ") + "]", true
 }
 
-// keptIndices lists the enum type parameters a variant's struct keeps
-// (GADT result refinement fixes the others).
+// keptIndices lists the enum type parameters a variant's struct carries
+// — under the v0.6.0 structural model, every parameter OCCURRING
+// anywhere in the result arguments.
 func keptIndices(e *registry.Enum, v *registry.EnumVariant) []int {
-	if v.ResultArgs == nil {
-		out := make([]int, len(e.TParams))
-		for i := range out {
-			out[i] = i
-		}
-		return out
-	}
-	var out []int
-	for i, arg := range v.ResultArgs {
-		if i < len(e.TParams) && arg == e.TParams[i] {
-			out = append(out, i)
-		}
-	}
-	return out
+	return v.OccursIn(e)
 }
 
 func keptSet(e *registry.Enum, v *registry.EnumVariant) map[int]bool {
@@ -537,22 +530,21 @@ func keptSet(e *registry.Enum, v *registry.EnumVariant) map[int]bool {
 }
 
 // explicitTargs maps explicit instantiation texts onto the enum's type
-// parameters (explicit args instantiate the kept set).
+// parameters (explicit args instantiate the variant's occurring set).
 func (r *fileResolver) explicitTargs(use *ctorUse) ([]string, bool) {
-	kept := keptIndices(use.enum, use.variant)
-	if len(use.explicit) != len(kept) {
+	occ := use.variant.OccursIn(use.enum)
+	if len(use.explicit) != len(occ) {
 		r.errorf(use.name.Pos(), "constructor %s takes %d type arguments, got %d",
-			use.variant.Name, len(kept), len(use.explicit))
+			use.variant.Name, len(occ), len(use.explicit))
 		return nil, false
 	}
-	targs := make([]string, len(use.enum.TParams))
-	if use.variant.ResultArgs != nil {
-		for i, arg := range use.variant.ResultArgs {
-			targs[i] = arg
-		}
+	bind := map[string]string{}
+	for i, oi := range occ {
+		bind[use.enum.TParams[oi]] = r.text(use.explicit[i].Pos(), use.explicit[i].End())
 	}
-	for i, ki := range kept {
-		targs[ki] = r.text(use.explicit[i].Pos(), use.explicit[i].End())
+	targs, ok := enumArgsFromBind(use.enum, use.variant, bind)
+	if !ok {
+		return nil, false
 	}
 	return targs, true
 }
@@ -581,6 +573,14 @@ func (r *fileResolver) targsFromExpected(use *ctorUse, targs []string) ([]string
 			return false
 		}
 		for i, idx := range indices {
+			// A type parameter not in scope at the use site (an
+			// uninstantiated generic callee's own parameter) is not a
+			// usable expectation — fall through to argument inference.
+			if tp, isTP := types.Unalias(ta.At(i)).(*types.TypeParam); isTP {
+				if tp.Obj().Parent() == nil || !tp.Obj().Parent().Contains(use.name.Pos()) {
+					return false
+				}
+			}
 			text, err := r.typeText(ta.At(i))
 			if err != nil {
 				return false
@@ -599,9 +599,29 @@ func (r *fileResolver) targsFromExpected(use *ctorUse, targs []string) ([]string
 			return nil, false
 		}
 	case use.variant.TypeName:
-		kept := keptIndices(use.enum, use.variant)
-		if len(kept) > 0 && !fill(kept, named.TypeArgs()) {
+		occ := use.variant.OccursIn(use.enum)
+		targList := named.TypeArgs()
+		if targList == nil || targList.Len() != len(occ) {
+			if len(occ) != 0 {
+				return nil, false
+			}
+		}
+		bind := map[string]string{}
+		for i, oi := range occ {
+			text, err := r.typeText(targList.At(i))
+			if err != nil {
+				return nil, false
+			}
+			bind[use.enum.TParams[oi]] = text
+		}
+		derived, dok := enumArgsFromBind(use.enum, use.variant, bind)
+		if !dok {
 			return nil, false
+		}
+		for i, d := range derived {
+			if out[i] == "" {
+				out[i] = d
+			}
 		}
 	default:
 		return nil, false
@@ -640,21 +660,51 @@ func (r *fileResolver) targsFromArgs(use *ctorUse, targs []string) ([]string, bo
 			return nil, false
 		}
 	}
-	out := append([]string{}, targs...)
-	for i := range out {
-		if out[i] != "" {
-			continue
-		}
+	bind := map[string]string{}
+	for i, n := range e.TParams {
 		if bound[i] == nil {
-			return nil, false
+			continue
 		}
 		text, err := r.typeText(bound[i])
 		if err != nil {
 			return nil, false
 		}
+		bind[n] = text
+	}
+	out := append([]string{}, targs...)
+	if v.ResultArgs == nil {
+		for i, n := range e.TParams {
+			if out[i] != "" {
+				continue
+			}
+			b, okb := bind[n]
+			if !okb {
+				return nil, false
+			}
+			out[i] = b
+		}
+		return out, true
+	}
+	for i, pat := range v.ResultArgs {
+		if out[i] != "" {
+			continue
+		}
+		text, err := substTypeTextLite(pat, bind)
+		if err != nil || textHasTParam(text, tparamSetOf(e)) {
+			return nil, false
+		}
 		out[i] = text
 	}
 	return out, true
+}
+
+// tparamSetOf builds the enum's tparam name set.
+func tparamSetOf(e *registry.Enum) map[string]bool {
+	out := map[string]bool{}
+	for _, n := range e.TParams {
+		out[n] = true
+	}
+	return out
 }
 
 // unifyDecl structurally unifies a declared parameter type expression
@@ -746,26 +796,30 @@ func (r *fileResolver) unifyInstantiated(base ast.Expr, args []ast.Expr, actual 
 			if v == nil || len(args) != len(e.TParams) {
 				return true
 			}
-			enumArgs := make([]types.Type, len(e.TParams))
-			if v.ResultArgs != nil {
-				for i, argText := range v.ResultArgs {
-					if i < len(e.TParams) && argText != e.TParams[i] {
-						enumArgs[i] = r.evalInPkg(e.PkgPath, argText)
+			// Reconstruct the enum's argument texts from the variant
+			// struct's instantiation (occurring tparams), then evaluate.
+			occ := v.OccursIn(e)
+			ta := named.TypeArgs()
+			bind := map[string]string{}
+			if ta != nil && ta.Len() == len(occ) {
+				for i, oi := range occ {
+					text, err := r.typeText(ta.At(i))
+					if err != nil {
+						return true
 					}
+					bind[e.TParams[oi]] = text
 				}
 			}
-			kept := keptIndices(e, v)
-			ta := named.TypeArgs()
-			if ta != nil && ta.Len() == len(kept) {
-				for i, ki := range kept {
-					enumArgs[ki] = ta.At(i)
-				}
+			enumTexts, eok := enumArgsFromBind(e, v, bind)
+			if !eok {
+				return true
 			}
 			for i, a := range args {
-				if enumArgs[i] == nil {
+				et := r.evalInPkg(e.PkgPath, enumTexts[i])
+				if et == nil {
 					continue
 				}
-				if !r.unifyDecl(a, enumArgs[i], tparams, bound) {
+				if !r.unifyDecl(a, et, tparams, bound) {
 					return false
 				}
 			}

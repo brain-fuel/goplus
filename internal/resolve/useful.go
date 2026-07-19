@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"go/token"
 	"strings"
 
 	"goforge.dev/gpp/internal/registry"
@@ -20,6 +21,7 @@ import (
 type patCol struct {
 	enum  *registry.Enum
 	targs []string
+	pos   token.Pos // diagnostic anchor (the match subject / parent pattern)
 }
 
 // usefulCtx carries the per-match context the engine needs.
@@ -170,11 +172,9 @@ func (u *usefulCtx) specialize(cols []patCol, matrix [][]syntax.PatNode, q []syn
 // fieldColumns derives the column types of a variant's fields under the
 // column's instantiation.
 func (u *usefulCtx) fieldColumns(col patCol, v *registry.EnumVariant) []patCol {
-	subst := map[string]string{}
-	for i, name := range col.enum.TParams {
-		if i < len(col.targs) {
-			subst[name] = col.targs[i]
-		}
+	subst, sok := variantSubst(col.enum, v, col.targs)
+	if !sok {
+		return make([]patCol, len(v.Params)) // opaque columns
 	}
 	out := make([]patCol, len(v.Params))
 	for i, p := range v.Params {
@@ -202,25 +202,25 @@ func (u *usefulCtx) variantPossibleText(col patCol, v *registry.EnumVariant) boo
 	if v.ResultArgs == nil {
 		return true
 	}
-	for i, arg := range v.ResultArgs {
-		if i >= len(col.enum.TParams) || arg == col.enum.TParams[i] {
-			continue
-		}
-		if i >= len(col.targs) {
-			return false
-		}
-		targ := col.targs[i]
-		if targ == arg || u.tparamNames[targ] {
-			continue
-		}
-		if g := u.r.evalInPkg(col.enum.PkgPath, arg); g != nil {
-			if s := u.r.evalInPkg(col.enum.PkgPath, targ); s != nil {
-				if typesIdentical(g, s) {
-					continue
-				}
+	patWild := map[string]bool{}
+	for _, n := range col.enum.TParams {
+		patWild[n] = true
+	}
+	groundEq := func(a, b string) bool {
+		if g := u.r.evalInPkg(col.enum.PkgPath, a); g != nil {
+			if s := u.r.evalInPkg(col.enum.PkgPath, b); s != nil {
+				return typesIdentical(g, s)
 			}
 		}
 		return false
+	}
+	for i, arg := range v.ResultArgs {
+		if i >= len(col.targs) {
+			return false
+		}
+		if !laxCompatible(arg, col.targs[i], patWild, u.tparamNames, groundEq) {
+			return false
+		}
 	}
 	return true
 }

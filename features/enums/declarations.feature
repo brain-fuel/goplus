@@ -228,18 +228,40 @@ Feature: Lowering enum declarations
     Then the exit code is 2
     And stderr contains "enum Nothing must declare at least one variant"
 
-  Scenario: An unsupported GADT result type is rejected
-    Given a G++ file "bad.gpp":
+  Scenario: Composite GADT result arguments are supported (v0.6.0)
+    Given a G++ file "shapes.gpp":
       """
       package demo
 
       type Expr[T any] enum {
       	Sliced(v int) Expr[[]T]
+      	Grounded(s string) Expr[int]
+      }
+      """
+    When I run gpp with arguments "gen ."
+    Then the exit code is 0
+    And the file "shapes_gpp.go" contains:
+      """
+      //gpp:variant (Expr[T]) Sliced(v int) Expr[[]T]
+      type Sliced[T any] struct {
+      	V int
+      }
+
+      func (Sliced[T]) isExpr([]T) {}
+      """
+
+  Scenario: A field typed by an undetermined type parameter is rejected
+    Given a G++ file "bad.gpp":
+      """
+      package demo
+
+      type P[A any, B any] enum {
+      	Bad(v B) P[[]A, []A]
       }
       """
     When I run gpp with arguments "gen ."
     Then the exit code is 2
-    And stderr contains "unsupported result type"
+    And stderr contains "type parameter B does not appear in the result type"
 
   Scenario: Enum generation is deterministic and idempotent
     Given a G++ file "option.gpp":

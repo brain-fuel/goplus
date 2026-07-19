@@ -19,11 +19,78 @@ type EnumParam struct {
 
 // EnumVariant is one variant of an enum.
 type EnumVariant struct {
+	// Occurs lists the enum type parameters (indices) appearing anywhere
+	// in the variant's result arguments — the struct's type parameters.
+	// nil ResultArgs (defaulted result) means all.
+	Occurs []int
+
 	Name       string      // G++ constructor name, e.g. "Some"
 	TypeName   string      // lowered Go struct type name, e.g. "Some" or "OptionNone"
 	Params     []EnumParam // nil for a bare variant
 	HasParams  bool        // distinguishes None from None()
 	ResultArgs []string    // GADT result type arguments; nil when defaulted
+}
+
+// OccursIn returns the variant's occurring enum-tparam indices,
+// computing them from ResultArgs texts when unset (marker-reconstructed
+// variants). A defaulted result means every parameter occurs.
+func (v *EnumVariant) OccursIn(e *Enum) []int {
+	if v.ResultArgs == nil {
+		out := make([]int, len(e.TParams))
+		for i := range out {
+			out[i] = i
+		}
+		return out
+	}
+	if v.Occurs != nil {
+		return v.Occurs
+	}
+	occursSet := map[int]bool{}
+	idx := map[string]int{}
+	for i, n := range e.TParams {
+		idx[n] = i
+	}
+	for _, arg := range v.ResultArgs {
+		expr, err := parser.ParseExpr(arg)
+		if err != nil {
+			continue
+		}
+		for _, name := range typeIdentNames(expr) {
+			if i, isTP := idx[name]; isTP {
+				occursSet[i] = true
+			}
+		}
+	}
+	var out []int
+	for i := range e.TParams {
+		if occursSet[i] {
+			out = append(out, i)
+		}
+	}
+	v.Occurs = out
+	return out
+}
+
+// typeIdentNames lists identifier names free in a type expression
+// (selector .Sel skipped).
+func typeIdentNames(e ast.Expr) []string {
+	var out []string
+	ast.Inspect(e, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.SelectorExpr:
+			ast.Inspect(x.X, func(m ast.Node) bool {
+				if id, ok := m.(*ast.Ident); ok {
+					out = append(out, id.Name)
+				}
+				return true
+			})
+			return false
+		case *ast.Ident:
+			out = append(out, x.Name)
+		}
+		return true
+	})
+	return out
 }
 
 // Enum is a sealed sum type visible to a compilation.
