@@ -50,15 +50,20 @@ func (r *fileResolver) classCandidate(gd *ast.GenDecl) {
 	}
 	info := r.pkg.TypesInfo
 
-	// Existing named fields (for dedupe) and embedded fields (to flatten).
-	named := map[string]ast.Expr{}
+	// Existing named fields (for dedupe, by type) and embedded fields
+	// (to flatten).
+	named := map[string]types.Type{}
 	var embedded []*ast.Field
 	for _, f := range st.Fields.List {
 		if len(f.Names) == 0 {
 			embedded = append(embedded, f)
 		}
 		for _, n := range f.Names {
-			named[n.Name] = f.Type
+			if tv, ok := info.Types[f.Type]; ok && tv.Type != nil && tv.Type != types.Typ[types.Invalid] {
+				named[n.Name] = tv.Type
+			} else {
+				named[n.Name] = nil // present but not yet typed
+			}
 		}
 	}
 
@@ -103,17 +108,24 @@ func (r *fileResolver) classCandidate(gd *ast.GenDecl) {
 				break
 			}
 			if existing, dup := named[fld.Name()]; dup {
-				// Diamond collapse: identical text keeps one copy;
-				// conflicting signatures are an error.
-				etext := r.text(existing.Pos(), existing.End())
-				if normalizeSig(etext) != normalizeSig(ft) {
+				// Diamond collapse: an identical inherited signature keeps
+				// one copy; conflicting signatures are an error. The
+				// ancestor's field type is instantiated at this class's
+				// tparam, so compare against the local field instantiated
+				// the same way — both sides came through the same
+				// embedding, so identity of types is the right test.
+				if existing == nil {
+					conflict = true // local field not typed yet: wait
+					break
+				}
+				if !types.Identical(existing, fld.Type()) {
 					r.errorf(field.Type.Pos(), "class %s inherits %s with conflicting signatures", cls.Name, fld.Name())
 					conflict = true
 					break
 				}
 				continue
 			}
-			named[fld.Name()] = nil
+			named[fld.Name()] = fld.Type()
 			lines = append(lines, fld.Name()+" "+ft)
 		}
 		if conflict {
