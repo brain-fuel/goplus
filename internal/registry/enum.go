@@ -208,7 +208,11 @@ func EnumsFromMarkers(pkgPath, filename string, src []byte) ([]*Enum, error) {
 	enums := map[string]*Enum{}
 	var order []string
 
-	// First pass: //gpp:enum markers on interface type decls.
+	// First pass: //gpp:enum markers on interface type decls. Binder
+	// partition happens after ALL markers are gathered — an index-domain
+	// enum (zero tparams) may be declared later in the file than the
+	// enum indexed over it.
+	rawTParams := map[string]string{}
 	for _, decl := range astFile.Decls {
 		gd, ok := decl.(*ast.GenDecl)
 		if !ok || gd.Tok != token.TYPE {
@@ -216,12 +220,19 @@ func EnumsFromMarkers(pkgPath, filename string, src []byte) ([]*Enum, error) {
 		}
 		for _, c := range docLines(gd.Doc) {
 			if m, ok := directive.ParseEnumMarker(c); ok {
-				typeNames, indices := SplitBinders(m.TParams)
-				e := &Enum{PkgPath: pkgPath, Name: m.Name, TParams: typeNames, Indices: indices}
+				e := &Enum{PkgPath: pkgPath, Name: m.Name}
+				rawTParams[m.Name] = m.TParams
 				enums[m.Name] = e
 				order = append(order, m.Name)
 			}
 		}
+	}
+	isDomain := func(name string) bool {
+		_, ok := enums[name]
+		return ok && strings.TrimSpace(rawTParams[name]) == ""
+	}
+	for name, e := range enums {
+		e.TParams, e.Indices = SplitBinders(rawTParams[name], isDomain)
 	}
 	// Second pass: //gpp:variant markers on struct type decls, paired with
 	// the decl to learn the lowered type name and Go field names.

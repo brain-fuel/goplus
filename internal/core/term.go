@@ -182,3 +182,44 @@ func FreeVars(t Term) []string {
 	sort.Strings(out)
 	return out
 }
+
+// ResolveTags rewrites free variables that name enum tags into
+// constructor terms (index elaboration sees `Open` as an identifier;
+// the enum's tag table disambiguates it from a binder).
+func ResolveTags(t Term, tagOf func(name string) (enum string, ok bool)) Term {
+	switch x := t.(type) {
+	case Var:
+		if enum, ok := tagOf(x.Name); ok {
+			return Ctor{Type: enum, Name: x.Name}
+		}
+		return x
+	case Prim:
+		args := make([]Term, len(x.Args))
+		for i, a := range x.Args {
+			args[i] = ResolveTags(a, tagOf)
+		}
+		return Prim{Op: x.Op, Args: args}
+	case Ctor:
+		args := make([]Term, len(x.Args))
+		for i, a := range x.Args {
+			args[i] = ResolveTags(a, tagOf)
+		}
+		return Ctor{Type: x.Type, Name: x.Name, Args: args}
+	case Call:
+		args := make([]Term, len(x.Args))
+		for i, a := range x.Args {
+			args[i] = ResolveTags(a, tagOf)
+		}
+		return Call{Fn: x.Fn, Args: args}
+	case If:
+		return If{Op: x.Op, L: ResolveTags(x.L, tagOf), R: ResolveTags(x.R, tagOf),
+			Then: ResolveTags(x.Then, tagOf), Else: ResolveTags(x.Else, tagOf)}
+	case MatchT:
+		arms := make([]MatchArm, len(x.Arms))
+		for i, a := range x.Arms {
+			arms[i] = MatchArm{Ctor: a.Ctor, Binds: a.Binds, Body: ResolveTags(a.Body, tagOf)}
+		}
+		return MatchT{Scrut: ResolveTags(x.Scrut, tagOf), Arms: arms}
+	}
+	return t
+}

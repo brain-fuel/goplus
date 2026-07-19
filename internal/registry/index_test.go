@@ -38,7 +38,7 @@ func TestEraseIndexArgs(t *testing.T) {
 }
 
 func TestSplitBinders(t *testing.T) {
-	types, idx := SplitBinders("T any, n nat")
+	types, idx := SplitBinders("T any, n nat", nil)
 	if len(types) != 1 || types[0] != "T" || len(idx) != 1 || idx[0].Name != "n" || idx[0].Pos != 1 {
 		t.Fatalf("SplitBinders: %v %v", types, idx)
 	}

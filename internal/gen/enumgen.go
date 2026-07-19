@@ -85,6 +85,28 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 	}
 	plan.isIndexed = isIndexed
 
+	// Tag domains (v0.7.0 4b): a type-parameter-less enum whose variants
+	// are all bare is a first-order index domain; its tags appear in
+	// index terms (`Socket[Open]`).
+	tagDomains := map[string]map[string]bool{}
+	for _, le := range all {
+		if le.e.Spec.TypeParams != nil {
+			continue
+		}
+		bare := true
+		tags := map[string]bool{}
+		for _, v := range le.e.Variants {
+			if v.Params != nil || v.TParams != nil {
+				bare = false
+				break
+			}
+			tags[v.Name.Name] = true
+		}
+		if bare && len(tags) > 0 {
+			tagDomains[le.e.Spec.Name.Name] = tags
+		}
+	}
+
 	for _, le := range all {
 		f, e := le.f, le.e
 		src := f.gpp
@@ -108,7 +130,9 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 		var tparamConstraints []string
 		var indices []registry.IndexBinder
 		indexNames := map[string]bool{}
+		binderSort := map[string]string{}
 		kindIndex := []bool{} // per ORIGINAL binder position
+		kindSort := []string{} // sort at index positions ("" for type binders)
 		origTParamsSrc := ""
 		if tp := e.Spec.TypeParams; tp != nil {
 			origTParamsSrc = string(src.Src[src.Offset(tp.Opening)+1 : src.Offset(tp.Closing)])
@@ -116,14 +140,17 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 			for _, field := range tp.List {
 				ctext := string(src.Src[src.Offset(field.Type.Pos()):src.Offset(field.Type.End())])
 				for _, n := range field.Names {
-					if ctext == "nat" {
-						indices = append(indices, registry.IndexBinder{Name: n.Name, Sort: "nat", Pos: pos})
+					if ctext == "nat" || tagDomains[ctext] != nil {
+						indices = append(indices, registry.IndexBinder{Name: n.Name, Sort: ctext, Pos: pos})
 						indexNames[n.Name] = true
+						binderSort[n.Name] = ctext
 						kindIndex = append(kindIndex, true)
+						kindSort = append(kindSort, ctext)
 					} else {
 						tparamNames = append(tparamNames, n.Name)
 						tparamConstraints = append(tparamConstraints, ctext)
 						kindIndex = append(kindIndex, false)
+						kindSort = append(kindSort, "")
 					}
 					pos++
 				}
@@ -159,7 +186,7 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 				continue
 			}
 
-			occurs, markerArgs, subst, resultArgs, indexArgs, rerr := analyzeResult(src, e, v, tparamNames, kindIndex, indexNames, isIndexed, indexResolver)
+			occurs, markerArgs, subst, resultArgs, indexArgs, rerr := analyzeResult(src, e, v, tparamNames, kindIndex, kindSort, indexNames, binderSort, tagDomains, isIndexed, indexResolver)
 			if rerr != nil {
 				errAt(v.Name.Pos(), "%v", rerr)
 				ok = false
@@ -288,7 +315,7 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 						continue
 					}
 					for _, dt := range droppedTerms {
-						if verr := validIndexTerm(dt, indexNames, indexResolver); verr != nil {
+						if verr := validIndexTerm(dt, "", indexNames, binderSort, tagDomains, indexResolver); verr != nil {
 							errAt(field.Type.Pos(), "variant %s: %v", vName, verr)
 							ok = false
 						}
@@ -365,7 +392,8 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 // parameters (a fully ground position whose own parameter occurs
 // nowhere), and the raw result argument texts (nil if defaulted).
 func analyzeResult(src *syntax.File, e *syntax.EnumDecl, v *syntax.Variant, tparamNames []string,
-	kindIndex []bool, indexNames map[string]bool, isIndexed registry.IndexArity, indexResolver core.CallResolver) (
+	kindIndex []bool, kindSort []string, indexNames map[string]bool, binderSort map[string]string,
+	tagDomains map[string]map[string]bool, isIndexed registry.IndexArity, indexResolver core.CallResolver) (
 	occurs []int, markerArgs []string, subst map[string]string, resultArgs []string, indexArgs []string, err error) {
 
 	enumName := e.Spec.Name.Name
@@ -400,7 +428,7 @@ func analyzeResult(src *syntax.File, e *syntax.EnumDecl, v *syntax.Variant, tpar
 	for i, arg := range args {
 		text := string(src.Src[src.Offset(arg.Pos()):src.Offset(arg.End())])
 		if kindIndex[i] {
-			if verr := validIndexTerm(text, indexNames, indexResolver); verr != nil {
+			if verr := validIndexTerm(text, kindSort[i], indexNames, binderSort, tagDomains, indexResolver); verr != nil {
 				return nil, nil, nil, nil, nil, fmt.Errorf("variant %s: %v", v.Name.Name, verr)
 			}
 			indexArgs = append(indexArgs, text)
@@ -427,7 +455,7 @@ func analyzeResult(src *syntax.File, e *syntax.EnumDecl, v *syntax.Variant, tpar
 			return nil, nil, nil, nil, nil, fmt.Errorf("variant %s: %v", v.Name.Name, eerr)
 		}
 		for _, dt := range dropped {
-			if verr := validIndexTerm(dt, indexNames, indexResolver); verr != nil {
+			if verr := validIndexTerm(dt, "", indexNames, binderSort, tagDomains, indexResolver); verr != nil {
 				return nil, nil, nil, nil, nil, fmt.Errorf("variant %s: %v", v.Name.Name, verr)
 			}
 		}
@@ -470,19 +498,72 @@ func indexBinderNameAt(kindIndex []bool, indexNames map[string]bool, e *syntax.E
 	return "_"
 }
 
-// validIndexTerm checks an index argument elaborates as a nat term over
-// the enum's index binders (and total-function calls).
-func validIndexTerm(text string, indexNames map[string]bool, resolve core.CallResolver) error {
+// validIndexTerm checks an index argument elaborates over the enum's
+// index binders. sort "" accepts any well-formed index term (nested
+// field positions); "nat" demands nat vocabulary; an enum sort demands
+// one of its tags or a binder of that sort.
+func validIndexTerm(text, sort string, indexNames map[string]bool, binderSort map[string]string,
+	tagDomains map[string]map[string]bool, resolve core.CallResolver) error {
 	term, err := core.ParseIndexTerm(text, resolve)
 	if err != nil {
-		return fmt.Errorf("index argument %s must be a nat expression: %v", text, err)
+		return fmt.Errorf("index argument %s must be an index expression: %v", text, err)
+	}
+	term = core.ResolveTags(term, func(name string) (string, bool) {
+		for enum, tags := range tagDomains {
+			if tags[name] {
+				return enum, true
+			}
+		}
+		return "", false
+	})
+	if sort != "" && sort != "nat" {
+		switch x := term.(type) {
+		case core.Ctor:
+			if x.Type != sort {
+				return fmt.Errorf("index argument %s is a %s tag, but this position is indexed by %s", text, x.Type, sort)
+			}
+			return nil
+		case core.Var:
+			if binderSort[x.Name] != sort {
+				return fmt.Errorf("index argument %s is not a %s tag or a %s-sorted index parameter", text, sort, sort)
+			}
+			return nil
+		default:
+			return fmt.Errorf("index argument %s is not a %s tag or a %s-sorted index parameter", text, sort, sort)
+		}
 	}
 	for _, fv := range core.FreeVars(term) {
 		if !indexNames[fv] {
 			return fmt.Errorf("index argument %s uses %s, which is not an index parameter of the enum", text, fv)
 		}
 	}
+	if sort == "nat" {
+		if bad := firstTagIn(term); bad != "" {
+			return fmt.Errorf("index argument %s uses tag %s in a nat-indexed position", text, bad)
+		}
+	}
 	return nil
+}
+
+// firstTagIn finds a constructor tag inside a term, if any.
+func firstTagIn(t core.Term) string {
+	switch x := t.(type) {
+	case core.Ctor:
+		return x.Name
+	case core.Prim:
+		for _, a := range x.Args {
+			if b := firstTagIn(a); b != "" {
+				return b
+			}
+		}
+	case core.Call:
+		for _, a := range x.Args {
+			if b := firstTagIn(a); b != "" {
+				return b
+			}
+		}
+	}
+	return ""
 }
 
 // tparamOccurrences lists identifier names occurring free in a type

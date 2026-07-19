@@ -18,11 +18,13 @@ type IndexBinder struct {
 	Pos  int    // position in the original type-parameter list
 }
 
-// SplitBinders partitions a tparam list text ("T any, n nat") into
-// erased type-parameter names and index binders.
-func SplitBinders(tparams string) (typeNames []string, indices []IndexBinder) {
+// SplitBinders partitions a tparam list text ("T any, n nat, s State")
+// into erased type-parameter names and index binders. isDomain reports
+// whether a constraint name is a first-order index domain (a bare-tag
+// enum); nil admits only nat.
+func SplitBinders(tparams string, isDomain func(string) bool) (typeNames []string, indices []IndexBinder) {
 	for i, p := range parseParamList(tparams) {
-		if p.Type == "nat" {
+		if p.Type == "nat" || (isDomain != nil && isDomain(p.Type)) {
 			indices = append(indices, IndexBinder{Name: p.Name, Sort: p.Type, Pos: i})
 		} else {
 			typeNames = append(typeNames, p.Name)
