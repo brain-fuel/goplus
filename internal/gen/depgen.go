@@ -527,3 +527,7 @@ func valueUses(body *ast.BlockStmt, name string) []*ast.Ident {
 	ast.Inspect(body, walk)
 	return out
 }
+
+// domainProbeFn reconstructs an imported package's enums from markers
+// (pass-1 classification of qualified index-domain constraints).
+type domainProbeFn func(importPath string) ([]*registry.Enum, bool)

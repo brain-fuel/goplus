@@ -678,8 +678,12 @@ func (r *fileResolver) searchInstance(call *ast.CallExpr, d registry.DictParam, 
 	switch len(cands) {
 	case 0:
 		if r.report {
-			r.errorf(call.Pos(), "no instance of %s[%s] is in scope for this call; declare one, import a package that provides one, or pass a witness explicitly",
+			msg := fmt.Sprintf("no instance of %s[%s] is in scope for this call; declare one, import a package that provides one, or pass a witness explicitly",
 				d.Class.Name, r.localTypeString(targ))
+			if pkg, name := r.transitiveInstanceHint(d, targ); name != "" {
+				msg += fmt.Sprintf("\n\tnote: %s exports %s, which matches; import %q to bring it into scope", pkg, name, pkg)
+			}
+			r.errorf(call.Pos(), "%s", msg)
 		}
 		return "", false
 	case 1:
@@ -955,4 +959,31 @@ func (r *fileResolver) instanceTempName(decl ast.Node) string {
 		return true
 	})
 	return name
+}
+
+// transitiveInstanceHint scans every loaded package — beyond the
+// direct imports implicit resolution consults — for an exported
+// instance that would satisfy the constraint, so the error can name
+// the import that brings it into scope.
+func (r *fileResolver) transitiveInstanceHint(d registry.DictParam, targ types.Type) (pkg, name string) {
+	for path := range r.typesByPath {
+		if path == r.pkg.PkgPath {
+			continue
+		}
+		for _, inst := range r.reg.InstancesInPkg(path) {
+			if !inst.Exported() || !r.reg.SubsumesRef(inst.Class, d.Class) {
+				continue
+			}
+			if !inst.Generic {
+				if it := r.instanceTypeArg(inst); it != nil && types.Identical(it, targ) {
+					return path, inst.Name
+				}
+				continue
+			}
+			if _, ok := r.unifyGenericInstance(inst, targ); ok {
+				return path, inst.Name
+			}
+		}
+	}
+	return "", ""
 }

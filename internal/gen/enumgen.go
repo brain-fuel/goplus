@@ -28,7 +28,7 @@ type enumPlan struct {
 // planEnums assigns lowered names (detecting variant names shared across
 // enums, which force enum-prefixed struct names), validates GADT result
 // types, and builds render specs. Generated names are reserved in tbl.
-func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []diag.Diagnostic) {
+func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table, probe domainProbeFn) (*enumPlan, []diag.Diagnostic) {
 	plan := &enumPlan{specs: map[*syntax.EnumDecl]*lower.EnumSpec{}, model: map[*syntax.EnumDecl]*registry.Enum{}}
 	var diags []diag.Diagnostic
 
@@ -84,6 +84,40 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 		return info.idx, info.arity, ok
 	}
 	plan.isIndexed = isIndexed
+
+	// probeDomain classifies a QUALIFIED constraint (states.State) as an
+	// imported index domain via the dependency's markers.
+	probeDomain := func(f *sourceFile, ctext string) (*registry.Enum, string, bool) {
+		i := strings.LastIndex(ctext, ".")
+		if i <= 0 || probe == nil {
+			return nil, "", false
+		}
+		alias, base := ctext[:i], ctext[i+1:]
+		path := ""
+		for _, imp := range f.gpp.AST.Imports {
+			p := strings.Trim(imp.Path.Value, "\"")
+			a := p[strings.LastIndex(p, "/")+1:]
+			if imp.Name != nil && imp.Name.Name != "_" {
+				a = imp.Name.Name
+			}
+			if a == alias {
+				path = p
+			}
+		}
+		if path == "" {
+			return nil, "", false
+		}
+		es, ok := probe(path)
+		if !ok {
+			return nil, "", false
+		}
+		for _, de := range es {
+			if de.Name == base && de.IsDomain {
+				return de, path, true
+			}
+		}
+		return nil, "", false
+	}
 
 	// Tag domains (v0.7.0 4b/4c): a type-parameter-less enum is a
 	// first-order index domain when every variant's parameters are
@@ -166,6 +200,18 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 			for _, field := range tp.List {
 				ctext := string(src.Src[src.Offset(field.Type.Pos()):src.Offset(field.Type.End())])
 				for _, n := range field.Names {
+					if de, dpath, isImported := probeDomain(f, ctext); isImported {
+						indices = append(indices, registry.IndexBinder{Name: n.Name, Sort: ctext, SortPkg: dpath, Pos: pos})
+						indexNames[n.Name] = true
+						binderSort[n.Name] = registry.SortBase(ctext)
+						kindIndex = append(kindIndex, true)
+						kindSort = append(kindSort, registry.SortBase(ctext))
+						if tagDomains[registry.SortBase(ctext)] == nil {
+							tagDomains[registry.SortBase(ctext)] = de.DomainTags()
+						}
+						pos++
+						continue
+					}
 					if ctext == "nat" || tagDomains[ctext] != nil {
 						indices = append(indices, registry.IndexBinder{Name: n.Name, Sort: ctext, Pos: pos})
 						indexNames[n.Name] = true
@@ -199,7 +245,7 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 			MarkerName:  naming.MarkerMethodName(enumName),
 			EnumMarker:  directive.EnumMarker{Name: enumName, TParams: origTParamsSrc}.String(),
 		}
-		model := &registry.Enum{PkgPath: pkgPath, Name: enumName, TParams: tparamNames, Indices: indices}
+		model := &registry.Enum{PkgPath: pkgPath, Name: enumName, TParams: tparamNames, Indices: indices, IsDomain: tagDomains[enumName] != nil}
 		ok := true
 
 		for _, v := range e.Variants {
@@ -645,4 +691,78 @@ func decomposeResult(result ast.Expr) (*ast.Ident, []ast.Expr) {
 		}
 	}
 	return nil, nil
+}
+
+// rootDomainEnums scans a loaded package for index-domain enums
+// (zero-binder, all variant parameters index-sorted) as minimal
+// registry models — probeable by sibling roots during pass 1, before
+// any generated file exists.
+func rootDomainEnums(idx *pkgIndex, pkgPath string) []*registry.Enum {
+	type cand struct {
+		e   *syntax.EnumDecl
+		f   *sourceFile
+	}
+	var cands []cand
+	for _, f := range idx.files {
+		if f.gpp == nil {
+			continue
+		}
+		for _, e := range f.gpp.Enums {
+			if e.Spec.TypeParams == nil {
+				cands = append(cands, cand{e: e, f: f})
+			}
+		}
+	}
+	names := map[string]bool{}
+	tags := map[string]map[string]int{}
+	for changed := true; changed; {
+		changed = false
+		for _, c := range cands {
+			name := c.e.Spec.Name.Name
+			if names[name] {
+				continue
+			}
+			src := c.f.gpp
+			okDomain := true
+			t := map[string]int{}
+			for _, v := range c.e.Variants {
+				if v.TParams != nil || v.Result != nil {
+					okDomain = false
+					break
+				}
+				arity := 0
+				if v.Params != nil {
+					for _, fld := range v.Params.List {
+						ptext := string(src.Src[src.Offset(fld.Type.Pos()):src.Offset(fld.Type.End())])
+						if ptext != "nat" && !names[ptext] {
+							okDomain = false
+						}
+						arity += len(fld.Names)
+					}
+				}
+				if !okDomain {
+					break
+				}
+				t[v.Name.Name] = arity
+			}
+			if okDomain && len(t) > 0 {
+				names[name] = true
+				tags[name] = t
+				changed = true
+			}
+		}
+	}
+	var out []*registry.Enum
+	for name, t := range tags {
+		e := &registry.Enum{PkgPath: pkgPath, Name: name, IsDomain: true}
+		for tag, arity := range t {
+			v := &registry.EnumVariant{Name: tag, HasParams: arity > 0}
+			for i := 0; i < arity; i++ {
+				v.Params = append(v.Params, registry.EnumParam{Name: fmt.Sprintf("p%d", i), Type: "int"})
+			}
+			e.Variants = append(e.Variants, v)
+		}
+		out = append(out, e)
+	}
+	return out
 }

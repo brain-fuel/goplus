@@ -93,6 +93,14 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 			return
 		}
 		resolveKey := fileCallResolver(r.pkg.PkgPath, r.file)
+		// The proposition's terms are written in the CALLEE's scope:
+		// bare total-function names resolve against its package.
+		calleeResolve := func(fun ast.Expr) (string, bool) {
+			if id, isID := fun.(*ast.Ident); isID {
+				return pkgPath + "." + id.Name, true
+			}
+			return resolveKey(fun)
+		}
 		sub := map[string]core.Term{}
 		for j, p := range d.Params {
 			if j == i || j >= len(call.Args) {
@@ -103,7 +111,7 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 				sub[p.Name] = t
 			}
 		}
-		ok, err := core.DecideEqTexts(eqArgs[0], eqArgs[1], sub, r.reg.TotalDefs(), resolveKey)
+		ok, err := core.DecideEqTexts(eqArgs[0], eqArgs[1], sub, r.reg.TotalDefs(), calleeResolve)
 		if err != nil || !ok {
 			if r.report {
 				r.errorf(a.Pos(), "cannot prove %s = %s at this call to %s; the arithmetic decider could not discharge refl (rephrase the indices or pass values that make the equality manifest)",

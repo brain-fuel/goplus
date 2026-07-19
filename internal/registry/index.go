@@ -13,22 +13,38 @@ import (
 
 // IndexBinder is one value-index binder of an indexed enum.
 type IndexBinder struct {
-	Name string // binder name, e.g. "n"
-	Sort string // "nat" (v0.7.0 4a)
-	Pos  int    // position in the original type-parameter list
+	Name    string // binder name, e.g. "n"
+	Sort    string // "nat", a local domain name, or qualified "states.State"
+	SortPkg string // import path when the sort's domain is imported; "" otherwise
+	Pos     int    // position in the original type-parameter list
+}
+
+// SortBase strips a qualifier from a sort name ("states.State" → "State").
+func SortBase(sort string) string {
+	if i := strings.LastIndex(sort, "."); i >= 0 {
+		return sort[i+1:]
+	}
+	return sort
 }
 
 // SplitBinders partitions a tparam list text ("T any, n nat, s State")
 // into erased type-parameter names and index binders. isDomain reports
-// whether a constraint name is a first-order index domain (a bare-tag
-// enum); nil admits only nat.
-func SplitBinders(tparams string, isDomain func(string) bool) (typeNames []string, indices []IndexBinder) {
+// whether a constraint text (possibly qualified) names a first-order
+// index domain, returning the domain's import path ("" for local); nil
+// admits only nat.
+func SplitBinders(tparams string, isDomain func(string) (string, bool)) (typeNames []string, indices []IndexBinder) {
 	for i, p := range parseParamList(tparams) {
-		if p.Type == "nat" || (isDomain != nil && isDomain(p.Type)) {
+		if p.Type == "nat" {
 			indices = append(indices, IndexBinder{Name: p.Name, Sort: p.Type, Pos: i})
-		} else {
-			typeNames = append(typeNames, p.Name)
+			continue
 		}
+		if isDomain != nil {
+			if pkg, ok := isDomain(p.Type); ok {
+				indices = append(indices, IndexBinder{Name: p.Name, Sort: p.Type, SortPkg: pkg, Pos: i})
+				continue
+			}
+		}
+		typeNames = append(typeNames, p.Name)
 	}
 	return typeNames, indices
 }

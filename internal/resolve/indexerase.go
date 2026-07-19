@@ -2,6 +2,8 @@ package resolve
 
 import (
 	"go/ast"
+	"go/token"
+	"strings"
 
 	"goforge.dev/gpp/internal/lower"
 )
@@ -96,4 +98,39 @@ func (r *fileResolver) enclosingParam(node ast.Expr) (fn, param string, ok bool)
 		}
 	}
 	return "", "", false
+}
+
+// blankUnusedImports converts imports with no remaining references into
+// blank imports: erased index vocabulary must not fail the backstop,
+// and the import line must SURVIVE (markers resolve qualified sorts
+// through it — reconstruction treats `_ "path"` as aliasable by the
+// path's last segment).
+func blankUnusedImports(file *ast.File, fset *token.FileSet, src []byte) []lower.Edit {
+	tokFile := fset.File(file.Pos())
+	used := map[string]bool{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		if _, isImport := n.(*ast.ImportSpec); isImport {
+			return false
+		}
+		if sel, ok := n.(*ast.SelectorExpr); ok {
+			if id, isID := sel.X.(*ast.Ident); isID {
+				used[id.Name] = true
+			}
+		}
+		return true
+	})
+	var edits []lower.Edit
+	for _, imp := range file.Imports {
+		if imp.Name != nil {
+			continue // aliased (incl. already-blank): leave alone
+		}
+		path := strings.Trim(imp.Path.Value, `"`)
+		alias := path[strings.LastIndex(path, "/")+1:]
+		if used[alias] {
+			continue
+		}
+		at := tokFile.Offset(imp.Path.Pos())
+		edits = append(edits, lower.Edit{Start: at, End: at, New: "_ "})
+	}
+	return edits
 }

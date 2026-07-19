@@ -317,7 +317,11 @@ func registryTagOf(reg *registry.Registry, e *registry.Enum) func(string) (strin
 			if ib.Sort == "nat" {
 				continue
 			}
-			dom, ok := reg.LookupEnum(e.PkgPath, ib.Sort)
+			domPkg := e.PkgPath
+			if ib.SortPkg != "" {
+				domPkg = ib.SortPkg
+			}
+			dom, ok := reg.LookupEnum(domPkg, registry.SortBase(ib.Sort))
 			if !ok {
 				continue
 			}

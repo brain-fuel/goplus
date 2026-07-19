@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"regexp"
+	"sort"
 	"strings"
 
 	"goforge.dev/gpp/internal/directive"
@@ -103,7 +104,17 @@ type Enum struct {
 	Name     string        // enum (interface) type name
 	TParams  []string      // ERASED type parameter names
 	Indices  []IndexBinder // value-index binders (v0.7.0); nil otherwise
+	IsDomain bool          // usable as a first-order index domain (v0.9.0)
 	Variants []*EnumVariant
+}
+
+// DomainTags returns tag name → arity for a domain enum.
+func (e *Enum) DomainTags() map[string]int {
+	out := map[string]int{}
+	for _, v := range e.Variants {
+		out[v.Name] = len(v.Params)
+	}
+	return out
 }
 
 // Origin renders a human-readable description for diagnostics.
@@ -193,17 +204,46 @@ func (r *Registry) AllEnums() []*Enum {
 	return out
 }
 
-// EnumsFromMarkers scans a dependency's distributed Go source for
-// //gpp:enum and //gpp:variant markers, reconstructing the enum model.
-// Tolerant: damaged markers make an enum invisible, never fatal.
+// EnumsFromMarkers reconstructs the enum model from one file — a thin
+// wrapper over the package-level reconstruction.
 func EnumsFromMarkers(pkgPath, filename string, src []byte) ([]*Enum, error) {
-	if !strings.Contains(string(src), "//gpp:enum") {
-		return nil, nil
+	return EnumsFromPackageMarkers(pkgPath, map[string][]byte{filename: src}, nil)
+}
+
+// ExternDomain looks up a possibly-imported enum for domain checks
+// during reconstruction (the registry, in dependency-first order).
+type ExternDomain func(importPath, name string) (*Enum, bool)
+
+// EnumsFromPackageMarkers scans a dependency PACKAGE's distributed Go
+// sources for //gpp:enum and //gpp:variant markers, reconstructing the
+// enum model with cross-file knowledge: an enum may reference an index
+// domain or another indexed enum declared in a sibling file. Tolerant:
+// damaged markers make an enum invisible, never fatal.
+func EnumsFromPackageMarkers(pkgPath string, files map[string][]byte, extern ExternDomain) ([]*Enum, error) {
+	type parsedFile struct {
+		name string
+		file *ast.File
 	}
+	var parsed []parsedFile
 	fset := token.NewFileSet()
-	astFile, err := parser.ParseFile(fset, filename, src, parser.ParseComments|parser.SkipObjectResolution)
-	if err != nil {
-		return nil, fmt.Errorf("parsing %s for gpp markers: %w", filename, err)
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		src := files[name]
+		if !strings.Contains(string(src), "//gpp:enum") {
+			continue
+		}
+		astFile, err := parser.ParseFile(fset, name, src, parser.ParseComments|parser.SkipObjectResolution)
+		if err != nil {
+			return nil, fmt.Errorf("parsing %s for gpp markers: %w", name, err)
+		}
+		parsed = append(parsed, parsedFile{name: name, file: astFile})
+	}
+	if len(parsed) == 0 {
+		return nil, nil
 	}
 	enums := map[string]*Enum{}
 	var order []string
@@ -213,17 +253,21 @@ func EnumsFromMarkers(pkgPath, filename string, src []byte) ([]*Enum, error) {
 	// enum (zero tparams) may be declared later in the file than the
 	// enum indexed over it.
 	rawTParams := map[string]string{}
-	for _, decl := range astFile.Decls {
-		gd, ok := decl.(*ast.GenDecl)
-		if !ok || gd.Tok != token.TYPE {
-			continue
-		}
-		for _, c := range docLines(gd.Doc) {
-			if m, ok := directive.ParseEnumMarker(c); ok {
-				e := &Enum{PkgPath: pkgPath, Name: m.Name}
-				rawTParams[m.Name] = m.TParams
-				enums[m.Name] = e
-				order = append(order, m.Name)
+	declFile := map[string]*ast.File{}
+	for _, pf := range parsed {
+		for _, decl := range pf.file.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.TYPE {
+				continue
+			}
+			for _, c := range docLines(gd.Doc) {
+				if m, ok := directive.ParseEnumMarker(c); ok {
+					e := &Enum{PkgPath: pkgPath, Name: m.Name}
+					rawTParams[m.Name] = m.TParams
+					declFile[m.Name] = pf.file
+					enums[m.Name] = e
+					order = append(order, m.Name)
+				}
 			}
 		}
 	}
@@ -236,14 +280,16 @@ func EnumsFromMarkers(pkgPath, filename string, src []byte) ([]*Enum, error) {
 		m    directive.VariantMarker
 	}
 	var rawVariants []rawVariant
-	for _, decl := range astFile.Decls {
-		gd, ok := decl.(*ast.GenDecl)
-		if !ok || gd.Tok != token.TYPE || len(gd.Specs) != 1 {
-			continue
-		}
-		for _, c := range docLines(gd.Doc) {
-			if m, ok := directive.ParseVariantMarker(c); ok {
-				rawVariants = append(rawVariants, rawVariant{enum: m.EnumName, m: m})
+	for _, pf := range parsed {
+		for _, decl := range pf.file.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.TYPE || len(gd.Specs) != 1 {
+				continue
+			}
+			for _, c := range docLines(gd.Doc) {
+				if m, ok := directive.ParseVariantMarker(c); ok {
+					rawVariants = append(rawVariants, rawVariant{enum: m.EnumName, m: m})
+				}
 			}
 		}
 	}
@@ -279,91 +325,121 @@ func EnumsFromMarkers(pkgPath, filename string, src []byte) ([]*Enum, error) {
 			}
 		}
 	}
-	isDomain := func(name string) bool { return domains[name] }
 	for name, e := range enums {
+		e.IsDomain = domains[name]
+	}
+	for name, e := range enums {
+		file := declFile[name]
+		isDomain := func(ctext string) (string, bool) {
+			if domains[ctext] {
+				return "", true
+			}
+			// Qualified constraint: resolve the alias through the
+			// DECLARING file's imports and ask the registry.
+			if i := strings.LastIndex(ctext, "."); i > 0 && extern != nil && file != nil {
+				alias, base := ctext[:i], ctext[i+1:]
+				for _, imp := range file.Imports {
+					path := strings.Trim(imp.Path.Value, "\"")
+					impAlias := path[strings.LastIndex(path, "/")+1:]
+					if imp.Name != nil && imp.Name.Name != "_" {
+						impAlias = imp.Name.Name
+					}
+					if impAlias != alias {
+						continue
+					}
+					if de, ok := extern(path, base); ok && de.IsDomain {
+						return path, true
+					}
+				}
+			}
+			return "", false
+		}
 		e.TParams, e.Indices = SplitBinders(rawTParams[name], isDomain)
 	}
 	// Second pass: //gpp:variant markers on struct type decls, paired with
 	// the decl to learn the lowered type name and Go field names.
-	for _, decl := range astFile.Decls {
-		gd, ok := decl.(*ast.GenDecl)
-		if !ok || gd.Tok != token.TYPE || len(gd.Specs) != 1 {
-			continue
-		}
-		ts, ok := gd.Specs[0].(*ast.TypeSpec)
-		if !ok {
-			continue
-		}
-		st, ok := ts.Type.(*ast.StructType)
-		if !ok {
-			continue
-		}
-		for _, c := range docLines(gd.Doc) {
-			m, ok := directive.ParseVariantMarker(c)
+	for _, pf := range parsed {
+		filename := pf.name
+		for _, decl := range pf.file.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.TYPE || len(gd.Specs) != 1 {
+				continue
+			}
+			ts, ok := gd.Specs[0].(*ast.TypeSpec)
 			if !ok {
 				continue
 			}
-			e, ok := enums[m.EnumName]
+			st, ok := ts.Type.(*ast.StructType)
 			if !ok {
 				continue
 			}
-			v := &EnumVariant{Name: m.Name, TypeName: ts.Name.Name, HasParams: m.HasParams}
-			isIndexed := func(name string) (map[int]bool, int, bool) {
-				ie, ok := enums[name]
-				if !ok || len(ie.Indices) == 0 {
-					return nil, 0, false
+			for _, c := range docLines(gd.Doc) {
+				m, ok := directive.ParseVariantMarker(c)
+				if !ok {
+					continue
 				}
-				pos := map[int]bool{}
-				for _, ib := range ie.Indices {
-					pos[ib.Pos] = true
+				e, ok := enums[m.EnumName]
+				if !ok {
+					continue
 				}
-				return pos, len(ie.TParams) + len(ie.Indices), true
-			}
-			if m.Result != "" {
-				full := resultArgsOf(m.Result)
-				idxPos := map[int]bool{}
-				for _, ib := range e.Indices {
-					idxPos[ib.Pos] = true
-				}
-				var typeArgs, indexArgs []string
-				for i, a := range full {
-					if idxPos[i] {
-						indexArgs = append(indexArgs, a)
-						continue
+				v := &EnumVariant{Name: m.Name, TypeName: ts.Name.Name, HasParams: m.HasParams}
+				isIndexed := func(name string) (map[int]bool, int, bool) {
+					ie, ok := enums[name]
+					if !ok || len(ie.Indices) == 0 {
+						return nil, 0, false
 					}
-					ea, eerr := EraseIndexArgs(a, isIndexed)
+					pos := map[int]bool{}
+					for _, ib := range ie.Indices {
+						pos[ib.Pos] = true
+					}
+					return pos, len(ie.TParams) + len(ie.Indices), true
+				}
+				if m.Result != "" {
+					full := resultArgsOf(m.Result)
+					idxPos := map[int]bool{}
+					for _, ib := range e.Indices {
+						idxPos[ib.Pos] = true
+					}
+					var typeArgs, indexArgs []string
+					for i, a := range full {
+						if idxPos[i] {
+							indexArgs = append(indexArgs, a)
+							continue
+						}
+						ea, eerr := EraseIndexArgs(a, isIndexed)
+						if eerr != nil {
+							return nil, fmt.Errorf("%s: variant %s: %v", filename, m.Name, eerr)
+						}
+						typeArgs = append(typeArgs, ea)
+					}
+					v.ResultArgs = typeArgs
+					v.IndexArgs = indexArgs
+				} else if len(e.Indices) > 0 {
+					for _, ib := range e.Indices {
+						v.IndexArgs = append(v.IndexArgs, ib.Name)
+					}
+				}
+				existSubst := map[string]string{}
+				for _, tp := range parseParamList(m.TParams) {
+					v.Exist = append(v.Exist, ExistTP{Name: tp.Name, Bound: tp.Type})
+					existSubst[tp.Name] = tp.Type
+				}
+				params := parseParamList(m.Params)
+				fields := flattenFields(st)
+				for i, p := range params {
+					fieldName := p.Name
+					if i < len(fields) {
+						fieldName = fields[i]
+					}
+					erasedType, eerr := EraseIndexArgs(p.Type, isIndexed)
 					if eerr != nil {
 						return nil, fmt.Errorf("%s: variant %s: %v", filename, m.Name, eerr)
 					}
-					typeArgs = append(typeArgs, ea)
+					v.Params = append(v.Params, EnumParam{Name: p.Name, FieldName: fieldName, Type: substWords(erasedType, existSubst), RawType: p.Type})
 				}
-				v.ResultArgs = typeArgs
-				v.IndexArgs = indexArgs
-			} else if len(e.Indices) > 0 {
-				for _, ib := range e.Indices {
-					v.IndexArgs = append(v.IndexArgs, ib.Name)
-				}
+				e.Variants = append(e.Variants, v)
+				break
 			}
-			existSubst := map[string]string{}
-			for _, tp := range parseParamList(m.TParams) {
-				v.Exist = append(v.Exist, ExistTP{Name: tp.Name, Bound: tp.Type})
-				existSubst[tp.Name] = tp.Type
-			}
-			params := parseParamList(m.Params)
-			fields := flattenFields(st)
-			for i, p := range params {
-				fieldName := p.Name
-				if i < len(fields) {
-					fieldName = fields[i]
-				}
-				erasedType, eerr := EraseIndexArgs(p.Type, isIndexed)
-				if eerr != nil {
-					return nil, fmt.Errorf("%s: variant %s: %v", filename, m.Name, eerr)
-				}
-				v.Params = append(v.Params, EnumParam{Name: p.Name, FieldName: fieldName, Type: substWords(erasedType, existSubst), RawType: p.Type})
-			}
-			e.Variants = append(e.Variants, v)
-			break
 		}
 	}
 	var out []*Enum

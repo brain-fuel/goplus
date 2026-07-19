@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 
+	"golang.org/x/tools/go/packages"
+
 	"goforge.dev/gpp/internal/core"
 	"goforge.dev/gpp/internal/diag"
 	"goforge.dev/gpp/internal/directive"
@@ -54,6 +56,39 @@ func Run(opts Options) (*Result, error) {
 	}
 	pkgPathRoot, moduleRoot := modulePath(opts.Dir)
 
+	// domainProbe reconstructs an IMPORTED package's enums from its
+	// distributed markers — pass 1 needs it only to classify qualified
+	// index-domain constraints (Socket[s states.State]). Lazy and
+	// cached; unavailable without a module context.
+	probeCache := map[string][]*registry.Enum{}
+	domainProbe := func(importPath string) ([]*registry.Enum, bool) {
+		if moduleRoot == "" {
+			return nil, false
+		}
+		if es, ok := probeCache[importPath]; ok {
+			return es, es != nil
+		}
+		cfg := &packages.Config{Mode: packages.NeedName | packages.NeedFiles, Dir: opts.Dir}
+		pkgs, perr := packages.Load(cfg, importPath)
+		if perr != nil || len(pkgs) == 0 {
+			probeCache[importPath] = nil
+			return nil, false
+		}
+		files := map[string][]byte{}
+		for _, f := range pkgs[0].GoFiles {
+			if src, rerr := os.ReadFile(f); rerr == nil {
+				files[f] = src
+			}
+		}
+		es, merr := registry.EnumsFromPackageMarkers(pkgs[0].PkgPath, files, nil)
+		if merr != nil {
+			probeCache[importPath] = nil
+			return nil, false
+		}
+		probeCache[importPath] = es
+		return es, true
+	}
+
 	// Pass 1: parse and lower declarations per package.
 	outputs := map[string][]byte{}
 	methodsByDir := map[string][]*registry.Method{}
@@ -66,11 +101,41 @@ func Run(opts Options) (*Result, error) {
 	gppSources := map[string][]byte{} // output abs path -> .gpp source bytes
 	gppPaths := map[string]string{}   // output abs path -> .gpp path (relative)
 	var orphans []string
+
+	// Pre-load every directory once: the parses are reused below, and
+	// root packages' index DOMAINS (zero-binder enums) become probeable
+	// before any generated file exists — a root importing a sibling
+	// root's domain must classify it during pass 1.
+	type loaded struct {
+		idx   *pkgIndex
+		diags []diag.Diagnostic
+	}
+	loadedByDir := map[string]loaded{}
+	rootDomains := map[string][]*registry.Enum{}
 	for _, dir := range dirs {
-		idx, diags := loadDir(dir)
+		idx, ldiags := loadDir(dir)
+		loadedByDir[dir] = loaded{idx: idx, diags: ldiags}
+		if idx == nil || len(ldiags) > 0 {
+			continue
+		}
+		pp := pkgPath(pkgPathRoot, moduleRoot, dir)
+		for _, de := range rootDomainEnums(idx, pp) {
+			rootDomains[pp] = append(rootDomains[pp], de)
+		}
+	}
+	baseProbe := domainProbe
+	domainProbe = func(importPath string) ([]*registry.Enum, bool) {
+		if es, ok := rootDomains[importPath]; ok {
+			return es, true
+		}
+		return baseProbe(importPath)
+	}
+
+	for _, dir := range dirs {
+		idx, diags := loadedByDir[dir].idx, loadedByDir[dir].diags
 		res.Diags = append(res.Diags, diags...)
 		if idx != nil && len(diags) == 0 {
-			outs, methods, enums, classes, instances, totals, deps, lawsOut, pdiags := processPackage(idx, pkgPath(pkgPathRoot, moduleRoot, dir))
+			outs, methods, enums, classes, instances, totals, deps, lawsOut, pdiags := processPackage(idx, pkgPath(pkgPathRoot, moduleRoot, dir), domainProbe)
 			res.Diags = append(res.Diags, pdiags...)
 			for path, content := range outs {
 				outputs[path] = content
@@ -305,7 +370,7 @@ func loadDir(dir string) (*pkgIndex, []diag.Diagnostic) {
 // processPackage lowers every .gpp file of one package to output bytes,
 // also returning the package's generic methods and enums for the
 // resolution registry.
-func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*registry.Method, []*registry.Enum, []*registry.Class, []*registry.Instance, []*registry.Total, []*registry.DepFn, string, []diag.Diagnostic) {
+func processPackage(idx *pkgIndex, pkgPath string, probe domainProbeFn) (map[string][]byte, []*registry.Method, []*registry.Enum, []*registry.Class, []*registry.Instance, []*registry.Total, []*registry.DepFn, string, []diag.Diagnostic) {
 	var diags []diag.Diagnostic
 
 	tbl := naming.NewTable()
@@ -314,7 +379,7 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*regist
 			tbl.AddAuthored(d.Name, d.Position)
 		}
 	}
-	enums, ediags := planEnums(idx, pkgPath, tbl)
+	enums, ediags := planEnums(idx, pkgPath, tbl, probe)
 	diags = append(diags, ediags...)
 	classModels, instModels, lawsOut, cdiags := planClasses(idx, tbl)
 	diags = append(diags, cdiags...)
