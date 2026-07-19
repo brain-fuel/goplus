@@ -7,6 +7,29 @@ Generated packages compile with the standard Go toolchain and may be
 distributed and consumed **without** G++ — the same interoperability story
 Kotlin, Scala, and Clojure have with Java.
 
+## v0.9.0 — Tooling: LSP, Editors, go generate
+
+No language changes — this release is about living with gpp:
+
+- **`gpp lsp`** ships inside the binary (one version, always in
+  lockstep): diagnostics as you type from the real gen pipeline run in
+  memory, plus hover, goto-definition, and completion delegated to
+  gopls over the generated Go and mapped back through the sourcemap.
+  The server's dispatch layer is authored in gpp itself.
+- **Editors**: VS Code (marketplace-ready extension), Neovim, Zed, and
+  GoLand/IntelliJ (platform LSP API) — all thin clients of `gpp lsp`;
+  see editor/.
+- **go generate is canonical**: `gpp init` scaffolds
+  `//go:generate go tool gpp gen ./...`; the workflow is
+  `go generate ./... && go build ./...`, with the gpp wrapper as
+  convenience.
+- **Cross-package hardening**: generated files carry a `//gpp:v`
+  vintage stamp (a newer file tells you the exact upgrade command);
+  marker reconstruction is package-wide; index domains cross packages
+  (`Socket[s states.State]`); imported Eq propositions unfold their
+  callee's totals; and a missing instance names the transitive package
+  that provides one.
+
 ## v0.8.0 — Parser Combinators (std/parsec)
 
 ```go
@@ -445,6 +468,7 @@ The spec is executable: the Godog/Cucumber feature suite under
 | v0.6.0  | Folds, structural GADTs, bounded existentials, delegation — shipped |
 | v0.7.0  | The dependent core: QTT quantities, total functions, indexed enums, Eq, linearity, std/vec — shipped |
 | v0.8.0  | std/parsec: streaming parser combinators — shipped |
+| v0.9.0  | Tooling: gpp lsp + four editors, go generate canonical, cross-package hardening — shipped |
 
 ## License
 
