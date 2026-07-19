@@ -69,6 +69,10 @@ Feature: Linear runtime cells
       """
       //gpp:once
       """
+    And the file "res/res_gpp.go" contains:
+      """
+      	taken *atomic.Bool
+      """
     And the file "main_gpp.go" contains:
       """
       	fmt.Println(res.Consume(res.LinOf(&a)))

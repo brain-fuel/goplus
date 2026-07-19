@@ -305,6 +305,20 @@ func processDeps(f *sourceFile, pkgPath string, totals map[*ast.FuncDecl]bool, p
 		edits = append(edits, lower.QuantityEdits(f.gpp, q)...)
 	}
 	if fileHasLinear {
+		// The cell needs sync/atomic; inject the import right after the
+		// package clause unless the source already imports it (a second
+		// import declaration before all other decls is legal Go, and
+		// gofmt normalizes the result).
+		hasAtomic := false
+		for _, imp := range f.gpp.AST.Imports {
+			if imp.Path.Value == `"sync/atomic"` {
+				hasAtomic = true
+			}
+		}
+		if !hasAtomic {
+			at := src.Offset(f.gpp.AST.Name.End())
+			edits = append(edits, lower.Edit{Start: at, End: at, New: "\n\nimport \"sync/atomic\""})
+		}
 		end := len(src.Src)
 		edits = append(edits, lower.Edit{Start: end, End: end, New: linCellText})
 	}
@@ -459,10 +473,8 @@ func planTagOf(plan *enumPlan) func(string) (string, bool) {
 
 // linCellText is the per-file use-once cell backing linear values in
 // erased Go. Plain-Go callers construct with LinOf and are policed; gpp
-// callers proved the discipline statically. The cell is a bool, not an
-// atomic: racing it requires two concurrent consumers — already a
-// discipline violation — and sequential double use panics
-// deterministically.
+// callers proved the discipline statically. The flag is atomic, so even
+// racing consumers get exactly one winner and a deterministic panic.
 const linCellText = `
 
 //gpp:once
@@ -470,18 +482,17 @@ const linCellText = `
 // boundary; Use panics on reuse.
 type Lin[T any] struct {
 	v     T
-	taken *bool
+	taken *atomic.Bool
 }
 
 // LinOf wraps a value for a linear parameter.
-func LinOf[T any](v T) Lin[T] { return Lin[T]{v: v, taken: new(bool)} }
+func LinOf[T any](v T) Lin[T] { return Lin[T]{v: v, taken: new(atomic.Bool)} }
 
 // Use consumes the value; a second Use panics.
 func (c Lin[T]) Use() T {
-	if *c.taken {
+	if !c.taken.CompareAndSwap(false, true) {
 		panic("gpp: linear value used more than once")
 	}
-	*c.taken = true
 	return c.v
 }
 `
