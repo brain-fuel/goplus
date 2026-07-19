@@ -76,6 +76,7 @@ func Fixpoint(in *Input) (*Output, error) {
 				packages.NeedSyntax | packages.NeedTypesInfo,
 			Dir:     in.Dir,
 			Overlay: texts,
+			Tests:   true, // gpp test sources (foo_test.gpp) resolve too
 		}
 		pkgs, err := packages.Load(cfg, in.Patterns...)
 		if err != nil {
@@ -92,6 +93,10 @@ func Fixpoint(in *Input) (*Output, error) {
 		runPass := func(report bool) (int, []diag.Diagnostic, error) {
 			var passDiags []diag.Diagnostic
 			editCount := 0
+			// With Tests on, a file appears both in the plain package and
+			// its test-augmented variant; process each text once per pass
+			// (a second AST over already-edited bytes has stale offsets).
+			done := map[string]bool{}
 			for _, pkg := range pkgs {
 				for i, fileAST := range pkg.Syntax {
 					if i >= len(pkg.CompiledGoFiles) {
@@ -99,9 +104,10 @@ func Fixpoint(in *Input) (*Output, error) {
 					}
 					path := pkg.CompiledGoFiles[i]
 					src, ours := texts[path]
-					if !ours {
+					if !ours || done[path] {
 						continue
 					}
+					done[path] = true
 					r := &fileResolver{
 						pkg:         pkg,
 						typesByPath: typesByPath,
@@ -197,8 +203,8 @@ func buildRegistry(reg *registry.Registry, roots []*packages.Package, in *Input)
 	}
 	packages.Visit(roots, nil, func(pkg *packages.Package) {
 		dir := pkgDir(pkg)
-		if dir == "" {
-			return
+		if dir == "" || strings.Contains(pkg.ID, ".test") {
+			return // test-augmented variants would double-register
 		}
 		methods, isLocal := in.MethodsByDir[dir]
 		if isLocal {

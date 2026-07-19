@@ -124,3 +124,49 @@ Feature: Class declarations lower to witness structs
     When I run gpp with arguments "gen ."
     Then the exit code is 2
     And stderr contains "declare each class in its own type declaration"
+
+  Scenario: An operation may declare multiple results
+    Given a file "go.mod":
+      """
+      module example.com/demo
+
+      go 1.24
+      """
+    And a G++ file "main.gpp":
+      """
+      package main
+
+      import "fmt"
+
+      type Fetcher[T any] class {
+      	Fetch(host T, key string) (string, error)
+      }
+
+      type memHost struct{ m map[string]string }
+
+      instance Mem Fetcher[memHost] {
+      	Fetch(host memHost, key string) (string, error) {
+      		v, ok := host.m[key]
+      		if !ok {
+      			return "", fmt.Errorf("missing %s", key)
+      		}
+      		return v, nil
+      	}
+      }
+
+      func lookup[T Fetcher](host T, key string) string {
+      	v, err := Fetch(host, key)
+      	if err != nil {
+      		return "?"
+      	}
+      	return v
+      }
+
+      func main() {
+      	h := memHost{m: map[string]string{"a": "1"}}
+      	fmt.Println(lookup(h, "a"), lookup(h, "b"))
+      }
+      """
+    When I run gpp with arguments "run ."
+    Then the exit code is 0
+    And stdout contains "1 ?"

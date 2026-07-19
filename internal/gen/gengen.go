@@ -145,18 +145,55 @@ func GenSiblings(enums []*registry.Enum) map[string]bool {
 // <dir>/gpp_gen_test.go — a TEST file, so rapid stays a test-only
 // concern and only for packages that asked.
 func planGenTests(idx *pkgIndex, plan *enumPlan, pkgPath, dir string) (map[string][]byte, []diag.Diagnostic) {
-	var opted []*registry.Enum
+	byName := map[string]*registry.Enum{}
+	for _, m := range plan.models {
+		byName[m.Name] = m
+	}
+	seedSet := map[string]bool{}
 	for _, e := range plan.order {
 		_, genOptIn, _ := deriveMode(e)
 		if genOptIn {
-			opted = append(opted, plan.model[e])
+			seedSet[plan.model[e].Name] = true
 		}
 	}
-	if len(opted) == 0 {
+	if len(seedSet) == 0 {
 		return nil, nil
 	}
 	var diags []diag.Diagnostic
 	siblings := GenSiblings(plan.models)
+	// Close over sibling references: Strategy's generator calls
+	// genWhereDepth, so Where's generator must ride along.
+	need := map[string]bool{}
+	var frontier []string
+	for n := range seedSet {
+		need[n] = true
+		frontier = append(frontier, n)
+	}
+	for len(frontier) > 0 {
+		n := frontier[len(frontier)-1]
+		frontier = frontier[:len(frontier)-1]
+		e := byName[n]
+		if e == nil {
+			continue
+		}
+		for _, v := range e.Variants {
+			for _, p := range v.Params {
+				for sib := range siblings {
+					if !need[sib] && fieldMentionsSibling(p.Type, map[string]bool{sib: true}) {
+						need[sib] = true
+						frontier = append(frontier, sib)
+					}
+				}
+			}
+		}
+	}
+	var opted []*registry.Enum
+	for _, e := range plan.order {
+		m := plan.model[e]
+		if need[m.Name] {
+			opted = append(opted, m)
+		}
+	}
 	var b strings.Builder
 	b.WriteString(emit.Header("derive-gen"))
 	fmt.Fprintf(&b, "package %s\n\nimport \"pgregory.net/rapid\"\n", indexPkgName(idx))

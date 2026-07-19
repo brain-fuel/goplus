@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -237,7 +238,13 @@ func Run(opts Options) (*Result, error) {
 				if len(insts) == 0 {
 					continue
 				}
-				lawOuts, ldiags := planLawTests(out.Reg, pkgPath(pkgPathRoot, moduleRoot, dir), dir, lawsOutByDir[dir], insts)
+				skipGens := map[string]bool{}
+				if genFile, ok := outputs[filepath.Join(dir, "gpp_gen_test.go")]; ok {
+					for _, m := range regexp.MustCompile(`func Gen(\w+)\(`).FindAllStringSubmatch(string(genFile), -1) {
+						skipGens[m[1]] = true
+					}
+				}
+				lawOuts, ldiags := planLawTests(out.Reg, pkgPath(pkgPathRoot, moduleRoot, dir), dir, lawsOutByDir[dir], insts, skipGens)
 				res.Diags = append(res.Diags, ldiags...)
 				for p, c := range lawOuts {
 					outputs[p] = c
@@ -633,7 +640,13 @@ func findOrphans(dir string) []string {
 	var orphans []string
 	for _, e := range entries {
 		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, emit.GeneratedSuffix) {
+		gppName := ""
+		if base, ok := strings.CutSuffix(name, "_gpp_test.go"); ok {
+			gppName = base + "_test.gpp"
+		} else if strings.HasSuffix(name, emit.GeneratedSuffix) {
+			gppName = strings.TrimSuffix(name, emit.GeneratedSuffix) + ".gpp"
+		}
+		if e.IsDir() || gppName == "" {
 			continue
 		}
 		path := filepath.Join(dir, name)
@@ -644,7 +657,6 @@ func findOrphans(dir string) []string {
 		if _, generated := emit.GeneratedFrom(src); !generated {
 			continue
 		}
-		gppName := strings.TrimSuffix(name, emit.GeneratedSuffix) + ".gpp"
 		if _, err := os.Stat(filepath.Join(dir, gppName)); os.IsNotExist(err) {
 			orphans = append(orphans, path)
 		}

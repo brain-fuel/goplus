@@ -18,6 +18,11 @@ const GeneratedSuffix = "_gpp.go"
 
 // OutputPath returns the emitted filename for a .gpp source path.
 func OutputPath(gppPath string) string {
+	// Test sources stay test sources: foo_test.gpp emits foo_gpp_test.go
+	// so the go tool still sees a _test.go file (v0.10.0).
+	if base, ok := strings.CutSuffix(gppPath, "_test.gpp"); ok {
+		return base + "_gpp_test.go"
+	}
 	return strings.TrimSuffix(gppPath, ".gpp") + GeneratedSuffix
 }
 

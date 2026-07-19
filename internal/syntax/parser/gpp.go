@@ -131,6 +131,19 @@ func (p *parser) parseClassType(spec *ast.TypeSpec) {
 	p.ext.Classes = append(p.ext.Classes, decl)
 }
 
+
+// parseMemberResult parses an operation's result: a single type or a
+// parenthesized result list (v0.10.0 — `(Tree, error)`). Downstream
+// rendering is span-based, so a list is captured as one node covering
+// its parentheses.
+func (p *parser) parseMemberResult() ast.Expr {
+	if p.tok == token.LPAREN {
+		fl := p.parseParameters(false)
+		return &ast.BadExpr{From: fl.Opening, To: fl.Closing + 1}
+	}
+	return p.parseType()
+}
+
 // parseClassMember parses one embed, operation, or law. Disambiguation is
 // local to the claimed body: `law` + identifier begins a law; identifier +
 // `(` begins an operation; anything else is an embedded class reference.
@@ -154,7 +167,7 @@ func (p *parser) parseClassMember() *ClassMember {
 		m.Name = p.parseIdent()
 		m.Params = p.parseParameters(false)
 		if p.tok != token.LBRACE && p.tok != token.SEMICOLON && p.tok != token.RBRACE && p.tok != token.EOF {
-			m.Result = p.parseType()
+			m.Result = p.parseMemberResult()
 		}
 		if p.tok == token.LBRACE {
 			m.Body = p.parseBody() // default implementation
@@ -246,7 +259,7 @@ func (p *parser) parseInstanceMember() *InstanceMember {
 	}
 	m.Params = p.parseParameters(false)
 	if p.tok != token.LBRACE && p.tok != token.SEMICOLON && p.tok != token.RBRACE && p.tok != token.EOF {
-		m.Result = p.parseType()
+		m.Result = p.parseMemberResult()
 	}
 	if p.tok != token.LBRACE {
 		p.error(p.pos, "instance members must have a body")

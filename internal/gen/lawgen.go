@@ -28,7 +28,7 @@ import (
 const LawsTestSuffix = "_gpp_laws_test.go"
 
 // planLawTests renders one package's law tests into the outputs map.
-func planLawTests(reg *registry.Registry, pkgPath, dir, outRel string, instances []*registry.Instance) (map[string][]byte, []diag.Diagnostic) {
+func planLawTests(reg *registry.Registry, pkgPath, dir, outRel string, instances []*registry.Instance, skipGens map[string]bool) (map[string][]byte, []diag.Diagnostic) {
 	type entry struct {
 		inst *registry.Instance
 		mode lawsMode
@@ -93,6 +93,9 @@ func planLawTests(reg *registry.Registry, pkgPath, dir, outRel string, instances
 				continue
 			}
 			b.WriteString("\n" + text)
+		}
+		for n := range skipGens {
+			delete(neededGens, n)
 		}
 		if len(neededGens) > 0 {
 			siblings := GenSiblings(reg.EnumsInPkg(pkgPath))
