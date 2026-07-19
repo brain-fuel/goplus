@@ -210,6 +210,11 @@ func ResolveTags(t Term, tagOf func(name string) (enum string, ok bool)) Term {
 		for i, a := range x.Args {
 			args[i] = ResolveTags(a, tagOf)
 		}
+		// A structured tag (`Circle(3)`) elaborates as a call; the tag
+		// table turns it back into a constructor.
+		if enum, ok := tagOf(ShortName(x.Fn)); ok {
+			return Ctor{Type: enum, Name: ShortName(x.Fn), Args: args}
+		}
 		return Call{Fn: x.Fn, Args: args}
 	case If:
 		return If{Op: x.Op, L: ResolveTags(x.L, tagOf), R: ResolveTags(x.R, tagOf),

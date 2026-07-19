@@ -227,10 +227,59 @@ func EnumsFromMarkers(pkgPath, filename string, src []byte) ([]*Enum, error) {
 			}
 		}
 	}
-	isDomain := func(name string) bool {
-		_, ok := enums[name]
-		return ok && strings.TrimSpace(rawTParams[name]) == ""
+	// Index domains mirror gen's rule: a zero-tparam enum whose variant
+	// parameters are all index-sorted (nat or another domain), with no
+	// variant tparams or results — computed by fixpoint from the raw
+	// variant markers before binder partition.
+	type rawVariant struct {
+		enum string
+		m    directive.VariantMarker
 	}
+	var rawVariants []rawVariant
+	for _, decl := range astFile.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.TYPE || len(gd.Specs) != 1 {
+			continue
+		}
+		for _, c := range docLines(gd.Doc) {
+			if m, ok := directive.ParseVariantMarker(c); ok {
+				rawVariants = append(rawVariants, rawVariant{enum: m.EnumName, m: m})
+			}
+		}
+	}
+	domains := map[string]bool{}
+	for changed := true; changed; {
+		changed = false
+		for name := range enums {
+			if domains[name] || strings.TrimSpace(rawTParams[name]) != "" {
+				continue
+			}
+			okDomain, seen := true, false
+			for _, rv := range rawVariants {
+				if rv.enum != name {
+					continue
+				}
+				seen = true
+				if rv.m.TParams != "" || rv.m.Result != "" {
+					okDomain = false
+					break
+				}
+				for _, p := range parseParamList(rv.m.Params) {
+					if p.Type != "nat" && !domains[p.Type] {
+						okDomain = false
+					}
+				}
+				if !okDomain {
+					break
+				}
+			}
+			if okDomain && seen {
+				domains[name] = true
+				changed = true
+			}
+		}
+	}
+	isDomain := func(name string) bool { return domains[name] }
 	for name, e := range enums {
 		e.TParams, e.Indices = SplitBinders(rawTParams[name], isDomain)
 	}

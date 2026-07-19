@@ -85,25 +85,51 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 	}
 	plan.isIndexed = isIndexed
 
-	// Tag domains (v0.7.0 4b): a type-parameter-less enum whose variants
-	// are all bare is a first-order index domain; its tags appear in
-	// index terms (`Socket[Open]`).
-	tagDomains := map[string]map[string]bool{}
-	for _, le := range all {
-		if le.e.Spec.TypeParams != nil {
-			continue
+	// Tag domains (v0.7.0 4b/4c): a type-parameter-less enum is a
+	// first-order index domain when every variant's parameters are
+	// themselves index-sorted (nat or another domain). Bare tags have
+	// arity 0; structured tags (`Circle(r nat)`) carry their arity.
+	tagDomains := map[string]map[string]int{}
+	candidates := map[string]*located{}
+	for i := range all {
+		le := all[i]
+		if le.e.Spec.TypeParams == nil {
+			candidates[le.e.Spec.Name.Name] = &all[i]
 		}
-		bare := true
-		tags := map[string]bool{}
-		for _, v := range le.e.Variants {
-			if v.Params != nil || v.TParams != nil {
-				bare = false
-				break
+	}
+	for changed := true; changed; {
+		changed = false
+		for name, le := range candidates {
+			if tagDomains[name] != nil {
+				continue
 			}
-			tags[v.Name.Name] = true
-		}
-		if bare && len(tags) > 0 {
-			tagDomains[le.e.Spec.Name.Name] = tags
+			src := le.f.gpp
+			okDomain := true
+			tags := map[string]int{}
+			for _, v := range le.e.Variants {
+				if v.TParams != nil || v.Result != nil {
+					okDomain = false
+					break
+				}
+				arity := 0
+				if v.Params != nil {
+					for _, fld := range v.Params.List {
+						ptext := string(src.Src[src.Offset(fld.Type.Pos()):src.Offset(fld.Type.End())])
+						if ptext != "nat" && tagDomains[ptext] == nil {
+							okDomain = false
+						}
+						arity += len(fld.Names)
+					}
+				}
+				if !okDomain {
+					break
+				}
+				tags[v.Name.Name] = arity
+			}
+			if okDomain && len(tags) > 0 {
+				tagDomains[name] = tags
+				changed = true
+			}
 		}
 	}
 
@@ -314,6 +340,12 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 						ok = false
 						continue
 					}
+					if strings.Contains(erased, "nat") {
+						// nat-typed fields (index-domain enums) erase to int.
+						if ne, nerr := substituteTypeText(erased, map[string]string{"nat": "int"}); nerr == nil {
+							erased = ne
+						}
+					}
 					for _, dt := range droppedTerms {
 						if verr := validIndexTerm(dt, "", indexNames, binderSort, tagDomains, indexResolver); verr != nil {
 							errAt(field.Type.Pos(), "variant %s: %v", vName, verr)
@@ -393,7 +425,7 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 // nowhere), and the raw result argument texts (nil if defaulted).
 func analyzeResult(src *syntax.File, e *syntax.EnumDecl, v *syntax.Variant, tparamNames []string,
 	kindIndex []bool, kindSort []string, indexNames map[string]bool, binderSort map[string]string,
-	tagDomains map[string]map[string]bool, isIndexed registry.IndexArity, indexResolver core.CallResolver) (
+	tagDomains map[string]map[string]int, isIndexed registry.IndexArity, indexResolver core.CallResolver) (
 	occurs []int, markerArgs []string, subst map[string]string, resultArgs []string, indexArgs []string, err error) {
 
 	enumName := e.Spec.Name.Name
@@ -503,14 +535,14 @@ func indexBinderNameAt(kindIndex []bool, indexNames map[string]bool, e *syntax.E
 // field positions); "nat" demands nat vocabulary; an enum sort demands
 // one of its tags or a binder of that sort.
 func validIndexTerm(text, sort string, indexNames map[string]bool, binderSort map[string]string,
-	tagDomains map[string]map[string]bool, resolve core.CallResolver) error {
+	tagDomains map[string]map[string]int, resolve core.CallResolver) error {
 	term, err := core.ParseIndexTerm(text, resolve)
 	if err != nil {
 		return fmt.Errorf("index argument %s must be an index expression: %v", text, err)
 	}
 	term = core.ResolveTags(term, func(name string) (string, bool) {
 		for enum, tags := range tagDomains {
-			if tags[name] {
+			if _, isTag := tags[name]; isTag {
 				return enum, true
 			}
 		}
@@ -521,6 +553,14 @@ func validIndexTerm(text, sort string, indexNames map[string]bool, binderSort ma
 		case core.Ctor:
 			if x.Type != sort {
 				return fmt.Errorf("index argument %s is a %s tag, but this position is indexed by %s", text, x.Type, sort)
+			}
+			if want := tagDomains[sort][x.Name]; len(x.Args) != want {
+				return fmt.Errorf("index argument %s: tag %s of %s takes %d arguments, got %d", text, x.Name, sort, want, len(x.Args))
+			}
+			for _, fv := range core.FreeVars(term) {
+				if !indexNames[fv] {
+					return fmt.Errorf("index argument %s uses %s, which is not an index parameter of the enum", text, fv)
+				}
 			}
 			return nil
 		case core.Var:

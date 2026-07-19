@@ -217,3 +217,83 @@ Feature: Indexed enums (nat indices)
     When I run gpp with arguments "gen ."
     Then the exit code is 2
     And stderr contains "index argument m uses m, which is not an index parameter of the enum"
+
+  Scenario: Structured first-order data indexes an enum
+    Given a G++ file "geo/geo.gpp":
+      """
+      package geo
+
+      type Shape enum {
+      	Point
+      	Circle(r nat)
+      	Rect(w, h nat)
+      }
+
+      type Region[s Shape, n nat] enum {
+      	Origin() Region[Point, 0]
+      	Disc(radius int) Region[Circle(n), n]
+      	Box(w, h int) Region[Rect(n, n+1), n]
+      }
+      """
+    And a G++ file "main.gpp":
+      """
+      package main
+
+      import (
+      	"fmt"
+
+      	"example.com/demo/geo"
+      )
+
+      func name(r geo.Region[geo.Circle(3), 3]) string {
+      	match r {
+      	case geo.Origin():
+      		return "origin"
+      	case geo.Disc(rad):
+      		return fmt.Sprint("disc", rad)
+      	case geo.Box(w, h):
+      		_ = w
+      		_ = h
+      		return "box"
+      	}
+      	return "?"
+      }
+
+      func main() {
+      	fmt.Println(name(geo.Disc(3)))
+      }
+      """
+    When I run gpp with arguments "gen ./..."
+    Then the exit code is 0
+    When I run gpp with arguments "run ."
+    Then the exit code is 0
+    And stdout contains "disc3"
+    And the file "geo/geo_gpp.go" contains:
+      """
+      //gpp:enum Region[s Shape, n nat]
+      type Region interface{ isRegion() }
+      """
+    And the file "main_gpp.go" contains:
+      """
+      func name(r geo.Region) string {
+      """
+
+  Scenario: A structured tag's arity is checked
+    Given a G++ file "main.gpp":
+      """
+      package main
+
+      type Shape enum {
+      	Point
+      	Circle(r nat)
+      }
+
+      type Region[s Shape] enum {
+      	Bad() Region[Circle(1, 2)]
+      }
+
+      func main() {}
+      """
+    When I run gpp with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "tag Circle of Shape takes 1 arguments, got 2"
