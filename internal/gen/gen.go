@@ -471,7 +471,7 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*regist
 		for _, t := range f.gpp.Totals {
 			totalDecls[t.Decl] = true
 		}
-		dedits, dfns, ddiags := processDeps(f, pkgPath, totalDecls)
+		dedits, dfns, ddiags := processDeps(f, pkgPath, totalDecls, enums)
 		edits = append(edits, dedits...)
 		allDeps = append(allDeps, dfns...)
 		diags = append(diags, ddiags...)

@@ -14,6 +14,9 @@ import (
 type Evaluator struct {
 	Defs Defs
 	Fuel int // remaining steps; Eval errors at 0
+	// Permissive: calls to unknown definitions become neutral instead of
+	// erroring (symbolic guard analysis).
+	Permissive bool
 }
 
 // NewEvaluator builds an evaluator with the default fuel budget.
@@ -86,6 +89,9 @@ func (ev *Evaluator) Eval(t Term, env Env) (Value, error) {
 		}
 		def, ok := ev.Defs[x.Fn]
 		if !ok {
+			if ev.Permissive {
+				return VNeu{N: NCall{Fn: x.Fn, Args: args}}, nil
+			}
 			return nil, fmt.Errorf("gpp internal: call to unknown total function %s", x.Fn)
 		}
 		if len(args) != len(def.Params) {
@@ -205,3 +211,33 @@ func EvalClosed(defs Defs, t Term) (Value, error) {
 
 // bigOne is shared by canonical-form helpers.
 var bigOne = big.NewInt(1)
+
+// EvalSymbolic normalizes a term with unknown calls left neutral.
+func EvalSymbolic(t Term, env Env) (Value, error) {
+	ev := &Evaluator{Fuel: 1 << 16, Permissive: true}
+	return ev.Eval(t, env)
+}
+
+// LinNeverZero reports whether a - b can NEVER be zero given every atom
+// is a non-negative nat: a positive constant with non-negative
+// coefficients (or the mirror) has no root.
+func LinNeverZero(a, b Value) bool {
+	diff := linAdd(asLin(a), asLin(b), -1)
+	if diff.Const.Sign() > 0 {
+		for _, c := range diff.Coef {
+			if c.Sign() < 0 {
+				return false
+			}
+		}
+		return true
+	}
+	if diff.Const.Sign() < 0 {
+		for _, c := range diff.Coef {
+			if c.Sign() > 0 {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}

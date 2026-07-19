@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"strings"
 
+	"goforge.dev/gpp/internal/core"
 	"goforge.dev/gpp/internal/diag"
 	"goforge.dev/gpp/internal/lower"
 	"goforge.dev/gpp/internal/registry"
@@ -19,7 +20,7 @@ import (
 
 // processDeps lowers one file's dependent signatures and quantity
 // prefixes.
-func processDeps(f *sourceFile, pkgPath string, totals map[*ast.FuncDecl]bool) ([]lower.Edit, []*registry.DepFn, []diag.Diagnostic) {
+func processDeps(f *sourceFile, pkgPath string, totals map[*ast.FuncDecl]bool, plan *enumPlan) ([]lower.Edit, []*registry.DepFn, []diag.Diagnostic) {
 	var edits []lower.Edit
 	var deps []*registry.DepFn
 	var diags []diag.Diagnostic
@@ -151,6 +152,16 @@ func processDeps(f *sourceFile, pkgPath string, totals map[*ast.FuncDecl]bool) (
 			}
 			edits = append(edits, lower.Edit{Start: start, End: end, New: ""})
 		}
+		if ast.IsExported(fd.Name.Name) && fd.Body != nil {
+			var gps []guardParam
+			for _, p := range params {
+				if p.quantity == "0" {
+					continue // erased: not present at runtime
+				}
+				gps = append(gps, guardParam{name: p.name.Name, typeText: p.typeText})
+			}
+			edits = append(edits, guardEdits(f, fd, gps, plan)...)
+		}
 		for _, id := range natIdents {
 			inDropped := false
 			for fld := range droppedFields {
@@ -174,4 +185,169 @@ func processDeps(f *sourceFile, pkgPath string, totals map[*ast.FuncDecl]bool) (
 		edits = append(edits, lower.QuantityEdits(f.gpp, q)...)
 	}
 	return edits, deps, diags
+}
+
+// guardParam is one parameter considered for runtime guards.
+type guardParam struct {
+	name     string
+	typeText string
+}
+
+// guardEdits synthesizes runtime precondition checks for one exported
+// dependent function: a parameter typed at an indexed-enum instantiation
+// whose index makes a variant IMPOSSIBLE gets a fail-fast type check —
+// gpp callers proved the index statically; plain-Go callers panic with a
+// precise message instead of computing garbage.
+func guardEdits(f *sourceFile, fd *ast.FuncDecl, params []guardParam, plan *enumPlan) []lower.Edit {
+	src := f.gpp
+	var guards []string
+	for _, p := range params {
+		base, argTexts := instantiationOf(p.typeText)
+		if base == "" {
+			continue
+		}
+		var enum *registry.Enum
+		for _, m := range plan.models {
+			if m.Name == base && len(m.Indices) > 0 {
+				enum = m
+			}
+		}
+		if enum == nil || len(argTexts) != len(enum.TParams)+len(enum.Indices) {
+			continue
+		}
+		idxPos := map[int]bool{}
+		for _, ib := range enum.Indices {
+			idxPos[ib.Pos] = true
+		}
+		var idxTerms, typeArgs []string
+		for i, a := range argTexts {
+			if idxPos[i] {
+				idxTerms = append(idxTerms, a)
+			} else {
+				typeArgs = append(typeArgs, a)
+			}
+		}
+		for _, v := range enum.Variants {
+			if len(v.IndexArgs) != len(idxTerms) {
+				continue
+			}
+			impossible := false
+			for i := range idxTerms {
+				if indexClash(idxTerms[i], v.IndexArgs[i]) {
+					impossible = true
+				}
+			}
+			if !impossible {
+				continue
+			}
+			head := v.TypeName
+			var targs []string
+			for _, oi := range v.OccursIn(enum) {
+				if oi < len(typeArgs) {
+					targs = append(targs, typeArgs[oi])
+				}
+			}
+			if len(targs) > 0 {
+				head += "[" + strings.Join(targs, ", ") + "]"
+			}
+			guards = append(guards, "\tif _, ok := any("+p.name+").("+head+"); ok {\n\t\tpanic(\"gpp: "+fd.Name.Name+": "+p.name+" with index "+strings.Join(idxTerms, ", ")+" cannot be "+v.Name+"\")\n\t}")
+		}
+	}
+	if len(guards) == 0 {
+		return nil
+	}
+	at := src.Offset(fd.Body.Lbrace) + 1
+	return []lower.Edit{{Start: at, End: at, New: "\n" + strings.Join(guards, "\n")}}
+}
+
+// instantiationOf splits "Vec[T, n+1]" into base name and argument
+// texts ("" base when not an instantiation).
+func instantiationOf(text string) (string, []string) {
+	open := strings.IndexByte(text, '[')
+	if open <= 0 || !strings.HasSuffix(text, "]") {
+		return "", nil
+	}
+	base := strings.TrimSpace(text[:open])
+	for _, r := range base {
+		if !(r == '_' || r == '.' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+			return "", nil
+		}
+	}
+	if i := strings.LastIndexByte(base, '.'); i >= 0 {
+		base = base[i+1:]
+	}
+	var args []string
+	for _, a := range splitTopLevelText(text[open+1:len(text)-1], ',') {
+		args = append(args, strings.TrimSpace(a))
+	}
+	return base, args
+}
+
+// indexClash reports whether a caller-side index term and a variant's
+// index term can NEVER unify: both elaborate with free variables as
+// non-negative atoms, and their difference is a linear form that cannot
+// be zero, or ground constructor tags that differ.
+func indexClash(callerTerm, variantTerm string) bool {
+	ct, err1 := core.ParseIndexTerm(callerTerm, permissiveResolver)
+	vt, err2 := core.ParseIndexTerm(variantTerm, permissiveResolver)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	cv, vv := symbolicValue(ct), symbolicValue(vt)
+	if cv == nil || vv == nil {
+		return false
+	}
+	if cc, ok1 := cv.(core.VCtor); ok1 {
+		if vc, ok2 := vv.(core.VCtor); ok2 {
+			return cc.Name != vc.Name
+		}
+		return false
+	}
+	return core.LinNeverZero(cv, vv)
+}
+
+func permissiveResolver(fun ast.Expr) (string, bool) {
+	switch fn := fun.(type) {
+	case *ast.Ident:
+		return fn.Name, true
+	case *ast.SelectorExpr:
+		return fn.Sel.Name, true
+	}
+	return "", false
+}
+
+// symbolicValue evaluates a term with every free variable as a nat atom
+// and unknown calls treated as constructors of arity-matching tags
+// (permissive: nil on anything else).
+func symbolicValue(t core.Term) core.Value {
+	env := core.Env{}
+	for _, fv := range core.FreeVars(t) {
+		env[fv] = core.NatVar(fv)
+	}
+	v, err := core.EvalSymbolic(t, env)
+	if err != nil {
+		return nil
+	}
+	return v
+}
+
+// splitTopLevelText splits on a separator at bracket/paren depth zero.
+func splitTopLevelText(s string, sep byte) []string {
+	var out []string
+	depth, start := 0, 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '[', '(':
+			depth++
+		case ']', ')':
+			depth--
+		case sep:
+			if depth == 0 {
+				out = append(out, s[start:i])
+				start = i + 1
+			}
+		}
+	}
+	out = append(out, s[start:])
+	return out
 }

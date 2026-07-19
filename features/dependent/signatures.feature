@@ -146,3 +146,82 @@ Feature: Dependent signatures
     When I run gpp with arguments "gen ."
     Then the exit code is 2
     And stderr contains "the argument for erased parameter n of Head must be an index expression (it is erased at runtime)"
+
+  Scenario: Exported dependent functions guard their erased preconditions
+    Given a G++ file "main.gpp":
+      """
+      package main
+
+      import "fmt"
+
+      type Vec[T any, n nat] enum {
+      	Nil() Vec[T, 0]
+      	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+      }
+
+      func Head[T any](0 n nat, v Vec[T, n+1]) T {
+      	match v {
+      	case Cons(h, t):
+      		_ = t
+      		return h
+      	case _:
+      		panic("unreachable")
+      	}
+      }
+
+      func main() {
+      	fmt.Println(Head(0, Cons(9, Nil[int]())))
+      }
+      """
+    When I run gpp with arguments "run ."
+    Then the exit code is 0
+    And stdout contains "9"
+    And the file "main_gpp.go" contains:
+      """
+      	if _, ok := any(v).(Nil[T]); ok {
+      		panic("gpp: Head: v with index n+1 cannot be Nil")
+      	}
+      """
+
+  Scenario: The guard fires when plain Go passes an impossible value
+    Given a G++ file "lib/lib.gpp":
+      """
+      package lib
+
+      type Vec[T any, n nat] enum {
+      	Nil() Vec[T, 0]
+      	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+      }
+
+      func Head[T any](0 n nat, v Vec[T, n+1]) T {
+      	match v {
+      	case Cons(h, t):
+      		_ = t
+      		return h
+      	case _:
+      		panic("unreachable")
+      	}
+      }
+      """
+    And a file "main.go":
+      """
+      package main
+
+      import (
+      	"fmt"
+
+      	"example.com/demo/lib"
+      )
+
+      func main() {
+      	defer func() {
+      		fmt.Println("recovered:", recover())
+      	}()
+      	fmt.Println(lib.Head[int](lib.Nil[int]{}))
+      }
+      """
+    When I run gpp with arguments "gen ./..."
+    Then the exit code is 0
+    When I run gpp with arguments "run ."
+    Then the exit code is 0
+    And stdout contains "recovered: gpp: Head: v with index n+1 cannot be Nil"
