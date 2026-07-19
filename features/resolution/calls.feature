@@ -42,7 +42,7 @@ Feature: Resolving generic method calls
     And stdout contains "[1 2 3]"
     And the file "main_gpp.go" contains:
       """
-      t := StackMap(s, strconv.Itoa)
+      t := Map(s, strconv.Itoa)
       """
 
   Scenario: Chained calls resolve inside-out across fixpoint iterations
@@ -77,7 +77,7 @@ Feature: Resolving generic method calls
     And stdout contains "[77 88]"
     And the file "main_gpp.go" contains:
       """
-      r := StackMap(StackMap(s, strconv.Itoa), func(x string) string { return strings.Repeat(x, 2) })
+      r := Map(Map(s, strconv.Itoa), func(x string) string { return strings.Repeat(x, 2) })
       """
 
   Scenario: Explicit instantiation gains the receiver's type arguments as prefix
@@ -105,7 +105,7 @@ Feature: Resolving generic method calls
     And stdout contains "[ok]"
     And the file "main_gpp.go" contains:
       """
-      e := StackEmpty[int, string](s)
+      e := Empty[int, string](s)
       """
 
   Scenario: Calling a pointer-receiver method on an addressable value takes its address
@@ -132,7 +132,7 @@ Feature: Resolving generic method calls
     And stdout contains "[42]"
     And the file "main_gpp.go" contains:
       """
-      StackPush(&s, 42, func(v int) string { return fmt.Sprint(v) })
+      Push(&s, 42, func(v int) string { return fmt.Sprint(v) })
       """
 
   Scenario: Calling a value-receiver method through a pointer dereferences it
@@ -158,7 +158,7 @@ Feature: Resolving generic method calls
     And stdout contains "2"
     And the file "main_gpp.go" contains:
       """
-      StackLen[int, string](*s)
+      Len[int, string](*s)
       """
 
   Scenario: A real Go method with the same name always wins

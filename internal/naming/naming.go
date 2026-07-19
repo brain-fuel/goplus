@@ -1,28 +1,45 @@
-// Package naming implements the lowered-function naming scheme:
-// concatenation with a visibility rule, plus collision detection.
+// Package naming implements the lowered-name scheme: a lowered function
+// keeps its method's own name when that name is unique in the package,
+// falling back to the receiver-prefixed concatenation when it collides —
+// the same discipline enum variant structs use. Visibility never widens:
+// the name is exported iff BOTH the receiver type and the member are.
 package naming
 
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 	"unicode"
 	"unicode/utf8"
 )
 
-// FuncName computes the generated function name for a method on a receiver
-// type. override (from //gpp:name) wins when non-empty.
+// BareName is the preferred lowered name: the member's own name, cased so
+// the result is exported iff BOTH owner and member are exported.
 //
-// Rule: concat(recvType, Capitalize(method)); the result is exported iff
-// BOTH recvType and method are exported, enforced by casing the first rune.
+//	(Stack).Map -> Map    (stack).Map -> map    (Stack).map -> map
+func BareName(owner, member string) string {
+	return setFirstCase(member, ast.IsExported(owner) && ast.IsExported(member))
+}
+
+// PrefixedName is the collision fallback: concat(owner, Capitalize(member)),
+// exported iff both are.
 //
 //	(Stack).Map -> StackMap    (stack).Map -> stackMap
-//	(Stack).map -> stackMap    (stack).map -> stackMap
-func FuncName(recvType, method, override string) string {
-	if override != "" {
-		return override
+func PrefixedName(owner, member string) string {
+	exported := ast.IsExported(owner) && ast.IsExported(member)
+	return setFirstCase(owner, exported) + capitalize(member)
+}
+
+// FuncName picks the lowered function name for a method: the bare method
+// name when it is viable (not a keyword) and unshared in the package,
+// the prefixed form otherwise. shared counts bare candidates across the
+// package's lowered methods.
+func FuncName(recvType, method string, shared map[string]int) string {
+	bare := BareName(recvType, method)
+	if !token.IsKeyword(bare) && shared[bare] <= 1 {
+		return bare
 	}
-	exported := ast.IsExported(recvType) && ast.IsExported(method)
-	return setFirstCase(recvType, exported) + capitalize(method)
+	return PrefixedName(recvType, method)
 }
 
 func capitalize(s string) string { return setFirstCase(s, true) }
@@ -64,6 +81,12 @@ func (t *Table) AddAuthored(name, origin string) {
 	}
 }
 
+// Has reports whether a name is already reserved (authored or generated).
+func (t *Table) Has(name string) bool {
+	_, exists := t.entries[name]
+	return exists
+}
+
 // AddGenerated records a generated function name, returning an error if the
 // name is already taken by an authored declaration or another generated
 // function. origin describes the method, e.g. `method (Stack[T]) Map[U] at
@@ -74,7 +97,7 @@ func (t *Table) AddGenerated(name, origin string) error {
 		if prev.generated {
 			kind = "generated function"
 		}
-		return fmt.Errorf("generated name %s for %s collides with %s at %s; use //gpp:name to choose a different name",
+		return fmt.Errorf("generated name %s for %s collides with %s at %s; rename the method or the conflicting declaration",
 			name, origin, kind, prev.origin)
 	}
 	t.entries[name] = entry{origin: origin, generated: true}

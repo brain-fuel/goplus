@@ -89,12 +89,7 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 
 		for _, v := range e.Variants {
 			vName := v.Name.Name
-			if v.NameOverride != "" && !token.IsIdentifier(v.NameOverride) {
-				errAt(v.Name.Pos(), "//gpp:name %q is not a valid Go identifier", v.NameOverride)
-				ok = false
-				continue
-			}
-			typeName := naming.VariantTypeName(enumName, vName, v.NameOverride, shared[vName] > 1)
+			typeName := naming.VariantTypeName(enumName, vName, shared[vName] > 1)
 			origin := fmt.Sprintf("variant (%s) %s at %s", enumName, vName, idx.fset.Position(v.Name.Pos()))
 			if err := tbl.AddGenerated(typeName, origin); err != nil {
 				diags = append(diags, diag.Errorf("%s", err))

@@ -19,7 +19,6 @@ func Of[T any](v T, err error) Result[T, error] {
 
 // Bind connects a switch function onto the railway: applied to the Ok
 // value; an Err bypasses it.
-//gpp:name Bind
 func (r Result[T, E]) Bind[U any](f func(T) Result[U, E]) Result[U, E] {
 	match r {
 	case Ok(v):
@@ -30,7 +29,6 @@ func (r Result[T, E]) Bind[U any](f func(T) Result[U, E]) Result[U, E] {
 }
 
 // Map lifts a plain function onto the success track.
-//gpp:name Map
 func (r Result[T, E]) Map[U any](f func(T) U) Result[U, E] {
 	match r {
 	case Ok(v):
@@ -41,7 +39,6 @@ func (r Result[T, E]) Map[U any](f func(T) U) Result[U, E] {
 }
 
 // MapError transforms the failure track.
-//gpp:name MapError
 func (r Result[T, E]) MapError[F error](f func(E) F) Result[T, F] {
 	match r {
 	case Ok(v):
@@ -53,7 +50,6 @@ func (r Result[T, E]) MapError[F error](f func(E) F) Result[T, F] {
 
 // Tee runs a dead-end function on the Ok value and passes the Result
 // through unchanged; an Err bypasses it.
-//gpp:name Tee
 func (r Result[T, E]) Tee(f func(T)) Result[T, E] {
 	match r {
 	case Ok(v):
@@ -65,7 +61,6 @@ func (r Result[T, E]) Tee(f func(T)) Result[T, E] {
 
 // Unpack leaves the railway in Go shape: Ok yields (value, nil); Err
 // yields (zero, err).
-//gpp:name Unpack
 func (r Result[T, E]) Unpack() (T, error) {
 	match r {
 	case Ok(v):
@@ -77,7 +72,6 @@ func (r Result[T, E]) Unpack() (T, error) {
 }
 
 // UnwrapOr yields the Ok value or a fallback.
-//gpp:name UnwrapOr
 func (r Result[T, E]) UnwrapOr(fallback T) T {
 	match r {
 	case Ok(v):
@@ -88,7 +82,6 @@ func (r Result[T, E]) UnwrapOr(fallback T) T {
 }
 
 // IsOk reports whether the Result is on the success track.
-//gpp:name IsOk
 func (r Result[T, E]) IsOk() bool {
 	match r {
 	case Ok(_):
@@ -99,7 +92,6 @@ func (r Result[T, E]) IsOk() bool {
 }
 
 // IsErr reports whether the Result is on the failure track.
-//gpp:name IsErr
 func (r Result[T, E]) IsErr() bool {
 	match r {
 	case Ok(_):

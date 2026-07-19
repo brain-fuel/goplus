@@ -1,7 +1,7 @@
 Feature: Parsing enum declarations
   G++ v0.2.0 adds sum types via a contextual `enum` keyword after a type
   name (spec/grammar-v0.2.0.ebnf). Variants carry constructor parameters,
-  an optional GADT result type, and optional //gpp:name overrides.
+  and an optional GADT result type.
 
   Scenario: A plain enum with parameterized and bare variants
     Given a G++ file "shape.gpp":
@@ -63,21 +63,6 @@ Feature: Parsing enum declarations
     When I parse it
     Then parsing succeeds with 1 enum
     And enum 1 is "Unit: U() | V"
-
-  Scenario: A //gpp:name directive renames a variant's lowered struct
-    Given a G++ file "named.gpp":
-      """
-      package named
-
-      type List[T any] enum {
-      	Cons(head T, tail List[T])
-      	//gpp:name Nil
-      	None
-      }
-      """
-    When I parse it
-    Then parsing succeeds with 1 enum
-    And enum 1 variant "None" has name override "Nil"
 
   Scenario: Enums coexist with generic methods in one file
     Given a G++ file "both.gpp":

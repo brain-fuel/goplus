@@ -74,6 +74,53 @@ Feature: The std/algebra hierarchy
       6
       """
 
+  Scenario: int has two monoids, and implicit resolution refuses to guess
+    Given a G++ file "main.gpp":
+      """
+      package main
+
+      import (
+      	"fmt"
+
+      	"goforge.dev/gpp/std/algebra"
+      )
+
+      var _ = algebra.IntAdd
+
+      func main() {
+      	fmt.Println(algebra.Accumulate([]int{2, 3, 4}))
+      }
+      """
+    When I run gpp with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "ambiguous instance for Monoid[int]"
+    And stderr contains "IntAdd"
+    And stderr contains "IntMul"
+
+  Scenario: Naming the structure disambiguates
+    Given a G++ file "main.gpp":
+      """
+      package main
+
+      import (
+      	"fmt"
+
+      	"goforge.dev/gpp/std/algebra"
+      )
+
+      func main() {
+      	fmt.Println(algebra.Accumulate(algebra.IntAdd.AsMonoid(), []int{2, 3, 4}))
+      	fmt.Println(algebra.Accumulate(algebra.IntMul, []int{2, 3, 4}))
+      }
+      """
+    When I run gpp with arguments "run ."
+    Then the exit code is 0
+    And stdout contains:
+      """
+      9
+      24
+      """
+
   Scenario: MinInt and MaxInt are ambiguous for a bare Semigroup constraint
     Given a G++ file "main.gpp":
       """

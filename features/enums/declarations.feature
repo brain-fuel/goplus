@@ -195,25 +195,6 @@ Feature: Lowering enum declarations
       type Some[T any] struct {
       """
 
-  Scenario: //gpp:name overrides a variant's lowered struct name
-    Given a G++ file "named.gpp":
-      """
-      package demo
-
-      type List[T any] enum {
-      	Cons(head T, tail List[T])
-      	//gpp:name Nil
-      	None
-      }
-      """
-    When I run gpp with arguments "gen ."
-    Then the exit code is 0
-    And the file "named_gpp.go" contains:
-      """
-      //gpp:variant (List[T]) None
-      type Nil[T any] struct{}
-      """
-
   Scenario: A variant colliding with an authored declaration is an error
     Given a file "clash.go":
       """
@@ -233,7 +214,7 @@ Feature: Lowering enum declarations
     When I run gpp with arguments "gen ."
     Then the exit code is 2
     And stderr contains "generated name Circle"
-    And stderr contains "//gpp:name"
+    And stderr contains "rename"
 
   Scenario: A zero-variant enum is rejected
     Given a G++ file "empty.gpp":

@@ -34,8 +34,22 @@ func Accumulate[T Monoid](xs []T) T {
 	return acc
 }
 
-Accumulate([]int{1, 2, 3})        // instance found implicitly
-Accumulate(IntMul, []int{1, 2})   // or passed explicitly
+Accumulate([]int{1, 2, 3})   // one Monoid[int] instance in scope: found implicitly
+```
+
+A class is an algebraic structure in the mathematical sense: a carrier
+set (the instantiating type) together with operations on it, satisfying
+declared laws — a `Monoid` is the triple (T, `Combine`, `Empty`) with
+associativity and a two-sided identity, and an instance names one
+concrete such structure. That is why int has TWO monoids, and why
+implicit resolution refuses to pick between them: with `std/algebra`
+imported, `Accumulate([]int{…})` is ambiguous between `IntAdd` (a Group,
+by subsumption) and `IntMul`, and the error names both. You disambiguate
+by naming the structure you mean:
+
+```go
+algebra.Accumulate(algebra.IntAdd.AsMonoid(), []int{2, 3, 4})  // 9  — the additive monoid
+algebra.Accumulate(algebra.IntMul, []int{2, 3, 4})             // 24 — the multiplicative monoid
 ```
 
 A class lowers to a flat witness struct (`Monoid[T]` with `func` fields);

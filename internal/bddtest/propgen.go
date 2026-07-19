@@ -151,11 +151,12 @@ func variantLoweredName(enum, variant string) string {
 	return strings.ToLower(variant[:1]) + variant[1:]
 }
 
+// loweredName mirrors naming.BareName for package-unique method names
+// (the generator never reuses a method name, so names never prefix).
 func loweredName(recv, method string) string {
 	exported := recv[0] >= 'A' && recv[0] <= 'Z' && method[0] >= 'A' && method[0] <= 'Z'
-	first := strings.ToLower(recv[:1])
 	if exported {
-		first = strings.ToUpper(recv[:1])
+		return strings.ToUpper(method[:1]) + method[1:]
 	}
-	return first + recv[1:] + strings.ToUpper(method[:1]) + method[1:]
+	return strings.ToLower(method[:1]) + method[1:]
 }

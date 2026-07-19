@@ -96,6 +96,16 @@ func (r *fileResolver) pipeCandidate(call *ast.CallExpr) {
 		}
 	}
 	_ = fnKind
+	// A gpp method's own lowered function is the method, not a competing
+	// function reading: bare names now lower to the method's own name, so
+	// the shadow's generated func would otherwise shadow every member hit.
+	if gppHit != nil && fnObj != nil {
+		if fo, isFn := fnObj.(*types.Func); isFn &&
+			fo.Name() == gppHit.method.FuncName && fo.Pkg() != nil && fo.Pkg().Path() == gppHit.method.PkgPath {
+			fn = false
+			fnObj = nil
+		}
+	}
 	ctors := r.reg.EnumsByVariantName(r.pkg.PkgPath, name)
 	ctor := len(ctors) > 0
 

@@ -91,22 +91,24 @@ func (r *Registry) All() []*Method {
 }
 
 // MethodsFromFile computes registry entries (with lowered names) for one
-// parsed .gpp file, recording each name in tbl. Collisions and invalid
-// //gpp:name overrides are returned as errors, one per offending method.
-func MethodsFromFile(pkgPath string, f *syntax.File, tbl *naming.Table) ([]*Method, []error) {
+// parsed .gpp file, recording each name in tbl. shared counts bare
+// lowered-name candidates across the whole package (generic methods plus
+// enum methods): unique names stay bare, colliders — including a bare
+// name already taken by any package-scope declaration — fall back to the
+// receiver-prefixed form, and remaining collisions are errors.
+func MethodsFromFile(pkgPath string, f *syntax.File, tbl *naming.Table, shared map[string]int) ([]*Method, []error) {
 	var methods []*Method
 	var errs []error
 	for _, gm := range f.Methods {
-		if gm.NameOverride != "" && !token.IsIdentifier(gm.NameOverride) {
-			errs = append(errs, fmt.Errorf("%s: //gpp:name %q is not a valid Go identifier",
-				position(f, gm), gm.NameOverride))
-			continue
+		funcName := naming.FuncName(gm.RecvTypeName, gm.Decl.Name.Name, shared)
+		if bare := naming.BareName(gm.RecvTypeName, gm.Decl.Name.Name); funcName == bare && tbl.Has(bare) {
+			funcName = naming.PrefixedName(gm.RecvTypeName, gm.Decl.Name.Name)
 		}
 		m := &Method{
 			PkgPath:          pkgPath,
 			RecvTypeName:     gm.RecvTypeName,
 			MethodName:       gm.Decl.Name.Name,
-			FuncName:         naming.FuncName(gm.RecvTypeName, gm.Decl.Name.Name, gm.NameOverride),
+			FuncName:         funcName,
 			Pointer:          gm.RecvPointer,
 			NumRecvTParams:   len(gm.RecvTParams),
 			NumMethodTParams: countTParams(gm.Decl),

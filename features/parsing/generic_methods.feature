@@ -94,19 +94,3 @@ Feature: Parsing generic methods
       """
     When I parse it
     Then parsing fails with an error containing "missing ',' in parameter list"
-
-  Scenario: A //gpp:name directive is captured from the method's doc comment
-    Given a G++ file "named.gpp":
-      """
-      package named
-
-      type Stack[T any] struct{ items []T }
-
-      //gpp:name MapStack
-      func (s Stack[T]) Map[U any](f func(T) U) Stack[U] {
-      	return Stack[U]{}
-      }
-      """
-    When I parse it
-    Then parsing succeeds with 1 generic method
-    And generic method 1 has name override "MapStack"

@@ -46,7 +46,7 @@ Feature: Cross-package generic methods
     And stdout contains "[9 10]"
     And the file "main_gpp.go" contains:
       """
-      fmt.Println(lib.StackMap(s, strconv.Itoa).Items)
+      fmt.Println(lib.Map(s, strconv.Itoa).Items)
       """
 
   Scenario: A distributed dependency works without its .gpp sources
@@ -103,7 +103,7 @@ Feature: Cross-package generic methods
     And stdout contains "[333]"
     And the file "app/main_gpp.go" contains:
       """
-      lib.StackPush(&s, 3, func(v int) string { return fmt.Sprint(v * 111) })
+      lib.Push(&s, 3, func(v int) string { return fmt.Sprint(v * 111) })
       """
 
   Scenario: Plain-Go consumers call the lowered function directly
@@ -140,7 +140,7 @@ Feature: Cross-package generic methods
 
       func main() {
       	s := lib.Stack[int]{Items: []int{5}}
-      	fmt.Println(lib.StackMap(s, strconv.Itoa).Items)
+      	fmt.Println(lib.Map(s, strconv.Itoa).Items)
       }
       """
     When I run gpp with arguments "run ."

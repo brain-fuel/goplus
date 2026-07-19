@@ -316,6 +316,37 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*regist
 		enumNames[m.Name] = true
 	}
 
+	// Package-wide bare-name counts: a lowered method keeps its own name
+	// when unique; colliders fall back to the receiver-prefixed form (the
+	// variant discipline).
+	type plainEnumMethod struct {
+		f  *sourceFile
+		fd *ast.FuncDecl
+		gm *syntax.GenericMethod
+	}
+	shared := map[string]int{}
+	plainByFile := map[*sourceFile][]plainEnumMethod{}
+	for _, f := range idx.files {
+		if f.gpp == nil {
+			continue
+		}
+		for _, gm := range f.gpp.Methods {
+			shared[naming.BareName(gm.RecvTypeName, gm.Decl.Name.Name)]++
+		}
+		for _, decl := range f.gpp.AST.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Recv == nil || fd.Type.TypeParams != nil {
+				continue
+			}
+			gm, err := syntax.NewMethod(fd)
+			if err != nil || !enumNames[gm.RecvTypeName] {
+				continue
+			}
+			shared[naming.BareName(gm.RecvTypeName, fd.Name.Name)]++
+			plainByFile[f] = append(plainByFile[f], plainEnumMethod{f: f, fd: fd, gm: gm})
+		}
+	}
+
 	methodNames := map[*syntax.GenericMethod]string{}
 	enumMethods := map[*sourceFile][]*syntax.GenericMethod{}
 	var allMethods []*registry.Method
@@ -331,7 +362,7 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*regist
 					"enum receiver must not be a pointer; %s is an interface after lowering", gm.RecvTypeName))
 			}
 		}
-		methods, errs := registry.MethodsFromFile(pkgPath, f.gpp, tbl)
+		methods, errs := registry.MethodsFromFile(pkgPath, f.gpp, tbl, shared)
 		for _, err := range errs {
 			diags = append(diags, diag.Errorf("%s", err))
 		}
@@ -347,30 +378,22 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*regist
 		}
 		// Plain (non-generic) methods on enum receivers also lower to
 		// package functions — interfaces cannot carry method bodies.
-		for _, decl := range f.gpp.AST.Decls {
-			fd, ok := decl.(*ast.FuncDecl)
-			if !ok || fd.Recv == nil || fd.Type.TypeParams != nil {
-				continue
-			}
-			gm, err := syntax.NewMethod(fd)
-			if err != nil || !enumNames[gm.RecvTypeName] {
-				continue
-			}
+		for _, pm := range plainByFile[f] {
+			fd, gm := pm.fd, pm.gm
 			if gm.RecvPointer {
 				diags = append(diags, diag.At(idx.fset.Position(fd.Recv.Pos()),
 					"enum receiver must not be a pointer; %s is an interface after lowering", gm.RecvTypeName))
 				continue
 			}
-			if gm.NameOverride != "" && !token.IsIdentifier(gm.NameOverride) {
-				diags = append(diags, diag.At(idx.fset.Position(fd.Pos()),
-					"//gpp:name %q is not a valid Go identifier", gm.NameOverride))
-				continue
+			funcName := naming.FuncName(gm.RecvTypeName, fd.Name.Name, shared)
+			if bare := naming.BareName(gm.RecvTypeName, fd.Name.Name); funcName == bare && tbl.Has(bare) {
+				funcName = naming.PrefixedName(gm.RecvTypeName, fd.Name.Name)
 			}
 			m := &registry.Method{
 				PkgPath:        pkgPath,
 				RecvTypeName:   gm.RecvTypeName,
 				MethodName:     fd.Name.Name,
-				FuncName:       naming.FuncName(gm.RecvTypeName, fd.Name.Name, gm.NameOverride),
+				FuncName:       funcName,
 				NumRecvTParams: len(gm.RecvTParams),
 			}
 			origin := fmt.Sprintf("%s at %s", m.Origin(), idx.fset.Position(fd.Pos()))

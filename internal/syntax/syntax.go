@@ -11,7 +11,6 @@ import (
 	"go/ast"
 	"go/token"
 
-	"goforge.dev/gpp/internal/directive"
 	"goforge.dev/gpp/internal/syntax/parser"
 )
 
@@ -93,7 +92,6 @@ type GenericMethod struct {
 	// parameter brackets.
 	LBrack, RBrack int
 
-	NameOverride string // //gpp:name value, "" if absent
 }
 
 // Offset converts a token.Pos within f to a byte offset in f.Src.
@@ -314,11 +312,6 @@ func ParseFile(fset *token.FileSet, path string, src []byte) (*File, error) {
 	}
 	for _, e := range ext.Enums {
 		e.Gen = specToGen[e.Spec]
-		for _, v := range e.Variants {
-			if name, ok := directive.Name(v.Doc); ok {
-				v.NameOverride = name
-			}
-		}
 	}
 	// Generic methods: the fork keeps method type parameters natively.
 	for _, decl := range astFile.Decls {
@@ -334,9 +327,6 @@ func ParseFile(fset *token.FileSet, path string, src []byte) (*File, error) {
 		if err := gm.fillReceiver(); err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
-		if name, ok := directive.Name(fd.Doc); ok {
-			gm.NameOverride = name
-		}
 		f.Methods = append(f.Methods, gm)
 	}
 	return f, nil
@@ -349,9 +339,6 @@ func NewMethod(fd *ast.FuncDecl) (*GenericMethod, error) {
 	gm := &GenericMethod{Decl: fd, LBrack: -1, RBrack: -1}
 	if err := gm.fillReceiver(); err != nil {
 		return nil, err
-	}
-	if name, ok := directive.Name(fd.Doc); ok {
-		gm.NameOverride = name
 	}
 	return gm, nil
 }

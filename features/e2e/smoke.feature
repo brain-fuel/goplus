@@ -74,7 +74,7 @@ Feature: End-to-end smoke
       // PlainGoUse proves the lowered API is ordinary Go.
       func PlainGoUse() []string {
       	s := Stack[int]{Items: []int{7}}
-      	return StackMap(s, strconv.Itoa).Items
+      	return Map(s, strconv.Itoa).Items
       }
       """
     And a file "collections/stack_test.go":

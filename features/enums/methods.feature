@@ -40,11 +40,11 @@ Feature: Methods on enums
     And the file "main_gpp.go" contains:
       """
       //gpp:method (Size) Doubled
-      func SizeDoubled(s Size) int {
+      func Doubled(s Size) int {
       """
     And the file "main_gpp.go" contains:
       """
-      fmt.Println(SizeDoubled(s))
+      fmt.Println(Doubled(s))
       """
 
   Scenario: A generic method on a generic enum composes both machineries
@@ -75,11 +75,11 @@ Feature: Methods on enums
     And the file "main_gpp.go" contains:
       """
       //gpp:method (Option[T]) Pair[U]
-      func OptionPair[T any, U any](o Option[T], u U) (Option[T], U) {
+      func Pair[T any, U any](o Option[T], u U) (Option[T], U) {
       """
     And the file "main_gpp.go" contains:
       """
-      back, tag := OptionPair(o, "x")
+      back, tag := Pair(o, "x")
       """
 
   Scenario: A plain enum method works as a bare method value

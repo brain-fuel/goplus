@@ -15,7 +15,7 @@ import (
 )
 
 type namingState struct {
-	recvType, method, override string
+	recvType, method string
 
 	loweredNames []string
 	errs         []error
@@ -23,17 +23,20 @@ type namingState struct {
 
 func initNamingSteps(sc *godog.ScenarioContext, w func() *World, ns *namingState) {
 	sc.Step(`^a receiver type "([^"]+)" and method "([^"]+)"$`, func(recvType, method string) error {
-		ns.recvType, ns.method, ns.override = recvType, method, ""
-		return nil
-	})
-	sc.Step(`^a receiver type "([^"]+)" and method "([^"]+)" with name override "([^"]+)"$`, func(recvType, method, override string) error {
-		ns.recvType, ns.method, ns.override = recvType, method, override
+		ns.recvType, ns.method = recvType, method
 		return nil
 	})
 	sc.Step(`^the lowered function name is "([^"]+)"$`, func(want string) error {
-		got := naming.FuncName(ns.recvType, ns.method, ns.override)
+		got := naming.BareName(ns.recvType, ns.method)
 		if got != want {
-			return fmt.Errorf("FuncName(%q, %q, %q) = %q, want %q", ns.recvType, ns.method, ns.override, got, want)
+			return fmt.Errorf("BareName(%q, %q) = %q, want %q", ns.recvType, ns.method, got, want)
+		}
+		return nil
+	})
+	sc.Step(`^the prefixed lowered function name is "([^"]+)"$`, func(want string) error {
+		got := naming.PrefixedName(ns.recvType, ns.method)
+		if got != want {
+			return fmt.Errorf("PrefixedName(%q, %q) = %q, want %q", ns.recvType, ns.method, got, want)
 		}
 		return nil
 	})
@@ -53,7 +56,11 @@ func initNamingSteps(sc *godog.ScenarioContext, w func() *World, ns *namingState
 		for _, d := range naming.TopLevelDecls(fset, f.AST) {
 			tbl.AddAuthored(d.Name, d.Position)
 		}
-		methods, errs := registry.MethodsFromFile("example.test/pkg", f, tbl)
+		shared := map[string]int{}
+		for _, gm := range f.Methods {
+			shared[naming.BareName(gm.RecvTypeName, gm.Decl.Name.Name)]++
+		}
+		methods, errs := registry.MethodsFromFile("example.test/pkg", f, tbl, shared)
 		ns.errs = errs
 		ns.loweredNames = nil
 		for _, m := range methods {

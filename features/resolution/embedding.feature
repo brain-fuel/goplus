@@ -46,7 +46,7 @@ Feature: Promotion through embedded fields
     And stdout contains "[3 4]"
     And the file "main_gpp.go" contains:
       """
-      fmt.Println(StackMap(w.Stack, strconv.Itoa).items)
+      fmt.Println(Map(w.Stack, strconv.Itoa).items)
       """
 
   Scenario: A pointer-receiver method promoted through a pointer embedded field
@@ -77,7 +77,7 @@ Feature: Promotion through embedded fields
     And stdout contains "[7]"
     And the file "main_gpp.go" contains:
       """
-      StackPush(w.Stack, 7, func(v int) string { return fmt.Sprint(v) })
+      Push(w.Stack, 7, func(v int) string { return fmt.Sprint(v) })
       """
 
   Scenario: Deeper nesting still resolves, shallowest first
@@ -106,7 +106,7 @@ Feature: Promotion through embedded fields
     And stdout contains "42"
     And the file "main_gpp.go" contains:
       """
-      fmt.Println(InnerGet(o.Middle.Inner, func(x int) int { return x * 2 }))
+      fmt.Println(Get(o.Middle.Inner, func(x int) int { return x * 2 }))
       """
 
   Scenario: The same generic method at the same depth is ambiguous

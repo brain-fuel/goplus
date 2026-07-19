@@ -1,37 +1,17 @@
 // Package directive parses and renders gpp directive comments:
 //
-//	//gpp:name NewName          — on a method decl: override the lowered name
 //	//gpp:method (Stack[T]) Map[U] — marker above a lowered function
 package directive
 
 import (
 	"fmt"
-	"go/ast"
 	"strings"
 )
 
 const (
-	namePrefix   = "//gpp:name"
 	methodPrefix = "//gpp:method"
 )
 
-// Name extracts a //gpp:name override from a doc comment group.
-func Name(doc *ast.CommentGroup) (string, bool) {
-	if doc == nil {
-		return "", false
-	}
-	for _, c := range doc.List {
-		rest, ok := strings.CutPrefix(c.Text, namePrefix)
-		if !ok {
-			continue
-		}
-		name := strings.TrimSpace(rest)
-		if name != "" && rest != "" && (rest[0] == ' ' || rest[0] == '\t') {
-			return name, true
-		}
-	}
-	return "", false
-}
 
 // Marker is the machine-readable description of a lowered generic method,
 // rendered as a comment directly above the generated function.

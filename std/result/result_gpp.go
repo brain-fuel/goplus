@@ -36,7 +36,6 @@ func Of[T any](v T, err error) Result[T, error] {
 // value; an Err bypasses it.
 //
 //gpp:method (Result[T, E]) Bind[U]
-//gpp:name Bind
 func Bind[T any, E error, U any](r Result[T, E], f func(T) Result[U, E]) Result[U, E] {
 	switch __gpp_m0 := any(r).(type) {
 	case Ok[T, E]:
@@ -53,7 +52,6 @@ func Bind[T any, E error, U any](r Result[T, E], f func(T) Result[U, E]) Result[
 // Map lifts a plain function onto the success track.
 //
 //gpp:method (Result[T, E]) Map[U]
-//gpp:name Map
 func Map[T any, E error, U any](r Result[T, E], f func(T) U) Result[U, E] {
 	switch __gpp_m1 := any(r).(type) {
 	case Ok[T, E]:
@@ -70,7 +68,6 @@ func Map[T any, E error, U any](r Result[T, E], f func(T) U) Result[U, E] {
 // MapError transforms the failure track.
 //
 //gpp:method (Result[T, E]) MapError[F]
-//gpp:name MapError
 func MapError[T any, E error, F error](r Result[T, E], f func(E) F) Result[T, F] {
 	switch __gpp_m2 := any(r).(type) {
 	case Ok[T, E]:
@@ -88,7 +85,6 @@ func MapError[T any, E error, F error](r Result[T, E], f func(E) F) Result[T, F]
 // through unchanged; an Err bypasses it.
 //
 //gpp:method (Result[T, E]) Tee
-//gpp:name Tee
 func Tee[T any, E error](r Result[T, E], f func(T)) Result[T, E] {
 	switch __gpp_m3 := any(r).(type) {
 	case Ok[T, E]:
@@ -105,7 +101,6 @@ func Tee[T any, E error](r Result[T, E], f func(T)) Result[T, E] {
 // yields (zero, err).
 //
 //gpp:method (Result[T, E]) Unpack
-//gpp:name Unpack
 func Unpack[T any, E error](r Result[T, E]) (T, error) {
 	switch __gpp_m4 := any(r).(type) {
 	case Ok[T, E]:
@@ -123,7 +118,6 @@ func Unpack[T any, E error](r Result[T, E]) (T, error) {
 // UnwrapOr yields the Ok value or a fallback.
 //
 //gpp:method (Result[T, E]) UnwrapOr
-//gpp:name UnwrapOr
 func UnwrapOr[T any, E error](r Result[T, E], fallback T) T {
 	switch __gpp_m5 := any(r).(type) {
 	case Ok[T, E]:
@@ -139,7 +133,6 @@ func UnwrapOr[T any, E error](r Result[T, E], fallback T) T {
 // IsOk reports whether the Result is on the success track.
 //
 //gpp:method (Result[T, E]) IsOk
-//gpp:name IsOk
 func IsOk[T any, E error](r Result[T, E]) bool {
 	switch any(r).(type) {
 	case Ok[T, E]:
@@ -154,7 +147,6 @@ func IsOk[T any, E error](r Result[T, E]) bool {
 // IsErr reports whether the Result is on the failure track.
 //
 //gpp:method (Result[T, E]) IsErr
-//gpp:name IsErr
 func IsErr[T any, E error](r Result[T, E]) bool {
 	switch any(r).(type) {
 	case Ok[T, E]:

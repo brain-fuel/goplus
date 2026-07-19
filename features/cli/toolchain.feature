@@ -30,7 +30,7 @@ Feature: Toolchain wrapper
     Then the exit code is 0
     And the file "stack_gpp.go" contains:
       """
-      func StackMap[T any, U any](s Stack[T], f func(T) U) Stack[U] {
+      func Map[T any, U any](s Stack[T], f func(T) U) Stack[U] {
       """
 
   Scenario: gpp test regenerates, then runs go test against the emitted API
@@ -45,7 +45,7 @@ Feature: Toolchain wrapper
 
       func TestMap(t *testing.T) {
       	s := Stack[int]{Items: []int{1, 2}}
-      	got := StackMap(s, strconv.Itoa)
+      	got := Map(s, strconv.Itoa)
       	if len(got.Items) != 2 || got.Items[0] != "1" {
       		t.Fatalf("got %v", got.Items)
       	}

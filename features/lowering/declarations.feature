@@ -32,7 +32,7 @@ Feature: Lowering generic method declarations
       // Map transforms every element.
       //
       //gpp:method (Stack[T]) Map[U]
-      func StackMap[T any, U any](s Stack[T], f func(T) U) Stack[U] {
+      func Map[T any, U any](s Stack[T], f func(T) U) Stack[U] {
       """
     And the file "stack_gpp.go" is valid Go
 
@@ -52,7 +52,7 @@ Feature: Lowering generic method declarations
     And the file "stack_gpp.go" contains:
       """
       //gpp:method (*Stack[T]) Push[V]
-      func StackPush[T any, V any](s *Stack[T], v V, conv func(V) T) {
+      func Push[T any, V any](s *Stack[T], v V, conv func(V) T) {
       """
 
   Scenario: Receiver constraints are copied and renamed from the type declaration
@@ -73,7 +73,7 @@ Feature: Lowering generic method declarations
     Then the exit code is 0
     And the file "pair_gpp.go" contains:
       """
-      func PairSwap[A comparable, B any, X any](p Pair[A, B], x X) (B, A, X) {
+      func Swap[A comparable, B any, X any](p Pair[A, B], x X) (B, A, X) {
       """
 
   Scenario: A generic method on a non-generic receiver adds only its own type parameters
@@ -96,7 +96,7 @@ Feature: Lowering generic method declarations
     And the file "reg_gpp.go" contains:
       """
       //gpp:method (Registry) Collect[U]
-      func RegistryCollect[U any](r Registry, f func(string) U) []U {
+      func Collect[U any](r Registry, f func(string) U) []U {
       """
 
   Scenario: The receiver type may be declared in an authored Go file
@@ -118,7 +118,7 @@ Feature: Lowering generic method declarations
     Then the exit code is 0
     And the file "box_gpp.go" contains:
       """
-      func BoxConvert[T any, U any](b Box[T], f func(T) U) U {
+      func Convert[T any, U any](b Box[T], f func(T) U) U {
       """
 
   Scenario: Plain Go passes through with only the header added

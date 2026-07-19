@@ -70,16 +70,6 @@ func initParsingSteps(sc *godog.ScenarioContext, w func() *World, ps *parseState
 		return nil
 	})
 
-	sc.Step(`^generic method (\d+) has name override "([^"]*)"$`, func(idx int, want string) error {
-		m, err := methodAt(ps, idx)
-		if err != nil {
-			return err
-		}
-		if m.NameOverride != want {
-			return fmt.Errorf("name override = %q, want %q", m.NameOverride, want)
-		}
-		return nil
-	})
 }
 
 func methodAt(ps *parseState, idx int) (*syntax.GenericMethod, error) {

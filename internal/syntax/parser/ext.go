@@ -27,7 +27,6 @@ type Variant struct {
 	Params       *ast.FieldList // nil for a bare variant (Point); (…) may be empty
 	Result       ast.Expr       // GADT result type; nil ⇒ enum applied to its own type parameters
 	Comment      *ast.CommentGroup
-	NameOverride string // //gpp:name from Doc; filled by syntax.ParseFile
 }
 
 // ClassDecl is one `type Name[T any] class { … }` declaration (v0.5.0).

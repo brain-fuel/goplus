@@ -51,16 +51,6 @@ func initParsingV2Steps(sc *godog.ScenarioContext, ps *parseState) {
 		return nil
 	})
 
-	sc.Step(`^enum (\d+) variant "([^"]+)" has name override "([^"]*)"$`, func(idx int, name, want string) error {
-		v, err := variantNamed(ps, idx, name)
-		if err != nil {
-			return err
-		}
-		if v.NameOverride != want {
-			return fmt.Errorf("variant %s name override = %q, want %q", name, v.NameOverride, want)
-		}
-		return nil
-	})
 
 	sc.Step(`^parsing succeeds with (\d+) match statements?$`, func(want int) error {
 		if ps.err != nil {
