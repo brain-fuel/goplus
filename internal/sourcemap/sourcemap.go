@@ -206,3 +206,27 @@ func splitLines(b []byte) []string {
 	}
 	return lines
 }
+
+// Forward maps a .gpp position to its emitted counterpart — the
+// inverse direction, built from the same line pairing (the first
+// emitted line attributed to the .gpp line wins; columns carry over on
+// exact lines and clamp to column 1 otherwise). ok is false for .gpp
+// lines with no emitted counterpart.
+func (m *Map) Forward(pos token.Position) (token.Position, bool) {
+	for i, g := range m.gppLine {
+		if g != pos.Line {
+			continue
+		}
+		out := pos
+		out.Filename = ""
+		out.Line = i + 1
+		// Columns carry over even on edited lines: lowering splices
+		// within lines but rarely reshapes their prefixes, and a
+		// best-effort column beats column 1 (usually indentation).
+		if out.Column < 1 {
+			out.Column = 1
+		}
+		return out, true
+	}
+	return token.Position{}, false
+}

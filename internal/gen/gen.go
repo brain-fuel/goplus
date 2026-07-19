@@ -34,13 +34,23 @@ type Options struct {
 	Patterns []string // go-style package patterns; default ["./..."]
 	Check    bool     // verify only: report stale outputs, write nothing
 	Stage    bool     // after writing, git-add changed/deleted outputs
+
+	// Overlay substitutes in-memory contents for on-disk .gpp files
+	// (absolute path → bytes) — the LSP's unsaved buffers.
+	Overlay map[string][]byte
+	// DryRun computes diagnostics and outputs without writing anything
+	// (and without staging or orphan deletion).
+	DryRun bool
 }
+
+// Outputs (DryRun) is the would-be generated content by absolute path.
 
 // Result reports what a run did (paths relative to Options.Dir when under it).
 type Result struct {
 	Written []string // files written (or deleted orphans, in write mode)
 	Stale   []string // check mode: outputs missing or out of date
 	Orphans []string // generated files whose .gpp source is gone
+	Outputs map[string][]byte // DryRun: would-be generated content
 	Diags   []diag.Diagnostic
 }
 
@@ -113,7 +123,7 @@ func Run(opts Options) (*Result, error) {
 	loadedByDir := map[string]loaded{}
 	rootDomains := map[string][]*registry.Enum{}
 	for _, dir := range dirs {
-		idx, ldiags := loadDir(dir)
+		idx, ldiags := loadDir(dir, opts.Overlay)
 		loadedByDir[dir] = loaded{idx: idx, diags: ldiags}
 		if idx == nil || len(ldiags) > 0 {
 			continue
@@ -241,6 +251,12 @@ func Run(opts Options) (*Result, error) {
 		}
 	}
 
+	if opts.DryRun {
+		res.Outputs = outputs
+		res.Diags = diag.Sort(res.Diags)
+		return res, nil
+	}
+
 	// Pass 3: write, check, or stage.
 	var touched []string
 	for _, path := range sortedKeys(outputs) {
@@ -308,7 +324,7 @@ func loadPatterns(patterns []string) []string {
 
 // loadDir parses a directory's .gpp and authored .go files. Returns nil
 // when the directory has no .gpp files.
-func loadDir(dir string) (*pkgIndex, []diag.Diagnostic) {
+func loadDir(dir string, overlay map[string][]byte) (*pkgIndex, []diag.Diagnostic) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, []diag.Diagnostic{diag.Errorf("%s: %v", dir, err)}
@@ -335,7 +351,7 @@ func loadDir(dir string) (*pkgIndex, []diag.Diagnostic) {
 	var diags []diag.Diagnostic
 	for _, name := range gppNames {
 		path := filepath.Join(dir, name)
-		src, err := os.ReadFile(path)
+		src, err := readWithOverlay(path, overlay)
 		if err != nil {
 			diags = append(diags, diag.Errorf("%s: %v", path, err))
 			continue
@@ -349,7 +365,7 @@ func loadDir(dir string) (*pkgIndex, []diag.Diagnostic) {
 	}
 	for _, name := range goNames {
 		path := filepath.Join(dir, name)
-		src, err := os.ReadFile(path)
+		src, err := readWithOverlay(path, overlay)
 		if err != nil {
 			diags = append(diags, diag.Errorf("%s: %v", path, err))
 			continue
@@ -665,4 +681,19 @@ func sortedKeys(m map[string][]byte) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// readWithOverlay reads a file, preferring in-memory overlay contents.
+func readWithOverlay(path string, overlay map[string][]byte) ([]byte, error) {
+	if overlay != nil {
+		if abs, err := filepath.Abs(path); err == nil {
+			if src, ok := overlay[abs]; ok {
+				return src, nil
+			}
+		}
+		if src, ok := overlay[path]; ok {
+			return src, nil
+		}
+	}
+	return os.ReadFile(path)
 }

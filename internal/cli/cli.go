@@ -3,6 +3,8 @@
 package cli
 
 import (
+	"os"
+	"goforge.dev/gpp/internal/lsp"
 	"goforge.dev/gpp/internal/version"
 
 	"fmt"
@@ -22,6 +24,7 @@ Commands:
 
 	gen      generate Go from .gpp files (flags: -check, -stage)
 	init     scaffold //go:generate wiring for this package (flag: -hook)
+	lsp      speak the Language Server Protocol over stdio
 	build    generate, then run 'go build'
 	test     generate, then run 'go test'
 	run      generate, then run 'go run'
@@ -45,6 +48,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runGen(rest, stdout, stderr)
 	case "init":
 		return runInit(rest, stdout, stderr)
+	case "lsp":
+		if err := lsp.Serve(os.Stdin, stdout); err != nil {
+			fmt.Fprintf(stderr, "gpp lsp: %v\n", err)
+			return 1
+		}
+		return 0
 	case "build", "test", "run", "vet":
 		return runDelegated(cmd, rest, stdout, stderr)
 	case "version":
