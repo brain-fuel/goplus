@@ -447,6 +447,11 @@ func processPackage(idx *pkgIndex, pkgPath string, probe domainProbeFn) (map[str
 	for _, err := range planFolds(idx, enums, tbl, shared) {
 		diags = append(diags, diag.Errorf("%s", err))
 	}
+	// Deep traversals (v0.11.0): self-recursive monomorphic enums derive
+	// Children/Universe/Transform, always enum-prefixed.
+	for _, err := range planTraversals(idx, enums, tbl) {
+		diags = append(diags, diag.Errorf("%s", err))
+	}
 
 	// Total functions (v0.7.0): every total's key is known before any
 	// file is processed so cross-file same-package calls check.
@@ -549,9 +554,28 @@ func processPackage(idx *pkgIndex, pkgPath string, probe domainProbeFn) (map[str
 			continue
 		}
 		var edits []lower.Edit
+		needIter := false
 		for _, e := range f.gpp.Enums {
 			if spec, ok := enums.specs[e]; ok {
 				edits = append(edits, lower.EnumEdits(f.gpp, e, spec)...)
+				if spec.TraversalText != "" {
+					needIter = true
+				}
+			}
+		}
+		if needIter {
+			// Universe returns an iter.Seq; inject the import right after
+			// the package clause unless the source already has it (the
+			// sync/atomic discipline — gofmt normalizes the result).
+			hasIter := false
+			for _, imp := range f.gpp.AST.Imports {
+				if imp.Path.Value == `"iter"` {
+					hasIter = true
+				}
+			}
+			if !hasIter {
+				at := f.gpp.Offset(f.gpp.AST.Name.End())
+				edits = append(edits, lower.Edit{Start: at, End: at, New: "\n\nimport \"iter\""})
 			}
 		}
 		for _, c := range f.gpp.Classes {

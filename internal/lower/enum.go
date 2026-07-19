@@ -17,6 +17,7 @@ type EnumSpec struct {
 	EnumMarker  string // "//gpp:enum Option[T any]"
 	Variants    []EnumVariantSpec
 	FoldText    string // derived Cases struct + Fold function (v0.6.0); "" = none
+	TraversalText string // derived Children/Universe/Transform (v0.11.0); "" = none
 }
 
 // EnumVariantSpec is one variant ready to render.
@@ -79,6 +80,9 @@ func EnumEdits(f *syntax.File, e *syntax.EnumDecl, spec *EnumSpec) []Edit {
 
 	if spec.FoldText != "" {
 		b.WriteString("\n" + spec.FoldText)
+	}
+	if spec.TraversalText != "" {
+		b.WriteString("\n" + spec.TraversalText)
 	}
 	edits = append(edits, Edit{Start: declStart, End: declEnd, New: strings.TrimSuffix(b.String(), "\n")})
 	return edits
