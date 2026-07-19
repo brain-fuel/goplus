@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"regexp"
 	"strings"
 
 	"goforge.dev/gpp/internal/directive"
@@ -26,9 +27,10 @@ type EnumVariant struct {
 
 	Name       string      // G++ constructor name, e.g. "Some"
 	TypeName   string      // lowered Go struct type name, e.g. "Some" or "OptionNone"
-	Params     []EnumParam // nil for a bare variant
+	Params     []EnumParam // nil for a bare variant; types ERASED for existentials
 	HasParams  bool        // distinguishes None from None()
 	ResultArgs []string    // GADT result type arguments; nil when defaulted
+	Exist      []ExistTP   // bounded existential tparams (v0.6.0); nil otherwise
 }
 
 // OccursIn returns the variant's occurring enum-tparam indices,
@@ -245,6 +247,11 @@ func EnumsFromMarkers(pkgPath, filename string, src []byte) ([]*Enum, error) {
 			if m.Result != "" {
 				v.ResultArgs = resultArgsOf(m.Result)
 			}
+			existSubst := map[string]string{}
+			for _, tp := range parseParamList(m.TParams) {
+				v.Exist = append(v.Exist, ExistTP{Name: tp.Name, Bound: tp.Type})
+				existSubst[tp.Name] = tp.Type
+			}
 			params := parseParamList(m.Params)
 			fields := flattenFields(st)
 			for i, p := range params {
@@ -252,7 +259,7 @@ func EnumsFromMarkers(pkgPath, filename string, src []byte) ([]*Enum, error) {
 				if i < len(fields) {
 					fieldName = fields[i]
 				}
-				v.Params = append(v.Params, EnumParam{Name: p.Name, FieldName: fieldName, Type: p.Type})
+				v.Params = append(v.Params, EnumParam{Name: p.Name, FieldName: fieldName, Type: substWords(p.Type, existSubst)})
 			}
 			e.Variants = append(e.Variants, v)
 			break
@@ -375,4 +382,24 @@ func sortStrings(s []string) {
 			s[j], s[j-1] = s[j-1], s[j]
 		}
 	}
+}
+
+// ExistTP is one bounded existential type parameter of a variant
+// (v0.6.0): the hidden name and its interface bound, both in the enum
+// package's terms. Fields are stored ERASED to the bound.
+type ExistTP struct {
+	Name  string
+	Bound string
+}
+
+// substWords replaces whole-word identifier occurrences in a type text.
+func substWords(text string, subst map[string]string) string {
+	if len(subst) == 0 {
+		return text
+	}
+	for name, repl := range subst {
+		re := regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\b`)
+		text = re.ReplaceAllString(text, repl)
+	}
+	return text
 }

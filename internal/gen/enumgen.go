@@ -108,6 +108,73 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 				occursNames[tparamNames[oi]] = true
 			}
 
+			// Bounded existentials (v0.6.0): variant-level type parameters
+			// erase to their interface bounds at every boundary.
+			existSubst := map[string]string{}
+			var existTPs []registry.ExistTP
+			tparamsText := ""
+			if v.TParams != nil {
+				tparamsText = string(src.Src[src.Offset(v.TParams.Opening)+1 : src.Offset(v.TParams.Closing)])
+				usedByField := map[string]bool{}
+				if v.Params != nil {
+					for _, field := range v.Params.List {
+						for _, name := range tparamOccurrences(field.Type) {
+							usedByField[name] = true
+						}
+					}
+				}
+				resultNames := map[string]bool{}
+				if v.Result != nil {
+					for _, name := range tparamOccurrences(v.Result) {
+						resultNames[name] = true
+					}
+				}
+				for _, field := range v.TParams.List {
+					boundText := string(src.Src[src.Offset(field.Type.Pos()):src.Offset(field.Type.End())])
+					for _, n := range field.Names {
+						name := n.Name
+						if boundText == "any" || strings.Contains(boundText, "|") || strings.Contains(boundText, "~") {
+							errAt(n.Pos(), "existential type parameter %s of variant %s must have a plain interface bound: Go cannot express a match arm generic in a hidden type; give %s an interface bound or store the composition instead",
+								name, vName, name)
+							ok = false
+							continue
+						}
+						for i, tn := range tparamNames {
+							_ = i
+							if tn == name {
+								errAt(n.Pos(), "existential type parameter %s of variant %s shadows the enum's type parameter %s", name, vName, tn)
+								ok = false
+							}
+						}
+						if resultNames[name] {
+							errAt(n.Pos(), "existential type parameter %s of variant %s must not appear in the result type; existentials are erased at the constructor boundary", name, vName)
+							ok = false
+						}
+						if !usedByField[name] {
+							errAt(n.Pos(), "existential type parameter %s of variant %s is not used by any field", name, vName)
+							ok = false
+						}
+						for _, bn := range tparamOccurrences(field.Type) {
+							isEnumTP := false
+							for _, tn := range tparamNames {
+								if tn == bn {
+									isEnumTP = true
+								}
+							}
+							if isEnumTP && !occursNames[bn] {
+								if _, grounded := subst[bn]; !grounded {
+									errAt(field.Type.Pos(), "variant %s: bound %s of %s references type parameter %s, which the variant does not carry",
+										vName, boundText, name, bn)
+									ok = false
+								}
+							}
+						}
+						existSubst[name] = boundText
+						existTPs = append(existTPs, registry.ExistTP{Name: name, Bound: boundText})
+					}
+				}
+			}
+
 			vs := lower.EnumVariantSpec{TypeName: typeName, MarkerArgs: markerArgs}
 			var keptSrcs []string
 			for _, ki := range occurs {
@@ -122,6 +189,7 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 				HasParams:  v.Params != nil,
 				ResultArgs: resultArgs,
 				Occurs:     occurs,
+				Exist:      existTPs,
 			}
 			exported := ast.IsExported(typeName)
 			paramsSrc := ""
@@ -150,7 +218,17 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 							}
 						}
 					}
-					fieldType, serr := substituteTypeText(declType, subst)
+					erased := declType
+					if len(existSubst) > 0 {
+						var eerr error
+						erased, eerr = substituteTypeText(declType, existSubst)
+						if eerr != nil {
+							errAt(field.Type.Pos(), "%v", eerr)
+							ok = false
+							continue
+						}
+					}
+					fieldType, serr := substituteTypeText(erased, subst)
 					if serr != nil {
 						errAt(field.Type.Pos(), "%v", serr)
 						ok = false
@@ -165,7 +243,7 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 						mv.Params = append(mv.Params, registry.EnumParam{
 							Name:      n.Name,
 							FieldName: naming.FieldName(n.Name, exported),
-							Type:      declType,
+							Type:      erased,
 						})
 						vs.Fields = append(vs.Fields, lower.FieldSpec{
 							Name: naming.FieldName(n.Name, exported),
@@ -182,6 +260,7 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table) (*enumPlan, []d
 				EnumName:    enumName,
 				EnumTParams: strings.Join(tparamNames, ", "),
 				Name:        vName,
+				TParams:     tparamsText,
 				Params:      paramsSrc,
 				HasParams:   v.Params != nil,
 				Result:      resultText,

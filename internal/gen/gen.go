@@ -354,16 +354,7 @@ func processPackage(idx *pkgIndex, pkgPath string) (map[string][]byte, []*regist
 		if f.gpp == nil {
 			continue
 		}
-		// TODO(v0.6.0): removed as existentials (phase 4) and delegation
-		// (phase 6) land.
-		for _, e := range f.gpp.Enums {
-			for _, v := range e.Variants {
-				if v.TParams != nil {
-					diags = append(diags, diag.At(idx.fset.Position(v.TParams.Opening),
-						"bounded existentials are not implemented yet"))
-				}
-			}
-		}
+		// TODO(v0.6.0): removed as delegation (phase 6) lands.
 		if len(f.gpp.Delegates) > 0 {
 			diags = append(diags, diag.At(idx.fset.Position(f.gpp.Delegates[0].DelegatePos),
 				"delegation is not implemented yet"))
