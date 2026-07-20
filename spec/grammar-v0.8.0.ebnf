@@ -1,0 +1,35 @@
+(* Go+ v0.8.0 grammar delta: native tail calls.
+
+   The complete base grammar is Go plus the declarations and expressions in
+   grammar-v0.7.0.ebnf. This file specifies the v0.8.0 addition.
+*)
+
+Declaration   = ... | TailFuncDecl .
+TailFuncDecl  = "tail" FunctionDecl .
+Statement     = ... | RecurStmt .
+RecurStmt     = "recur" "(" [ ExpressionList ] ")" .
+
+(*
+  - `tail` is contextual and claims only `tail func` declarations, a spelling
+    invalid in Go. `recur` denotes the intrinsic only inside a `tail func` or
+    `total func`; ordinary Go functions may declare and call a symbol named
+    recur unchanged. Selectors named recur are always ordinary calls.
+  - The statement must be in tail position: the final statement of a function
+    body, block, if/else branch, switch/type-switch case, select case, or a
+    labelled tail statement. It is not an expression and cannot be returned,
+    deferred, launched with go, or followed by another statement.
+  - Every ordinary function parameter must be named and supplied exactly once.
+    Arguments denote the next parameter values, not call arguments; therefore
+    a variadic parameter is supplied as its slice and `...` is forbidden.
+  - Arguments evaluate left-to-right before any parameter is rebound, with the
+    simultaneous-assignment semantics of Go.
+  - A method receiver is retained and is not part of the recur argument list.
+  - Lowering wraps the function body in a labelled `for` loop and rewrites the
+    intrinsic to simultaneous parameter assignment plus labelled `continue`.
+    No recursive Go call or additional stack frame remains.
+  - Defers belong to the one loop-backed invocation and run when that invocation
+    returns; each iteration that executes a defer registers it on that one
+    stack. Named results likewise persist. This is intentional loop semantics.
+  - In a `total func`, recur elaborates as a self-call and must satisfy the
+    existing structural-decrease proof before it is lowered.
+*)

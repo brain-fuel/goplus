@@ -10,10 +10,10 @@ import (
 	"goforge.dev/goplus/internal/core"
 )
 
-// Total functions (v0.7.0). A `//goplus:total Name(params…) nat` marker
+// Total functions (v0.8.0). A `//goplus:total Name(params…) nat` marker
 // sits above the erased func in the generated file; the erased Go body
-// IS the definition (pure nat code on ints), so reconstruction
-// re-elaborates it — no body duplication in comments. Defs are keyed
+// IS the definition (pure nat code on ints, including the canonical recur
+// loop), so reconstruction re-elaborates it — no body duplication in comments. Defs are keyed
 // canonically "pkgpath.Name" everywhere (Call.Fn, Defs maps, lookups).
 
 // TotalPrefix is the marker directive.

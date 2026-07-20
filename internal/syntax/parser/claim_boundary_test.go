@@ -219,6 +219,37 @@ func exprShape(e ast.Expr) string {
 	return "other"
 }
 
+func TestTailFuncClaimBoundary(t *testing.T) {
+	t.Run("valid Go recur stays ordinary Go", func(t *testing.T) {
+		src := `package b
+func recur(n int) int { return n }
+func f(n int) int { recur(n); return recur(n-1) }
+var tail = recur(1)
+`
+		stockErr, forkErr, ext := parseBoth(t, src)
+		if stockErr != nil || forkErr != nil {
+			t.Fatalf("valid Go rejected: stock=%v fork=%v", stockErr, forkErr)
+		}
+		if len(ext.Tails) != 0 {
+			t.Fatalf("valid Go produced %d tail declarations", len(ext.Tails))
+		}
+	})
+
+	t.Run("tail func is claimed", func(t *testing.T) {
+		src := "package b\n\ntail func f(n int) int { if n == 0 { return n }; recur(n-1) }\n"
+		stockErr, forkErr, ext := parseBoth(t, src)
+		if stockErr == nil {
+			t.Fatal("stock parser unexpectedly accepted tail func")
+		}
+		if forkErr != nil {
+			t.Fatal(forkErr)
+		}
+		if len(ext.Tails) != 1 || ext.Tails[0].Decl.Name.Name != "f" || !ext.Tails[0].TailPos.IsValid() {
+			t.Fatalf("tail declarations = %+v", ext.Tails)
+		}
+	})
+}
+
 // TestClassClaimBoundary pins the v0.5.0 class/instance claims: valid Go
 // using `class`, `instance`, and `law` as ordinary identifiers is untouched
 // (zero claims, error parity), while the claimed forms parse with the

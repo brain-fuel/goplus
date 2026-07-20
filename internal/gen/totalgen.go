@@ -11,7 +11,7 @@ import (
 	"goforge.dev/goplus/internal/registry"
 )
 
-// Total functions, pass 1 (v0.7.0). The declaration is validated
+// Total functions, pass 1 (v0.8.0). The declaration is validated
 // against the v1 surface (every parameter and the single result typed
 // `nat`, no receiver), elaborated into the core, and checked locally:
 // subtraction obligations under path facts, structural termination

@@ -22,13 +22,15 @@ markers (or one-line `// goplus:` comments):
    consuming them (v0.3.0 pipelines/composition).
 8. `parseExpr`: tail-calls `parseExtOps` to consume claimed `|>` / `>>>`
    chains at the bottom of the ladder.
+9. `parseDecl`: claims the contextual declaration prefixes `total func` and
+   `tail func` (both invalid Go at top level) plus `instance` declarations.
 
 Everything new lives in `goplus.go` (grammar hooks) and `ext.go` (extension
 node types + `ParseFileExt`).
 
 ## Re-vendoring
 
-Copy the three upstream files, replay hunks 1–6 (search `goplus:`), and run
+Copy the three upstream files, replay every marked hunk (search `goplus:`), and run
 `go test ./internal/syntax/parser/` — `TestForkEquivalence` parses a pure-Go
 corpus with fork and stock parser and requires identical ASTs and error
 lists, so behavioral drift is detected mechanically.

@@ -7,6 +7,31 @@ Generated packages compile with the standard Go toolchain and may be
 distributed and consumed **without** Go+ — the same interoperability story
 Kotlin, Scala, and Clojure have with Java.
 
+## v0.21.0 — Native Tail Calls
+
+`recur(nextArgs...)` is an explicit self-tail-call statement. It evaluates
+the next parameter values left-to-right, rebinds them simultaneously, and
+starts the function body again without growing the Go stack:
+
+```go
+tail func sumTo(n, acc uint64) uint64 {
+	if n == 0 {
+		return acc
+	}
+	recur(n-1, acc+n)
+}
+```
+
+The generated Go is a labelled `for` loop with parameter assignment and
+`continue`; no recursive call remains. `recur` is valid only as the final
+statement of a function or tail branch, its arity is the function parameter
+count, variadic state is passed as its slice without `...`, and method
+receivers remain fixed. Arguments use Go assignment evaluation order. Because
+the form explicitly requests loop semantics, one invocation has one defer
+stack (each executed `defer` still registers on it) and named results persist
+between iterations. Inside a `total func`, the same structural-decrease proof
+applies before lowering.
+
 ## v0.14.0 — Multi-Pattern Arms
 
 Driven by rune's elaborate/store rewrite — rigidity and spine
@@ -555,6 +580,8 @@ The spec is executable: the Godog/Cucumber feature suite under
 | v0.17.0 | RFC 6455 and RFC 7692 WebSockets with Go+ protocol states, exhaustive conformance, and optimized framing — shipped |
 | v0.17.1 | WebSocket completion audit: linear capabilities, full handwritten coverage, broader performance gates, and protocol hardening — shipped |
 | v0.18.0 | RFC 8441 WebSockets over HTTP/2 with transparent RFC 6455 fallback and stream multiplexing — shipped |
+| v0.20.0 | Native RFC 9000 QUIC, RFC 9114 HTTP/3, RFC 9220 WebSockets, and H3 → H2 → H1.1 fallback — shipped |
+| v0.21.0 | Explicit `tail func` / `recur` lowering to constant-stack Go loops — implemented |
 
 ## License
 

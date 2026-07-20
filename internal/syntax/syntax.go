@@ -24,6 +24,7 @@ type (
 	DelegateField      = parser.DelegateField
 	QuantityParam      = parser.QuantityParam
 	TotalFunc          = parser.TotalFunc
+	TailFunc           = parser.TailFunc
 	Variant            = parser.Variant
 	MatchStmt          = parser.MatchStmt
 	CaseClause         = parser.CaseClause
@@ -63,6 +64,7 @@ type File struct {
 
 	Quantities []*QuantityParam // source order (v0.7.0)
 	Totals     []*TotalFunc     // source order (v0.7.0)
+	Tails      []*TailFunc      // source order (v0.8.0)
 	Matches    []*MatchStmt     // pre-order (nested matches follow their parent)
 
 	// Pipes and Composes are in creation order (extensions nested in a
@@ -268,6 +270,7 @@ func ParseFile(fset *token.FileSet, path string, src []byte) (*File, error) {
 		Delegates:   ext.Delegates,
 		Quantities:  ext.Quantities,
 		Totals:      ext.Totals,
+		Tails:       ext.Tails,
 		Matches:     ext.Matches,
 		Pipes:       ext.Pipes,
 		Composes:    ext.Composes,

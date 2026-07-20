@@ -55,6 +55,14 @@ type TotalFunc struct {
 	TotalPos token.Pos // position of the `total` keyword
 }
 
+// TailFunc is one `tail func` declaration (v0.8.0): recur is intrinsic in
+// its body and lowers to a loop. The modifier is contextual and remains an
+// ordinary identifier elsewhere.
+type TailFunc struct {
+	Decl    *ast.FuncDecl
+	TailPos token.Pos // position of the `tail` keyword
+}
+
 // ClassDecl is one `type Name[T any] class { … }` declaration (v0.5.0).
 type ClassDecl struct {
 	Gen      *ast.GenDecl  // enclosing declaration; filled by syntax.ParseFile
@@ -282,6 +290,8 @@ type Extensions struct {
 	// v0.7.0 — source order.
 	Quantities []*QuantityParam
 	Totals     []*TotalFunc
+	// v0.8.0 — source order.
+	Tails []*TailFunc
 }
 
 // ParseFileExt parses Go+ source: stock Go grammar plus enum declarations,

@@ -15,7 +15,7 @@
       "patterns": [
         {
           "comment": "goplus declaration keywords (contextual)",
-          "match": "\\b(enum|match|class|instance|law|total|delegate|nat|mult|refl)\\b",
+          "match": "\\b(enum|match|class|instance|law|total|tail|delegate|nat|mult|refl|recur)\\b",
           "name": "keyword.control.gp"
         },
         {

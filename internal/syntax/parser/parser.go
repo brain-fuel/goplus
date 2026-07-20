@@ -2984,6 +2984,18 @@ func (p *parser) parseDecl(sync map[token.Token]bool) ast.Decl {
 	}
 	// goplus:end
 
+	// goplus:begin — explicit tail functions (v0.8.0). Like `total func`,
+	// this spelling is invalid Go only in declaration position; `tail` and
+	// `recur` retain their ordinary Go meanings everywhere else.
+	if p.tok == token.IDENT && p.lit == "tail" && p.peekNonComment() == token.FUNC {
+		tailPos := p.pos
+		p.next()
+		fd := p.parseFuncDecl()
+		p.ext.Tails = append(p.ext.Tails, &TailFunc{Decl: fd, TailPos: tailPos})
+		return fd
+	}
+	// goplus:end
+
 	var f parseSpecFunction
 	switch p.tok {
 	case token.IMPORT:

@@ -1,5 +1,5 @@
 // Go+ grammar hooks. This file is goplus's own (not vendored). The vendored
-// parser calls into it from five marked hunks; everything else lives here.
+// parser calls into it from small marked hunks; everything else lives here.
 package parser
 
 import (

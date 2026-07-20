@@ -8,8 +8,8 @@ import (
 	"math/big"
 )
 
-// Elaboration of total-function bodies from Go syntax (v0.7.0). The
-// admitted fragment is deliberately small: if/else and return over nat
+// Elaboration of total-function bodies from Go syntax (v0.8.0). The
+// admitted fragment is deliberately small: if/else and return/recur over nat
 // expressions built from parameters, integer literals, + - *, parens,
 // and calls to total functions. The SAME elaborator serves the original
 // .gp declaration (gen pass 1) and the erased Go body behind a
@@ -25,7 +25,7 @@ func ElabFuncBody(name string, params []string, body *ast.BlockStmt, resolve Cal
 	if body == nil {
 		return nil, fmt.Errorf("total function %s has no body", name)
 	}
-	e := &elaborator{resolve: resolve}
+	e := &elaborator{resolve: resolve, self: name, params: params}
 	t, err := e.block(body.List)
 	if err != nil {
 		return nil, fmt.Errorf("total function %s: %w", name, err)
@@ -35,6 +35,8 @@ func ElabFuncBody(name string, params []string, body *ast.BlockStmt, resolve Cal
 
 type elaborator struct {
 	resolve CallResolver
+	self    string
+	params  []string
 }
 
 // block elaborates a statement list that must end every path in return.
@@ -43,6 +45,15 @@ func (e *elaborator) block(stmts []ast.Stmt) (Term, error) {
 		return nil, fmt.Errorf("every path in a total function must return")
 	}
 	switch s := stmts[0].(type) {
+	case *ast.ExprStmt:
+		if len(stmts) > 1 {
+			return nil, fmt.Errorf("unreachable statements after recur")
+		}
+		call, ok := s.X.(*ast.CallExpr)
+		if !ok || !isBareCall(call, "recur") {
+			return nil, fmt.Errorf("%T is outside the total fragment (v0.8.0 allows if/return/recur over nat expressions)", stmts[0])
+		}
+		return e.recur(call.Args)
 	case *ast.ReturnStmt:
 		if len(stmts) > 1 {
 			return nil, fmt.Errorf("unreachable statements after return")
@@ -53,7 +64,7 @@ func (e *elaborator) block(stmts []ast.Stmt) (Term, error) {
 		return e.expr(s.Results[0])
 	case *ast.IfStmt:
 		if s.Init != nil {
-			return nil, fmt.Errorf("if with an init statement is outside the total fragment (v0.7.0 allows if/return over nat expressions)")
+			return nil, fmt.Errorf("if with an init statement is outside the total fragment (v0.8.0 allows if/return/recur over nat expressions)")
 		}
 		op, l, r, err := e.cond(s.Cond)
 		if err != nil {
@@ -87,9 +98,60 @@ func (e *elaborator) block(stmts []ast.Stmt) (Term, error) {
 			return nil, err
 		}
 		return If{Op: op, L: l, R: r, Then: then, Else: els}, nil
+	case *ast.BlockStmt:
+		// Reconstruction of the generated recur lowering:
+		// { p0, p1 = a0, a1; continue label }
+		if len(stmts) == 1 && len(s.List) == 2 {
+			assign, aok := s.List[0].(*ast.AssignStmt)
+			branch, bok := s.List[1].(*ast.BranchStmt)
+			if aok && bok && assign.Tok == token.ASSIGN && branch.Tok == token.CONTINUE && e.recurAssignment(assign) {
+				return e.recur(assign.Rhs)
+			}
+		}
+		return nil, fmt.Errorf("block is outside the total fragment (expected lowered recur)")
+	case *ast.LabeledStmt:
+		// A total containing recur is emitted as label: for { original body }.
+		loop, ok := s.Stmt.(*ast.ForStmt)
+		if len(stmts) != 1 || !ok || loop.Init != nil || loop.Cond != nil || loop.Post != nil {
+			return nil, fmt.Errorf("label is outside the total fragment (expected lowered recur loop)")
+		}
+		return e.block(loop.Body.List)
 	default:
-		return nil, fmt.Errorf("%T is outside the total fragment (v0.7.0 allows if/return over nat expressions)", stmts[0])
+		return nil, fmt.Errorf("%T is outside the total fragment (v0.8.0 allows if/return/recur over nat expressions)", stmts[0])
 	}
+}
+
+func (e *elaborator) recur(args []ast.Expr) (Term, error) {
+	if len(args) != len(e.params) {
+		return nil, fmt.Errorf("recur has %d arguments, want %d function parameters", len(args), len(e.params))
+	}
+	terms := make([]Term, len(args))
+	for i, arg := range args {
+		t, err := e.expr(arg)
+		if err != nil {
+			return nil, err
+		}
+		terms[i] = t
+	}
+	return Call{Fn: e.self, Args: terms}, nil
+}
+
+func (e *elaborator) recurAssignment(assign *ast.AssignStmt) bool {
+	if len(assign.Lhs) != len(e.params) || len(assign.Rhs) != len(e.params) {
+		return false
+	}
+	for i, lhs := range assign.Lhs {
+		id, ok := lhs.(*ast.Ident)
+		if !ok || id.Name != e.params[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func isBareCall(call *ast.CallExpr, name string) bool {
+	id, ok := call.Fun.(*ast.Ident)
+	return ok && id.Name == name && !call.Ellipsis.IsValid()
 }
 
 func (e *elaborator) cond(c ast.Expr) (string, Term, Term, error) {

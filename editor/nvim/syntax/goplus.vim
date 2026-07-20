@@ -5,7 +5,7 @@ if exists("b:current_syntax")
 endif
 runtime! syntax/go.vim
 unlet! b:current_syntax
-syn keyword goplusKeyword enum match class instance law total delegate nat mult refl
+syn keyword goplusKeyword enum match class instance law total tail delegate nat mult refl recur
 syn match goplusPipe "|>"
 syn match goplusKleisli ">=>"
 syn match goplusDirective "//goplus:\w\+.*$"

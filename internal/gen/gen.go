@@ -459,7 +459,7 @@ func processPackage(idx *pkgIndex, pkgPath string, probe domainProbeFn) (map[str
 		diags = append(diags, diag.Errorf("%s", err))
 	}
 
-	// Total functions (v0.7.0): every total's key is known before any
+	// Total functions (v0.8.0): every total's key is known before any
 	// file is processed so cross-file same-package calls check.
 	totalLocals := map[string]bool{}
 	for _, f := range idx.files {
@@ -561,6 +561,10 @@ func processPackage(idx *pkgIndex, pkgPath string, probe domainProbeFn) (map[str
 		}
 		var edits []lower.Edit
 		needIter := false
+		tailDecls := map[*ast.FuncDecl]bool{}
+		for _, tail := range f.gp.Tails {
+			tailDecls[tail.Decl] = true
+		}
 		for _, e := range f.gp.Enums {
 			if spec, ok := enums.specs[e]; ok {
 				edits = append(edits, lower.EnumEdits(f.gp, e, spec)...)
@@ -593,6 +597,28 @@ func processPackage(idx *pkgIndex, pkgPath string, probe domainProbeFn) (map[str
 		for _, d := range f.gp.Delegates {
 			edits = append(edits, lower.DelegateEdits(f.gp, d)...)
 		}
+		for _, tail := range f.gp.Tails {
+			start := f.gp.Offset(tail.TailPos)
+			end := start + len("tail")
+			for end < len(f.gp.Src) && (f.gp.Src[end] == ' ' || f.gp.Src[end] == '\t') {
+				end++
+			}
+			marker := lower.TailPrefix
+			if tail.Decl.Recv != nil && len(tail.Decl.Recv.List) > 0 {
+				receiver := "_"
+				if len(tail.Decl.Recv.List[0].Names) > 0 {
+					receiver = tail.Decl.Recv.List[0].Names[0].Name
+				}
+				marker += " receiver=" + receiver
+			}
+			// Delete the contextual modifier and insert its durable marker at
+			// func. Keeping these as boundary-separated edits composes with a
+			// generic method's own marker insertion at the declaration line.
+			edits = append(edits,
+				lower.Edit{Start: start, End: end, New: ""},
+				lower.Edit{Start: f.gp.Offset(tail.Decl.Pos()), End: f.gp.Offset(tail.Decl.Pos()), New: marker + "\n"},
+			)
+		}
 		edits = append(edits, eraseOrdinaryIndexUses(f, enums.isIndexed)...)
 		totalDecls := map[*ast.FuncDecl]bool{}
 		for _, t := range f.gp.Totals {
@@ -617,7 +643,12 @@ func processPackage(idx *pkgIndex, pkgPath string, probe domainProbeFn) (map[str
 				continue
 			}
 			edits = append(edits, lower.Decl(f.gp, gm, funcName, tparams)...)
-			edits = append(edits, lower.MarkerInsert(f.gp, gm, markerFor(gm, funcName)))
+			if tailDecls[gm.Decl] {
+				at := f.gp.Offset(gm.Decl.Pos())
+				edits = append(edits, lower.Edit{Start: at, End: at, New: markerFor(gm, funcName) + "\n"})
+			} else {
+				edits = append(edits, lower.MarkerInsert(f.gp, gm, markerFor(gm, funcName)))
+			}
 		}
 		if len(diags) > 0 {
 			continue
@@ -625,6 +656,22 @@ func processPackage(idx *pkgIndex, pkgPath string, probe domainProbeFn) (map[str
 		body, err := lower.Apply(f.src, edits)
 		if err != nil {
 			diags = append(diags, diag.Errorf("%s: %v", f.path, err))
+			continue
+		}
+		tailMap := sourcemap.Build(f.path, f.src, body)
+		body, tailErrs := lower.LowerTailCalls(f.path, body)
+		for _, tailErr := range tailErrs {
+			if tailErr.Pos.IsValid() {
+				pos := tailErr.Pos
+				if mapped, ok := tailMap.Map(pos); ok {
+					pos = mapped
+				}
+				diags = append(diags, diag.At(pos, "%s", tailErr.Msg))
+			} else {
+				diags = append(diags, diag.Errorf("%s: %s", f.path, tailErr.Msg))
+			}
+		}
+		if len(tailErrs) > 0 {
 			continue
 		}
 		out, err := emit.Finish(f.base, body)
