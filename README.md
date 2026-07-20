@@ -7,6 +7,25 @@ Generated packages compile with the standard Go toolchain and may be
 distributed and consumed **without** G++ — the same interoperability story
 Kotlin, Scala, and Clojure have with Java.
 
+## v0.12.1 — Multi-Pattern Arms
+
+Driven by rune's elaborate/store rewrite — rigidity and spine
+classifiers union constructors in one arm:
+
+```go
+match t {
+case Var(_), Ref(_), Univ(_), Prop:  // one arm, four constructors
+	return true
+case App(_, _):
+	return false
+}
+```
+
+Alternatives take only wildcard arguments and the arm cannot bind the
+value (split the arm to bind); every alternative is its own
+reachability row, so a redundant alternative is an unreachable-arm
+error and alternatives count toward exhaustiveness.
+
 ## v0.11.0 — Deep Structure
 
 The release that arms the rune kernel rewrite: every enum's recursive
@@ -528,6 +547,7 @@ The spec is executable: the Godog/Cucumber feature suite under
 | v0.9.0  | Tooling: gpp lsp + four editors, go generate canonical, cross-package hardening — shipped |
 | v0.10.0 | The dogfood rewrite: cadence v0.2.0 in G++; derived generators, laws over enums, multi-result ops, G++ tests — shipped |
 | v0.11.0 | Deep structure: derived traversals (Children/Universe/Transform), derived structural equality with overrides, std/option, variant doc preservation — shipped |
+| v0.12.1 | Multi-pattern match arms — shipped |
 
 ## License
 
