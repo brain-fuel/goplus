@@ -32,7 +32,10 @@ jobs:
             tail -80 test-output.log
             while IFS= read -r line; do
               echo "::error::$line"
-            done < <(head -120 test-output.log; tail -80 test-output.log)
+            # GitHub retains only the first few command annotations. Emit the
+            # tail first because Go reports package failures and its final
+            # status there; the ordinary excerpt above remains head then tail.
+            done < <(tail -80 test-output.log; head -120 test-output.log)
             exit 1
           fi
       - name: Standard library (nested module)
