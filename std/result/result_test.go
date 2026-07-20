@@ -66,3 +66,11 @@ func TestRailway(t *testing.T) {
 		t.Fatalf("UnwrapOr: %d", got)
 	}
 }
+
+func TestFailureTypeNeedNotImplementError(t *testing.T) {
+	r := Err[int, string]{Err: "not ready"}
+	value, failure := Unpack[int, string](r)
+	if value != 0 || failure != "not ready" {
+		t.Fatalf("Unpack typed failure: %v %q", value, failure)
+	}
+}

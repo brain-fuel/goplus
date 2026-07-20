@@ -8,31 +8,31 @@ package result
 
 // Result carries one success value or one failure value.
 //
-//goplus:enum Result[T any, E error]
-type Result[T any, E error] interface{ isResult(T, E) }
+//goplus:enum Result[T any, E any]
+type Result[T any, E any] interface{ isResult(T, E) }
 
 //goplus:variant (Result[T, E]) Ok(value T)
-type Ok[T any, E error] struct {
+type Ok[T any, E any] struct {
 	Value T
 }
 
 func (Ok[T, E]) isResult(T, E) {}
 
 //goplus:variant (Result[T, E]) Err(err E)
-type Err[T any, E error] struct {
+type Err[T any, E any] struct {
 	Err E
 }
 
 func (Err[T, E]) isResult(T, E) {}
 
 // ResultCases selects one handler per Result variant for Fold.
-type ResultCases[T any, E error, R any] struct {
+type ResultCases[T any, E any, R any] struct {
 	Ok  func(value T) R
 	Err func(err E) R
 }
 
 // Fold reduces Result[T, E] by one-level case analysis.
-func Fold[T any, E error, R any](v Result[T, E], cs ResultCases[T, E, R]) R {
+func Fold[T any, E any, R any](v Result[T, E], cs ResultCases[T, E, R]) R {
 	switch m := any(v).(type) {
 	case Ok[T, E]:
 		return cs.Ok(m.Value)
@@ -55,7 +55,7 @@ func Of[T any](v T, err error) Result[T, error] {
 // value; an Err bypasses it.
 //
 //goplus:method (Result[T, E]) Bind[U]
-func Bind[T any, E error, U any](r Result[T, E], f func(T) Result[U, E]) Result[U, E] {
+func Bind[T any, E any, U any](r Result[T, E], f func(T) Result[U, E]) Result[U, E] {
 	switch __gp_m0 := any(r).(type) {
 	case Ok[T, E]:
 		v := __gp_m0.Value
@@ -71,7 +71,7 @@ func Bind[T any, E error, U any](r Result[T, E], f func(T) Result[U, E]) Result[
 // Map lifts a plain function onto the success track.
 //
 //goplus:method (Result[T, E]) Map[U]
-func Map[T any, E error, U any](r Result[T, E], f func(T) U) Result[U, E] {
+func Map[T any, E any, U any](r Result[T, E], f func(T) U) Result[U, E] {
 	switch __gp_m1 := any(r).(type) {
 	case Ok[T, E]:
 		v := __gp_m1.Value
@@ -87,7 +87,7 @@ func Map[T any, E error, U any](r Result[T, E], f func(T) U) Result[U, E] {
 // MapError transforms the failure track.
 //
 //goplus:method (Result[T, E]) MapError[F]
-func MapError[T any, E error, F error](r Result[T, E], f func(E) F) Result[T, F] {
+func MapError[T any, E any, F any](r Result[T, E], f func(E) F) Result[T, F] {
 	switch __gp_m2 := any(r).(type) {
 	case Ok[T, E]:
 		v := __gp_m2.Value
@@ -104,7 +104,7 @@ func MapError[T any, E error, F error](r Result[T, E], f func(E) F) Result[T, F]
 // through unchanged; an Err bypasses it.
 //
 //goplus:method (Result[T, E]) Tee
-func Tee[T any, E error](r Result[T, E], f func(T)) Result[T, E] {
+func Tee[T any, E any](r Result[T, E], f func(T)) Result[T, E] {
 	switch __gp_m3 := any(r).(type) {
 	case Ok[T, E]:
 		v := __gp_m3.Value
@@ -120,11 +120,12 @@ func Tee[T any, E error](r Result[T, E], f func(T)) Result[T, E] {
 // yields (zero, err).
 //
 //goplus:method (Result[T, E]) Unpack
-func Unpack[T any, E error](r Result[T, E]) (T, error) {
+func Unpack[T any, E any](r Result[T, E]) (T, E) {
 	switch __gp_m4 := any(r).(type) {
 	case Ok[T, E]:
 		v := __gp_m4.Value
-		return v, nil
+		var zero E
+		return v, zero
 	case Err[T, E]:
 		e := __gp_m4.Err
 		var zero T
@@ -137,7 +138,7 @@ func Unpack[T any, E error](r Result[T, E]) (T, error) {
 // UnwrapOr yields the Ok value or a fallback.
 //
 //goplus:method (Result[T, E]) UnwrapOr
-func UnwrapOr[T any, E error](r Result[T, E], fallback T) T {
+func UnwrapOr[T any, E any](r Result[T, E], fallback T) T {
 	switch __gp_m5 := any(r).(type) {
 	case Ok[T, E]:
 		v := __gp_m5.Value
@@ -152,7 +153,7 @@ func UnwrapOr[T any, E error](r Result[T, E], fallback T) T {
 // IsOk reports whether the Result is on the success track.
 //
 //goplus:method (Result[T, E]) IsOk
-func IsOk[T any, E error](r Result[T, E]) bool {
+func IsOk[T any, E any](r Result[T, E]) bool {
 	switch any(r).(type) {
 	case Ok[T, E]:
 		return true
@@ -166,7 +167,7 @@ func IsOk[T any, E error](r Result[T, E]) bool {
 // IsErr reports whether the Result is on the failure track.
 //
 //goplus:method (Result[T, E]) IsErr
-func IsErr[T any, E error](r Result[T, E]) bool {
+func IsErr[T any, E any](r Result[T, E]) bool {
 	switch any(r).(type) {
 	case Ok[T, E]:
 		return false

@@ -4,7 +4,7 @@
 package result
 
 // Result carries one success value or one failure value.
-type Result[T any, E error] enum {
+type Result[T any, E any] enum {
 	Ok(value T)
 	Err(err E)
 }
@@ -39,7 +39,7 @@ func (r Result[T, E]) Map[U any](f func(T) U) Result[U, E] {
 }
 
 // MapError transforms the failure track.
-func (r Result[T, E]) MapError[F error](f func(E) F) Result[T, F] {
+func (r Result[T, E]) MapError[F any](f func(E) F) Result[T, F] {
 	match r {
 	case Ok(v):
 		return Ok[T, F](v)
@@ -61,10 +61,11 @@ func (r Result[T, E]) Tee(f func(T)) Result[T, E] {
 
 // Unpack leaves the railway in Go shape: Ok yields (value, nil); Err
 // yields (zero, err).
-func (r Result[T, E]) Unpack() (T, error) {
+func (r Result[T, E]) Unpack() (T, E) {
 	match r {
 	case Ok(v):
-		return v, nil
+		var zero E
+		return v, zero
 	case Err(e):
 		var zero T
 		return zero, e
