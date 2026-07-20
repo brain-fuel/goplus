@@ -7,6 +7,25 @@ Generated packages compile with the standard Go toolchain and may be
 distributed and consumed **without** Go+ — the same interoperability story
 Kotlin, Scala, and Clojure have with Java.
 
+## v0.22.0 — Refinement Types and Structural GADT Elimination
+
+Refinement declarations add checked semantic subsets of existing Go types:
+
+```go
+type Positive refine(value int) { value > 0 }
+```
+
+Go+ proves constant constructions, path-guarded values, calls, assignments,
+and returns where possible, rejects unproved uses at generation time, and
+emits runtime guards at exported Go boundaries. Refinement contracts survive
+package boundaries through generated markers while the emitted representation
+remains ordinary Go.
+
+Structural GADT matches can now eliminate composite indices through generic
+scrutinees, including recursive cases such as `Expr[U]` matching a constructor
+whose result is `Expr[[]T]`. Generated private erased views preserve the typed
+public facade and keep the output portable to the standard Go toolchain.
+
 ## v0.21.0 — Native Tail Calls
 
 `recur(nextArgs...)` is an explicit self-tail-call statement. It evaluates

@@ -42,6 +42,22 @@ func FuncName(recvType, method string, shared map[string]int) string {
 	return PrefixedName(recvType, method)
 }
 
+// RefinementPredicateName is the sealed predicate helper emitted for a
+// refinement declaration. The double-underscore namespace is still collision
+// checked against authored declarations.
+func RefinementPredicateName(name string) string { return "__goplus_refinement_" + name }
+
+// ErasedViewName is the cross-package helper used only when a GADT constructor
+// cannot be named as a Go type-switch case through a generic scrutinee.
+func ErasedViewName(enum string) string {
+	return setFirstCase("goplus"+capitalize(enum)+"View", ast.IsExported(enum))
+}
+
+func ErasedViewAnyName(enum string) string { return ErasedViewName(enum) + "Any" }
+
+// ErasedViewMethodName is sealed inside the enum's declaring package.
+func ErasedViewMethodName(enum string) string { return "__goplus_view_" + enum }
+
 func capitalize(s string) string { return setFirstCase(s, true) }
 
 func setFirstCase(s string, upper bool) string {

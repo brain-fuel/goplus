@@ -1,6 +1,6 @@
 module goforge.dev/goplus/std/algebra/lawtest
 
-go 1.24
+go 1.24.0
 
 require (
 	goforge.dev/goplus/std v0.0.0

@@ -66,7 +66,35 @@ func (p *parser) parseTypeSpecType(spec *ast.TypeSpec) {
 		p.parseClassType(spec)
 		return
 	}
+	if p.tok == token.IDENT && p.lit == "refine" && p.peekNonComment() == token.LPAREN {
+		p.parseRefinementType(spec)
+		return
+	}
 	spec.Type = p.parseType()
+}
+
+// parseRefinementType parses the contextual, invalid-Go declaration form
+// `type Positive refine(value int) { value > 0 }`.
+func (p *parser) parseRefinementType(spec *ast.TypeSpec) {
+	if spec.Assign.IsValid() {
+		p.error(spec.Assign, "refinement declarations cannot be type aliases")
+	}
+	d := &RefinementDecl{Spec: spec, RefinePos: p.pos}
+	p.next() // consume `refine`
+	params := p.parseParameters(false)
+	if len(params.List) != 1 || len(params.List[0].Names) != 1 {
+		p.error(params.Pos(), "a refinement declaration requires exactly one named value parameter")
+	} else {
+		d.Param = params.List[0]
+	}
+	d.Lbrace = p.expect(token.LBRACE)
+	d.Predicate = p.parseExpr()
+	if p.tok == token.SEMICOLON {
+		p.next() // permit a newline before the closing brace
+	}
+	d.Rbrace = p.expect(token.RBRACE)
+	spec.Type = &ast.BadExpr{From: d.RefinePos, To: d.Rbrace + 1}
+	p.ext.Refinements = append(p.ext.Refinements, d)
 }
 
 func (p *parser) parseEnumType(spec *ast.TypeSpec) {

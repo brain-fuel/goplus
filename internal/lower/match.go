@@ -42,7 +42,7 @@ func skeletonEdits(f *syntax.File, m *syntax.MatchStmt, index int, subj string) 
 		edits = append(edits, Edit{
 			Start: f.Offset(c.Case),
 			End:   f.Offset(c.Colon) + 1,
-			New:   "case nil:\n" + PatternCarrier + pattern,
+			New:   "case nil:\n" + PatternCarrier + pattern + "\n",
 		})
 	}
 	return edits

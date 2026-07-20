@@ -24,9 +24,11 @@ type fileResolver struct {
 	reg         *registry.Registry
 	tokFile     *token.File
 
-	parents map[ast.Node]ast.Node
-	diags   []diag.Diagnostic
-	edits   []lower.Edit
+	parents         map[ast.Node]ast.Node
+	refinedVars     map[*types.Var]*registry.Refinement
+	refinedFactVars map[*types.Var]*registry.Refinement
+	diags           []diag.Diagnostic
+	edits           []lower.Edit
 
 	// report enables give-up diagnostics. It is set only on the audit
 	// pass after the fixpoint converges, so transient can't-resolve-yet
@@ -67,7 +69,11 @@ func (r *fileResolver) resolve() ([]lower.Edit, []diag.Diagnostic) {
 	})
 
 	r.refineCandidates()
+	r.indexRefinedVariables()
 	ast.Inspect(r.file, func(n ast.Node) bool {
+		if e, ok := n.(ast.Expr); ok {
+			r.refinementExpectedCandidate(e)
+		}
 		switch x := n.(type) {
 		case *ast.SelectorExpr:
 			r.candidate(x)
@@ -75,6 +81,8 @@ func (r *fileResolver) resolve() ([]lower.Edit, []diag.Diagnostic) {
 		case *ast.Ident:
 			r.ctorCandidate(x)
 		case *ast.CallExpr:
+			r.refinementCallCandidate(x)
+			r.refinedFunctionCallCandidate(x)
 			r.pipeCandidate(x)
 			r.segCandidate(x)
 			r.dotCandidate(x)
@@ -92,12 +100,20 @@ func (r *fileResolver) resolve() ([]lower.Edit, []diag.Diagnostic) {
 			r.indexEraseCandidate(x.X, x.Indices, r.off(x.Lbrack), r.off(x.Rbrack))
 		case *ast.AssignStmt:
 			r.exprformCandidate(x)
+			r.refinementAssignCandidate(x)
+		case *ast.ReturnStmt:
+			r.refinementReturnCandidate(x)
 		case *ast.TypeSwitchStmt:
 			r.matchCandidate(x)
 		case *ast.GenDecl:
 			r.classCandidate(x)
 			r.instanceCandidate(x, x.Doc)
 			r.delegateCandidate(x)
+			for _, spec := range x.Specs {
+				if vs, ok := spec.(*ast.ValueSpec); ok {
+					r.refinementValueSpecCandidate(vs)
+				}
+			}
 		case *ast.FuncDecl:
 			r.dictDeclCandidate(x)
 			r.instanceCandidate(x, x.Doc)

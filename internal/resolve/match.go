@@ -48,6 +48,16 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 
 	tv, ok := r.pkg.TypesInfo.Types[subj]
 	if !ok || tv.Type == nil || tv.Type == types.Typ[types.Invalid] {
+		if id, isIdent := subj.(*ast.Ident); isIdent {
+			if obj := r.pkg.TypesInfo.Uses[id]; obj != nil {
+				tv.Type, ok = obj.Type(), true
+			}
+		}
+	}
+	if !ok || tv.Type == nil || tv.Type == types.Typ[types.Invalid] {
+		if r.report {
+			r.errorf(subj.Pos(), "match subject remains untyped after resolution")
+		}
 		return // scrutinee not typed yet; a later iteration will see it
 	}
 	named, _ := asNamed(tv.Type)
@@ -235,6 +245,20 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 	}
 
 	subjText := r.text(subj.Pos(), subj.End())
+	needsErased := false
+	for _, a := range arms {
+		if a.pat.wild || len(a.alts) > 0 || len(a.pat.variant.OccursIn(e)) == 0 {
+			continue
+		}
+		if _, ok := variantSubst(e, a.pat.variant, a.pat.col.targs); !ok {
+			needsErased = true
+		}
+	}
+	if needsErased && !anyNested {
+		if r.erasedGADTFunction(sw, e, arms, subjText, sawWildcard) {
+			return
+		}
+	}
 	if anyNested {
 		for _, a := range arms {
 			if len(a.alts) > 0 {

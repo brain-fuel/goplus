@@ -45,11 +45,43 @@ type Registry struct {
 	classIdxV   *classIndex
 	totalIdx    *totalIndex
 	depIdx      *depIndex
+	refinements map[string]*Refinement
+	refinedFns  map[string]*RefinedFunc
 	paramIdx    map[paramIndexKey][2][]string
 }
 
 func New() *Registry {
-	return &Registry{methods: map[string]*Method{}, methodNames: map[string]bool{}}
+	return &Registry{methods: map[string]*Method{}, methodNames: map[string]bool{}, refinements: map[string]*Refinement{}, refinedFns: map[string]*RefinedFunc{}}
+}
+
+func (r *Registry) AddRefinedFunc(fn *RefinedFunc) error {
+	k := fn.PkgPath + "\x00" + fn.Name
+	if _, exists := r.refinedFns[k]; exists {
+		return fmt.Errorf("duplicate refined function %s in package %s", fn.Name, fn.PkgPath)
+	}
+	r.refinedFns[k] = fn
+	return nil
+}
+
+func (r *Registry) LookupRefinedFunc(pkgPath, name string) (*RefinedFunc, bool) {
+	fn, ok := r.refinedFns[pkgPath+"\x00"+name]
+	return fn, ok
+}
+
+// AddRefinement registers one erased refinement contract.
+func (r *Registry) AddRefinement(ref *Refinement) error {
+	k := ref.PkgPath + "\x00" + ref.Name
+	if _, exists := r.refinements[k]; exists {
+		return fmt.Errorf("duplicate refinement %s in package %s", ref.Name, ref.PkgPath)
+	}
+	r.refinements[k] = ref
+	return nil
+}
+
+// LookupRefinement finds a refinement by its declaring package and name.
+func (r *Registry) LookupRefinement(pkgPath, name string) (*Refinement, bool) {
+	ref, ok := r.refinements[pkgPath+"\x00"+name]
+	return ref, ok
 }
 
 func key(pkgPath, recvType, method string) string {

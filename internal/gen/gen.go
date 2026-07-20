@@ -108,6 +108,7 @@ func Run(opts Options) (*Result, error) {
 	instancesByDir := map[string][]*registry.Instance{}
 	totalsByDir := map[string][]*registry.Total{}
 	depsByDir := map[string][]*registry.DepFn{}
+	refinementsByDir := map[string][]*registry.Refinement{}
 	lawsOutByDir := map[string]string{}
 	goplusSources := map[string][]byte{} // output abs path -> .gp source bytes
 	goplusPaths := map[string]string{}   // output abs path -> .gp path (relative)
@@ -146,7 +147,7 @@ func Run(opts Options) (*Result, error) {
 		idx, diags := loadedByDir[dir].idx, loadedByDir[dir].diags
 		res.Diags = append(res.Diags, diags...)
 		if idx != nil && len(diags) == 0 {
-			outs, methods, enums, classes, instances, totals, deps, lawsOut, pdiags := processPackage(idx, pkgPath(pkgPathRoot, moduleRoot, dir), domainProbe)
+			outs, methods, enums, classes, instances, totals, deps, refinements, lawsOut, pdiags := processPackage(idx, pkgPath(pkgPathRoot, moduleRoot, dir), domainProbe)
 			res.Diags = append(res.Diags, pdiags...)
 			for path, content := range outs {
 				outputs[path] = content
@@ -157,6 +158,7 @@ func Run(opts Options) (*Result, error) {
 			instancesByDir[dir] = instances
 			totalsByDir[dir] = totals
 			depsByDir[dir] = deps
+			refinementsByDir[dir] = refinements
 			lawsOutByDir[dir] = lawsOut
 			for _, f := range idx.files {
 				if f.gp != nil {
@@ -179,21 +181,25 @@ func Run(opts Options) (*Result, error) {
 	// syntactic.
 	if moduleRoot != "" && len(outputs) > 0 {
 		in := &resolve.Input{
-			Dir:            opts.Dir,
-			Patterns:       loadPatterns(opts.Patterns),
-			Texts:          outputs,
-			MethodsByDir:   methodsByDir,
-			EnumsByDir:     enumsByDir,
-			ClassesByDir:   classesByDir,
-			InstancesByDir: instancesByDir,
-			TotalsByDir:    totalsByDir,
-			DepsByDir:      depsByDir,
+			Dir:              opts.Dir,
+			Patterns:         loadPatterns(opts.Patterns),
+			Texts:            outputs,
+			MethodsByDir:     methodsByDir,
+			EnumsByDir:       enumsByDir,
+			ClassesByDir:     classesByDir,
+			InstancesByDir:   instancesByDir,
+			TotalsByDir:      totalsByDir,
+			DepsByDir:        depsByDir,
+			RefinementsByDir: refinementsByDir,
 		}
 		out, err := resolve.Fixpoint(in)
 		if err != nil {
 			return nil, err
 		}
 		if len(out.Diags) > 0 {
+			if opts.DryRun {
+				res.Outputs = out.Texts
+			}
 			// Resolution diagnostics carry overlay-file positions; remap
 			// them onto the .gp sources they lower from.
 			maps := map[string]*sourcemap.Map{}
@@ -393,7 +399,7 @@ func loadDir(dir string, overlay map[string][]byte) (*pkgIndex, []diag.Diagnosti
 // processPackage lowers every .gp file of one package to output bytes,
 // also returning the package's generic methods and enums for the
 // resolution registry.
-func processPackage(idx *pkgIndex, pkgPath string, probe domainProbeFn) (map[string][]byte, []*registry.Method, []*registry.Enum, []*registry.Class, []*registry.Instance, []*registry.Total, []*registry.DepFn, string, []diag.Diagnostic) {
+func processPackage(idx *pkgIndex, pkgPath string, probe domainProbeFn) (map[string][]byte, []*registry.Method, []*registry.Enum, []*registry.Class, []*registry.Instance, []*registry.Total, []*registry.DepFn, []*registry.Refinement, string, []diag.Diagnostic) {
 	var diags []diag.Diagnostic
 
 	tbl := naming.NewTable()
@@ -406,6 +412,8 @@ func processPackage(idx *pkgIndex, pkgPath string, probe domainProbeFn) (map[str
 	diags = append(diags, ediags...)
 	classModels, instModels, lawsOut, cdiags := planClasses(idx, tbl)
 	diags = append(diags, cdiags...)
+	refinementModels, rdiags := planRefinements(idx, pkgPath, tbl)
+	diags = append(diags, rdiags...)
 	enumNames := map[string]bool{}
 	for _, m := range enums.models {
 		enumNames[m.Name] = true
@@ -542,7 +550,7 @@ func processPackage(idx *pkgIndex, pkgPath string, probe domainProbeFn) (map[str
 		}
 	}
 	if len(diags) > 0 {
-		return nil, nil, nil, nil, nil, nil, nil, "", diags
+		return nil, nil, nil, nil, nil, nil, nil, nil, "", diags
 	}
 
 	outputs := map[string][]byte{}
@@ -573,6 +581,10 @@ func processPackage(idx *pkgIndex, pkgPath string, probe domainProbeFn) (map[str
 				}
 			}
 		}
+		for _, ref := range f.gp.Refinements {
+			edits = append(edits, lower.RefinementEdits(f.gp, ref)...)
+		}
+		edits = append(edits, refinementGuardEdits(f.gp, refinementModels)...)
 		if needIter {
 			// Universe returns an iter.Seq; inject the import right after
 			// the package clause unless the source already has it (the
@@ -682,9 +694,9 @@ func processPackage(idx *pkgIndex, pkgPath string, probe domainProbeFn) (map[str
 		outputs[emit.OutputPath(f.path)] = out
 	}
 	if len(diags) > 0 {
-		return nil, nil, nil, nil, nil, nil, nil, "", diags
+		return nil, nil, nil, nil, nil, nil, nil, nil, "", diags
 	}
-	return outputs, allMethods, enums.models, classModels, instModels, allTotals, allDeps, lawsOut, nil
+	return outputs, allMethods, enums.models, classModels, instModels, allTotals, allDeps, refinementModels, lawsOut, nil
 }
 
 // markerFor renders the //goplus:method marker comment for a lowered method.

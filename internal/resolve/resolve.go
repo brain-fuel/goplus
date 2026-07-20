@@ -11,6 +11,7 @@ package resolve
 
 import (
 	"fmt"
+	"go/ast"
 	"go/format"
 	"go/token"
 	"go/types"
@@ -40,10 +41,11 @@ type Input struct {
 	MethodsByDir map[string][]*registry.Method // dir -> generic methods declared there (PkgPath unset)
 	EnumsByDir   map[string][]*registry.Enum   // dir -> enums declared there (PkgPath provisional)
 	// v0.5.0 typeclasses (PkgPath provisional, cloned on registration).
-	ClassesByDir   map[string][]*registry.Class
-	InstancesByDir map[string][]*registry.Instance
-	TotalsByDir    map[string][]*registry.Total
-	DepsByDir      map[string][]*registry.DepFn
+	ClassesByDir     map[string][]*registry.Class
+	InstancesByDir   map[string][]*registry.Instance
+	TotalsByDir      map[string][]*registry.Total
+	DepsByDir        map[string][]*registry.DepFn
+	RefinementsByDir map[string][]*registry.Refinement
 }
 
 // Output is the fixpoint result.
@@ -239,6 +241,12 @@ func buildRegistry(reg *registry.Registry, roots []*packages.Package, in *Input)
 				clone.PkgPath = pkg.PkgPath
 				record(reg.AddDepFn(&clone))
 			}
+			for _, ref := range in.RefinementsByDir[dir] {
+				clone := *ref
+				clone.PkgPath = pkg.PkgPath
+				record(reg.AddRefinement(&clone))
+			}
+			registerRefinedFunctions(reg, pkg, record)
 			return
 		}
 		// Dependency package: scan distributed sources for markers. Enum
@@ -268,6 +276,14 @@ func buildRegistry(reg *registry.Registry, roots []*packages.Package, in *Input)
 			}
 		}
 		for file, src := range pkgFiles {
+			if strings.Contains(string(src), "//goplus:refinement") {
+				refs, err := registry.RefinementsFromMarkers(pkg.PkgPath, file, src)
+				if err == nil {
+					for _, ref := range refs {
+						record(reg.AddRefinement(ref))
+					}
+				}
+			}
 			if strings.Contains(string(src), "//goplus:method") {
 				methods, err := registry.FromMarkers(pkg.PkgPath, file, src)
 				if err == nil { // marker damage in a dep is not fatal
@@ -305,11 +321,63 @@ func buildRegistry(reg *registry.Registry, roots []*packages.Package, in *Input)
 				}
 			}
 		}
+		registerRefinedFunctions(reg, pkg, record)
 	})
 	if firstErr == nil {
 		registerConstrainedFns(reg, roots, in)
 	}
 	return firstErr
+}
+
+func registerRefinedFunctions(reg *registry.Registry, pkg *packages.Package, record func(error)) {
+	refFor := func(expr ast.Expr) *registry.Refinement {
+		var obj types.Object
+		switch x := expr.(type) {
+		case *ast.Ident:
+			obj = pkg.TypesInfo.Uses[x]
+		case *ast.SelectorExpr:
+			obj = pkg.TypesInfo.Uses[x.Sel]
+		}
+		tn, ok := obj.(*types.TypeName)
+		if !ok || tn.Pkg() == nil {
+			return nil
+		}
+		ref, _ := reg.LookupRefinement(tn.Pkg().Path(), tn.Name())
+		return ref
+	}
+	fields := func(list *ast.FieldList) map[int]*registry.Refinement {
+		out := map[int]*registry.Refinement{}
+		if list == nil {
+			return out
+		}
+		pos := 0
+		for _, field := range list.List {
+			n := len(field.Names)
+			if n == 0 {
+				n = 1
+			}
+			if ref := refFor(field.Type); ref != nil {
+				for i := 0; i < n; i++ {
+					out[pos+i] = ref
+				}
+			}
+			pos += n
+		}
+		return out
+	}
+	for _, file := range pkg.Syntax {
+		for _, decl := range file.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Recv != nil {
+				continue
+			}
+			params, results := fields(fd.Type.Params), fields(fd.Type.Results)
+			if len(params) == 0 && len(results) == 0 {
+				continue
+			}
+			record(reg.AddRefinedFunc(&registry.RefinedFunc{PkgPath: pkg.PkgPath, Name: fd.Name.Name, Params: params, Results: results}))
+		}
+	}
 }
 
 func pkgDir(pkg *packages.Package) string {

@@ -63,6 +63,19 @@ type TailFunc struct {
 	TailPos token.Pos // position of the `tail` keyword
 }
 
+// RefinementDecl is one `type Name refine(value Base) { predicate }`
+// declaration. The declaration denotes a subtype of Base whose values satisfy
+// predicate; lowering erases it to Base after refinement checking.
+type RefinementDecl struct {
+	Gen       *ast.GenDecl  // enclosing declaration; filled by syntax.ParseFile
+	Spec      *ast.TypeSpec // Name is real; Spec.Type is a placeholder
+	RefinePos token.Pos
+	Param     *ast.Field // exactly one named value binder
+	Lbrace    token.Pos
+	Predicate ast.Expr
+	Rbrace    token.Pos
+}
+
 // ClassDecl is one `type Name[T any] class { … }` declaration (v0.5.0).
 type ClassDecl struct {
 	Gen      *ast.GenDecl  // enclosing declaration; filled by syntax.ParseFile
@@ -292,6 +305,8 @@ type Extensions struct {
 	Totals     []*TotalFunc
 	// v0.8.0 — source order.
 	Tails []*TailFunc
+	// v0.9.0 — source order.
+	Refinements []*RefinementDecl
 }
 
 // ParseFileExt parses Go+ source: stock Go grammar plus enum declarations,

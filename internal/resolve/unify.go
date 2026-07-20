@@ -1,8 +1,11 @@
 package resolve
 
 import (
+	"bytes"
 	"go/ast"
 	"go/parser"
+	"go/printer"
+	"go/token"
 
 	"goforge.dev/goplus/internal/registry"
 )
@@ -230,7 +233,11 @@ func enumArgsFromBind(e *registry.Enum, v *registry.EnumVariant, bind map[string
 }
 
 func exprText(e ast.Expr) string {
-	return exprString(e)
+	var out bytes.Buffer
+	if err := printer.Fprint(&out, token.NewFileSet(), e); err != nil {
+		return ""
+	}
+	return out.String()
 }
 
 // textHasTParam reports whether a type text mentions any of the names.

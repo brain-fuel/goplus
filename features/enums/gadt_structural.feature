@@ -5,10 +5,9 @@ Feature: Structural GADT result types
   OCCURRING in the result arguments; case heads, constructor inference,
   possibility filtering, and exhaustiveness all reduce to structural
   unification of the result patterns against the scrutinee's type
-  arguments. When the scrutinee's argument is a bare type parameter and
-  the variant's is composite, Go's erasure cannot name the case head:
-  the variant still counts toward exhaustiveness but an explicit arm is
-  an error.
+  arguments. When Go cannot name a composite constructor's instantiation
+  through a generic scrutinee, a typed facade delegates to the enum's sealed
+  erased view rather than rejecting the arm.
 
   Background:
     Given a file "go.mod":
@@ -125,7 +124,7 @@ Feature: Structural GADT result types
       	case Flipped[string, int]:
       """
 
-  Scenario: A composite variant on a generic scrutinee is unmatchable
+  Scenario: A composite variant matches through a generic scrutinee
     Given a Go+ file "main.gp":
       """
       package main
@@ -147,12 +146,19 @@ Feature: Structural GADT result types
       	}
       }
 
-      func main() { fmt.Println(f(Plain(1))) }
+      func main() {
+		fmt.Println(f(Plain(1)))
+		fmt.Println(f[[]int](Wrap[int](Plain(2))))
+      }
       """
-    When I run goplus with arguments "gen ."
-    Then the exit code is 2
-    And stderr contains "cannot be matched against"
-    And stderr contains "do not determine the variant's type parameters under Go's erasure"
+    When I run goplus with arguments "run ."
+    Then the exit code is 0
+    And stdout contains:
+      """
+      1
+      wrap
+      """
+    And the file "main_gp.go" contains "func __goplus_erased_f(e any) string"
 
   Scenario: The wildcard covers unmatchable composite variants
     Given a Go+ file "main.gp":

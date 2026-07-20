@@ -1,0 +1,36 @@
+(* Go+ v0.9.0 grammar delta: refinement types.
+
+   The complete base grammar is Go plus the declarations and expressions in
+   grammar-v0.8.0.ebnf. This file specifies the refinement-type addition.
+*)
+
+TypeDecl        = ... | RefinementDecl .
+RefinementDecl  = "type" TypeName "refine" "(" identifier Type ")"
+                  "{" Expression "}" .
+
+(*
+  `type Port refine(value int) { 0 < value && value < 65536 }` declares
+  Port as the subset of int satisfying the predicate.
+
+  - `refine` is contextual and claims only `refine (` in a type declaration,
+    a spelling invalid in Go. Existing identifiers named refine remain Go.
+  - The binder is in scope only in the predicate. The base is an ordinary Go
+    value type; interface, pointer, composite, and instantiated named bases are
+    admitted. A refinement may name an earlier refinement as its base.
+  - A refined value erases to its ultimate Go base type. Generated APIs remain
+    callable from Go without wrapper allocation or representation changes.
+  - `R(x)` introduces a refined value. Go+ must prove R's predicate after
+    substituting x from literals, path facts, prior refinements, and total
+    predicates. Failure to prove is a compile error, never an unchecked cast.
+  - Within a scope where x has type R, R's predicate is available as a path
+    fact. Refinements compose transitively and are preserved through GADT match
+    arms and ordinary control-flow narrowing.
+  - Exported functions erase refined parameters/results to their base types.
+    Parameters receive generated runtime precondition guards for plain-Go
+    callers; refined results are guaranteed by Go+ checking at every return.
+  - Predicates must be pure and total. The initial decision procedure shares
+    the dependent core's equality and linear-arithmetic reasoning; calls are
+    admissible only when they name registered total boolean functions.
+  - Refinement declarations and their predicates survive in generated marker
+    metadata so construction, calls, and narrowing work across packages.
+*)

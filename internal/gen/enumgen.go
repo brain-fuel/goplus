@@ -3,6 +3,7 @@ package gen
 import (
 	"fmt"
 	"go/ast"
+	"go/parser"
 	"go/token"
 	"strings"
 
@@ -461,12 +462,60 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table, probe domainPro
 		if !ok {
 			continue
 		}
+		if enumNeedsErasedView(model) {
+			spec.ViewName = naming.ErasedViewName(enumName)
+			spec.ViewMethod = naming.ErasedViewMethodName(enumName)
+			if err := tbl.AddGenerated(spec.ViewName, "erased eliminator for enum "+enumName+" at "+idx.fset.Position(e.Spec.Name.Pos()).String()); err != nil {
+				diags = append(diags, diag.At(idx.fset.Position(e.Spec.Name.Pos()), "%v", err))
+				continue
+			}
+			if err := tbl.AddGenerated(naming.ErasedViewAnyName(enumName), "untyped erased eliminator for enum "+enumName+" at "+idx.fset.Position(e.Spec.Name.Pos()).String()); err != nil {
+				diags = append(diags, diag.At(idx.fset.Position(e.Spec.Name.Pos()), "%v", err))
+				continue
+			}
+			for i := range spec.Variants {
+				spec.Variants[i].ViewTag = i
+			}
+		}
 		plan.specs[e] = spec
 		plan.models = append(plan.models, model)
 		plan.order = append(plan.order, e)
 		plan.model[e] = model
 	}
 	return plan, diags
+}
+
+// enumNeedsErasedView reports whether generic type arguments cannot always be
+// inverted into a concrete variant instantiation. Unique bare parameters,
+// including permutations, are invertible; composites and repeated parameters
+// require the erased eliminator.
+func enumNeedsErasedView(e *registry.Enum) bool {
+	tparams := map[string]bool{}
+	for _, name := range e.TParams {
+		tparams[name] = true
+	}
+	for _, v := range e.Variants {
+		seen := map[string]bool{}
+		for _, arg := range v.ResultArgs {
+			expr, err := parser.ParseExpr(arg)
+			if err != nil {
+				continue
+			}
+			if id, ok := expr.(*ast.Ident); ok && tparams[id.Name] {
+				if seen[id.Name] {
+					return true
+				}
+				seen[id.Name] = true
+				continue
+			}
+			for _, name := range tparamOccurrences(expr) {
+				if tparams[name] {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // analyzeResult analyzes a variant's (explicit or defaulted) result type

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"goforge.dev/goplus/internal/naming"
 	"goforge.dev/goplus/internal/syntax"
 )
 
@@ -19,6 +20,8 @@ type EnumSpec struct {
 	FoldText      string // derived Cases struct + Fold function (v0.6.0); "" = none
 	TraversalText string // derived Children/Universe/Transform (v0.11.0); "" = none
 	EqualText     string // derived Equal/EqualWith/EqOverrides (v0.11.0); "" = none
+	ViewName      string // erased GADT view helper; empty when every case head is spellable
+	ViewMethod    string // sealed per-variant payload method
 }
 
 // EnumVariantSpec is one variant ready to render.
@@ -32,6 +35,7 @@ type EnumVariantSpec struct {
 	Fields      []FieldSpec
 	ParamNames  []string // original parameter names, aligned with Fields
 	Marker      string   // "//goplus:variant (Option[T]) Some(value T)"
+	ViewTag     int      // stable declaration-order discriminator
 }
 
 // FieldSpec is one struct field of a variant.
@@ -83,6 +87,33 @@ func EnumEdits(f *syntax.File, e *syntax.EnumDecl, spec *EnumSpec) []Edit {
 		}
 		fmt.Fprintf(&b, "\nfunc (%s%s) %s(%s) {}\n",
 			v.TypeName, bracket(strings.Join(v.TParamNames, ", ")), spec.MarkerName, strings.Join(v.MarkerArgs, ", "))
+		if spec.ViewName != "" {
+			fmt.Fprintf(&b, "\nfunc (v %s%s) %s() (int, []any) {\n",
+				v.TypeName, bracket(strings.Join(v.TParamNames, ", ")), spec.ViewMethod)
+			if len(v.Fields) == 0 {
+				fmt.Fprintf(&b, "\treturn %d, nil\n", v.ViewTag)
+			} else {
+				fmt.Fprintf(&b, "\treturn %d, []any{", v.ViewTag)
+				for i, field := range v.Fields {
+					if i > 0 {
+						b.WriteString(", ")
+					}
+					b.WriteString("v." + field.Name)
+				}
+				b.WriteString("}\n")
+			}
+			b.WriteString("}\n")
+		}
+	}
+
+	if spec.ViewName != "" {
+		fmt.Fprintf(&b, "\nfunc %s%s(value %s%s) (int, []any) {\n",
+			spec.ViewName, bracket(spec.TParamsSrc), spec.Name, bracket(strings.Join(spec.TParamNames, ", ")))
+		fmt.Fprintf(&b, "\treturn any(value).(interface{ %s() (int, []any) }).%s()\n", spec.ViewMethod, spec.ViewMethod)
+		b.WriteString("}\n")
+		fmt.Fprintf(&b, "\nfunc %s(value any) (int, []any) {\n", naming.ErasedViewAnyName(spec.Name))
+		fmt.Fprintf(&b, "\treturn value.(interface{ %s() (int, []any) }).%s()\n", spec.ViewMethod, spec.ViewMethod)
+		b.WriteString("}\n")
 	}
 
 	if spec.FoldText != "" {
