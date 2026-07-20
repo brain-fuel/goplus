@@ -1,0 +1,12 @@
+{
+  "framing": true,
+  "ping-pong": true,
+  "reserved-bits": true,
+  "opcodes": true,
+  "fragmentation": true,
+  "utf8": true,
+  "limits": true,
+  "closing-handshake": true,
+  "opening-handshake": true,
+  "permessage-deflate": true
+}

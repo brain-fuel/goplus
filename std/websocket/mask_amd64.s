@@ -1,0 +1,47 @@
+#include "textflag.h"
+
+TEXT ·maskBlocks(SB), NOSPLIT, $0-28
+	MOVQ payload_base+0(FP), DI
+	MOVQ payload_len+8(FP), CX
+	MOVL key+24(FP), AX
+	MOVD AX, X0
+	PSHUFD $0, X0, X0
+
+loop:
+	MOVOU 0(DI), X1
+	MOVOU 16(DI), X2
+	MOVOU 32(DI), X3
+	MOVOU 48(DI), X4
+	CMPQ CX, $128
+	JB xor64
+	MOVOU 64(DI), X5
+	MOVOU 80(DI), X6
+	MOVOU 96(DI), X7
+	MOVOU 112(DI), X8
+	PXOR X0, X5
+	PXOR X0, X6
+	PXOR X0, X7
+	PXOR X0, X8
+	MOVOU X5, 64(DI)
+	MOVOU X6, 80(DI)
+	MOVOU X7, 96(DI)
+	MOVOU X8, 112(DI)
+
+xor64:
+	PXOR X0, X1
+	PXOR X0, X2
+	PXOR X0, X3
+	PXOR X0, X4
+	MOVOU X1, 0(DI)
+	MOVOU X2, 16(DI)
+	MOVOU X3, 32(DI)
+	MOVOU X4, 48(DI)
+	CMPQ CX, $128
+	JB done64
+	ADDQ $128, DI
+	SUBQ $128, CX
+	JNZ loop
+	RET
+
+done64:
+	RET

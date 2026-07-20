@@ -1,0 +1,7 @@
+{
+  "outdir": "/reports",
+  "servers": [{"agent": "goplus-std-websocket-rfc7692-13", "url": "ws://websocket:9001/runCase"}],
+  "cases": ["13.*"],
+  "exclude-cases": [],
+  "exclude-agent-cases": {}
+}

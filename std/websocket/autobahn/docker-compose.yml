@@ -1,0 +1,13 @@
+services:
+  websocket:
+    build:
+      context: ../..
+      dockerfile: websocket/autobahn/websocket.Dockerfile
+    expose: ["9001"]
+  autobahn:
+    image: crossbario/autobahn-testsuite@sha256:519915fb568b04c9383f70a1c405ae3ff44ab9e35835b085239c258b6fac3074
+    depends_on: [websocket]
+    volumes:
+      - ./fuzzingclient.json:/config/fuzzingclient.json:ro
+      - ./reports:/reports
+    command: ["wstest", "-m", "fuzzingclient", "-s", "/config/fuzzingclient.json"]

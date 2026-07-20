@@ -1,0 +1,79 @@
+name: WebSocket gates
+
+on:
+  pull_request:
+    paths:
+      - "std/websocket/**"
+      - "std/go.mod"
+      - "std/go.sum"
+      - ".github/workflows/websocket.yml"
+  workflow_dispatch:
+    inputs:
+      autobahn:
+        description: Run the complete 517-case client and server suites
+        type: boolean
+        default: false
+
+jobs:
+  correctness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Race, Gherkin, unit, integration, and fuzz seeds
+        working-directory: std
+        run: go test -race ./websocket/...
+      - name: Cross-compile optimized framing paths
+        working-directory: std
+        run: |
+          GOOS=linux GOARCH=amd64 go test -c ./websocket -o /tmp/websocket-amd64.test
+          GOOS=linux GOARCH=386 go test -c ./websocket -o /tmp/websocket-386.test
+
+  performance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Enforce Gherkin performance contract against gobwas/ws
+        working-directory: std
+        run: go run ./websocket/cmd/benchgate
+
+  autobahn:
+    if: github.event_name == 'workflow_dispatch' && inputs.autobahn
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Build testee
+        working-directory: std
+        run: docker build -t goplus-websocket-autobahn -f websocket/autobahn/websocket.Dockerfile .
+      - name: Complete server corpus
+        working-directory: std
+        run: |
+          docker network create goplus-ws-autobahn
+          docker run -d --name websocket --network goplus-ws-autobahn --network-alias websocket goplus-websocket-autobahn
+          docker run --name autobahn-server --network goplus-ws-autobahn \
+            -v "$PWD/websocket/autobahn/fuzzingclient.json:/config/fuzzingclient.json:ro" \
+            -v "$PWD/websocket/autobahn/reports:/reports" \
+            crossbario/autobahn-testsuite@sha256:519915fb568b04c9383f70a1c405ae3ff44ab9e35835b085239c258b6fac3074 \
+            wstest -m fuzzingclient -s /config/fuzzingclient.json
+          go run ./websocket/autobahn/verify -reports websocket/autobahn/reports -agent goplus-std-websocket -expect 517
+          docker rm -f websocket
+      - name: Complete client corpus
+        working-directory: std
+        run: |
+          docker run -d --name autobahn-client -p 9001:9001 \
+            -v "$PWD/websocket/autobahn/fuzzingserver.json:/config/fuzzingserver.json:ro" \
+            -v "$PWD/websocket/autobahn/reports:/reports" \
+            crossbario/autobahn-testsuite@sha256:519915fb568b04c9383f70a1c405ae3ff44ab9e35835b085239c258b6fac3074 \
+            wstest -m fuzzingserver -s /config/fuzzingserver.json
+          for i in {1..120}; do nc -z 127.0.0.1 9001 && break; sleep 0.25; done
+          go run ./websocket/cmd/autobahn-client -url ws://127.0.0.1:9001 -agent goplus-std-websocket-client
+          go run ./websocket/autobahn/verify -reports websocket/autobahn/reports -agent goplus-std-websocket-client -expect 517
