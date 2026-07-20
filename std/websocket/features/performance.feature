@@ -13,4 +13,7 @@ Feature: Comparative WebSocket performance
       | ParseHeaderTiny | 2.0   |
       | ParseHeader64K  | 2.0   |
       | AppendHeader    | 2.0   |
+      | AppendFrame1K   | 2.0   |
       | Mask1K          | 2.0   |
+      | Deflate1K       | 2.0   |
+      | Inflate1K       | 2.0   |

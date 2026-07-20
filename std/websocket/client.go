@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -15,10 +16,13 @@ import (
 )
 
 type DialOptions struct {
-	Protocols   []string
-	Header      http.Header
-	TLSConfig   *tls.Config
-	NetDialer   *net.Dialer
+	Protocols []string
+	Header    http.Header
+	TLSConfig *tls.Config
+	NetDialer *net.Dialer
+	// DialContext overrides TCP connection establishment, enabling proxies,
+	// custom transports, and deterministic fault injection.
+	DialContext func(context.Context, string, string) (net.Conn, error)
 	Config      ConnConfig
 	Compression *CompressionOptions
 }
@@ -66,7 +70,11 @@ func Dial(ctx context.Context, rawURL string, opts DialOptions) (*Conn, *http.Re
 	if d == nil {
 		d = &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 	}
-	nc, err := d.DialContext(ctx, "tcp", address)
+	dial := d.DialContext
+	if opts.DialContext != nil {
+		dial = opts.DialContext
+	}
+	nc, err := dial(ctx, "tcp", address)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -99,7 +107,7 @@ func Dial(ctx context.Context, rawURL string, opts DialOptions) (*Conn, *http.Re
 		_ = nc.SetDeadline(deadline)
 	}
 	var nonce [16]byte
-	if _, err = rand.Read(nonce[:]); err != nil {
+	if _, err = io.ReadFull(rand.Reader, nonce[:]); err != nil {
 		return nil, nil, err
 	}
 	key := base64.StdEncoding.EncodeToString(nonce[:])
@@ -171,7 +179,8 @@ func Dial(ctx context.Context, rawURL string, opts DialOptions) (*Conn, *http.Re
 	if compressed {
 		conn.enableCompression(settings)
 	}
-	if !stopCancellation() {
+	stopped := stopCancellation()
+	if !stopped || ctx.Err() != nil {
 		return nil, resp, ctx.Err()
 	}
 	_ = nc.SetDeadline(time.Time{})

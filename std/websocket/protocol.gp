@@ -35,8 +35,9 @@ type Failure enum {
 // Phase indexes the protocol transitions that are valid for a connection.
 type Phase enum { ConnectingPhase; OpenPhase; CloseSentPhase; CloseReceivedPhase; ClosedPhase }
 
-// Session is a proof token used by Go+ protocol orchestration. It erases to a
-// compact Go interface; network ownership remains in Conn.
+// Session is the lightweight proof-token API retained for v0.18
+// compatibility. New Go+ orchestration should prefer Capability, which also
+// carries linear connection ownership.
 //goplus:derive off
 type Session[p Phase] enum {
 	ConnectingSession() Session[ConnectingPhase]
@@ -51,3 +52,41 @@ func SentClose(_ Session[OpenPhase]) Session[CloseSentPhase] { return CloseSentS
 func ReceivedClose(_ Session[OpenPhase]) Session[CloseReceivedPhase] { return CloseReceivedSession() }
 func FinishSent(_ Session[CloseSentPhase]) Session[ClosedPhase] { return ClosedSession() }
 func FinishReceived(_ Session[CloseReceivedPhase]) Session[ClosedPhase] { return ClosedSession() }
+
+// Capability is the Go+ ownership-oriented API. Go callers that do not want
+// typestate use Conn directly.
+type Capability[p Phase] enum {
+	OpenCapability(conn *Conn) Capability[OpenPhase]
+	CloseSentCapability(conn *Conn) Capability[CloseSentPhase]
+	ClosedCapability(conn *Conn) Capability[ClosedPhase]
+}
+
+// CloseAttempt preserves ownership on both the success and failure paths.
+//goplus:derive off
+type CloseAttempt enum {
+	CloseStarted(capability Capability[CloseSentPhase])
+	CloseFailed(capability Capability[OpenPhase], err error)
+}
+
+// Send consumes and returns the open capability, preventing concurrent or
+// accidental duplicated ownership in Go+ orchestration.
+func Send(1 capability Capability[OpenPhase], message Message) (Capability[OpenPhase], error) {
+	conn := capabilityConn(capability)
+	err := conn.WriteMessage(message)
+	return OpenCapability(conn), err
+}
+
+func BeginClose(1 capability Capability[OpenPhase], code CloseCode, reason string) CloseAttempt {
+	conn := capabilityConn(capability)
+	err := conn.WriteClose(code, reason)
+	if err != nil {
+		return CloseFailed(OpenCapability(conn), err)
+	}
+	return CloseStarted(CloseSentCapability(conn))
+}
+
+func FinishClose(1 capability Capability[CloseSentPhase]) (Capability[ClosedPhase], error) {
+	conn := capabilityConn(capability)
+	err := conn.Close()
+	return ClosedCapability(conn), err
+}

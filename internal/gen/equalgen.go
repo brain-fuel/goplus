@@ -289,6 +289,14 @@ func renderEquality(spec *lower.EnumSpec, env *eqEnv, eqName, withName, ovName s
 // emitEqStmts writes the comparison statements for one field pair.
 func emitEqStmts(b *strings.Builder, xe, ye, typ string, env *eqEnv, withName, indent string, n *int) {
 	typ = strings.TrimSpace(typ)
+	// An error interface may contain an uncomparable dynamic value, so direct
+	// interface comparison can panic. Structural derivation compares nilness
+	// and the stable Error text instead.
+	if typ == "error" {
+		fmt.Fprintf(b, "%sif (%s == nil) != (%s == nil) {\n%s\treturn false\n%s}\n", indent, xe, ye, indent, indent)
+		fmt.Fprintf(b, "%sif %s != nil && %s.Error() != %s.Error() {\n%s\treturn false\n%s}\n", indent, xe, xe, ye, indent, indent)
+		return
+	}
 	switch classifyEq(typ, env) {
 	case eqSelf:
 		fmt.Fprintf(b, "%sif !%s(%s, %s, ov) {\n%s\treturn false\n%s}\n", indent, withName, xe, ye, indent, indent)

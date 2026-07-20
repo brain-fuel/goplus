@@ -115,3 +115,43 @@ Feature: Linear runtime cells
     When I run goplus with arguments "run ."
     Then the exit code is 0
     And stdout contains "recovered: goplus: linear value used more than once"
+
+  Scenario: Runtime index guards inspect linear cells before consuming them
+    Given a Go+ file "res/res.gp":
+      """
+      package res
+
+      type State enum { Open; Closed }
+      type Socket[s State] enum {
+        OpenSocket() Socket[Open]
+        ClosedSocket() Socket[Closed]
+      }
+
+      func Consume(1 socket Socket[Open]) string {
+        _ = socket
+        return "ok"
+      }
+      """
+    And a file "main.go":
+      """
+      package main
+
+      import (
+        "fmt"
+        "example.com/demo/res"
+      )
+
+      func main() {
+        defer func() { fmt.Println("recovered:", recover()) }()
+        fmt.Println(res.Consume(res.LinOf[res.Socket](res.ClosedSocket{})))
+      }
+      """
+    When I run goplus with arguments "gen ./..."
+    Then the exit code is 0
+    And the file "res/res_gp.go" contains:
+      """
+      any(socket.peek()).(ClosedSocket)
+      """
+    When I run goplus with arguments "run ."
+    Then the exit code is 0
+    And stdout contains "recovered: goplus: Consume: socket with index Open cannot be ClosedSocket"

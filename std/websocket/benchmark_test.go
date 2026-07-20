@@ -1,10 +1,12 @@
 package websocket
 
 import (
+	"bytes"
 	"io"
 	"testing"
 
 	gobwas "github.com/gobwas/ws"
+	"github.com/gobwas/ws/wsflate"
 )
 
 type resetReader struct {
@@ -89,6 +91,59 @@ func BenchmarkMask1K(b *testing.B) {
 		payload := make([]byte, 1024)
 		for b.Loop() {
 			gobwas.Cipher(payload, key, 0)
+		}
+	})
+}
+
+func BenchmarkAppendFrame1K(b *testing.B) {
+	payload := make([]byte, 1024)
+	b.Run("goplus", func(b *testing.B) {
+		storage := make([]byte, 0, len(payload)+14)
+		h := Header{FIN: true, Opcode: OpBinary, Length: int64(len(payload))}
+		for b.Loop() {
+			_, _ = AppendFrame(storage[:0], h, payload)
+		}
+	})
+	b.Run("gobwas", func(b *testing.B) {
+		frame := gobwas.NewBinaryFrame(payload)
+		for b.Loop() {
+			_, _ = gobwas.CompileFrame(frame)
+		}
+	})
+}
+
+func BenchmarkDeflate1K(b *testing.B) {
+	payload := bytes.Repeat([]byte("abcdefgh"), 128)
+	b.Run("goplus", func(b *testing.B) {
+		for b.Loop() {
+			_, _ = deflateMessage(payload, 15)
+		}
+	})
+	b.Run("gobwas", func(b *testing.B) {
+		for b.Loop() {
+			_, _ = wsflate.DefaultHelper.Compress(payload)
+		}
+	})
+}
+
+func BenchmarkInflate1K(b *testing.B) {
+	payload := bytes.Repeat([]byte("abcdefgh"), 128)
+	compressed, err := deflateMessage(payload, 15)
+	if err != nil {
+		b.Fatal(err)
+	}
+	refCompressed, err := wsflate.DefaultHelper.Compress(payload)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Run("goplus", func(b *testing.B) {
+		for b.Loop() {
+			_, _ = inflateMessage(compressed, 1<<20)
+		}
+	})
+	b.Run("gobwas", func(b *testing.B) {
+		for b.Loop() {
+			_, _ = wsflate.DefaultHelper.Decompress(refCompressed)
 		}
 	})
 }

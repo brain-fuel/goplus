@@ -171,6 +171,43 @@ func (c *Conn) WriteMessage(message Message) error {
 	return c.writeMessage(message, false)
 }
 
+// WriteText and WriteBinary are concise Go-facing forms of WriteMessage.
+func (c *Conn) WriteText(payload []byte) error {
+	return c.writeDataFrameChecked(OpText, payload, false)
+}
+
+func (c *Conn) WriteBinary(payload []byte) error {
+	return c.writeDataFrame(OpBinary, payload, false)
+}
+
+// WriteTextOwned and WriteBinaryOwned transfer payload ownership, allowing a
+// client connection to mask in place instead of making a defensive copy.
+func (c *Conn) WriteTextOwned(payload []byte) error {
+	return c.writeDataFrameChecked(OpText, payload, true)
+}
+
+func (c *Conn) WriteBinaryOwned(payload []byte) error {
+	return c.writeDataFrame(OpBinary, payload, true)
+}
+
+func (c *Conn) WritePing(payload []byte) error {
+	return c.writeFrame(OpPing, payload)
+}
+
+func (c *Conn) WritePong(payload []byte) error {
+	return c.writeFrame(OpPong, payload)
+}
+
+// WriteClose starts the RFC 6455 closing handshake without immediately
+// closing the underlying transport.
+func (c *Conn) WriteClose(code CloseCode, reason string) error {
+	payload, err := AppendClosePayload(nil, code, reason)
+	if err != nil {
+		return err
+	}
+	return c.writeClose(payload)
+}
+
 // WriteMessageOwned may mask the message payload in place on client
 // connections. Callers that transfer ownership can use it to avoid the one
 // defensive payload copy required by WriteMessage.
@@ -181,10 +218,7 @@ func (c *Conn) WriteMessageOwned(message Message) error {
 func (c *Conn) writeMessage(message Message, owned bool) error {
 	switch m := message.(type) {
 	case TextMessage:
-		if !utf8.Valid(m.Payload) {
-			return ErrInvalidUTF8
-		}
-		return c.writeDataFrame(OpText, m.Payload, owned)
+		return c.writeDataFrameChecked(OpText, m.Payload, owned)
 	case BinaryMessage:
 		return c.writeDataFrame(OpBinary, m.Payload, owned)
 	case PingMessage:
@@ -200,6 +234,13 @@ func (c *Conn) writeMessage(message Message, owned bool) error {
 	default:
 		return errors.New("websocket: unknown message")
 	}
+}
+
+func (c *Conn) writeDataFrameChecked(op Opcode, payload []byte, owned bool) error {
+	if op == OpText && !utf8.Valid(payload) {
+		return ErrInvalidUTF8
+	}
+	return c.writeDataFrame(op, payload, owned)
 }
 
 func (c *Conn) enableCompression(settings compressionSettings) {
@@ -260,9 +301,29 @@ func (c *Conn) writeFrameRSV1(op Opcode, payload []byte, rsv1, owned bool) error
 	}
 	var storage [14]byte
 	header := appendHeader(storage[:0], h)
-	bufs := net.Buffers{header, body}
-	_, err := bufs.WriteTo(c.rw)
-	return err
+	if _, ok := c.rw.(net.Conn); ok {
+		bufs := net.Buffers{header, body}
+		_, err := bufs.WriteTo(c.rw)
+		return err
+	}
+	if err := writeAll(c.rw, header); err != nil {
+		return err
+	}
+	return writeAll(c.rw, body)
+}
+
+func writeAll(w io.Writer, payload []byte) error {
+	for len(payload) != 0 {
+		n, err := w.Write(payload)
+		if err != nil {
+			return err
+		}
+		if n <= 0 || n > len(payload) {
+			return io.ErrShortWrite
+		}
+		payload = payload[n:]
+	}
+	return nil
 }
 
 func (c *Conn) writeClose(payload []byte) error {

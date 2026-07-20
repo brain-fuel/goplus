@@ -278,7 +278,7 @@ func processDeps(f *sourceFile, pkgPath string, totals map[*ast.FuncDecl]bool, p
 				if p.quantity == "0" {
 					continue // erased: not present at runtime
 				}
-				gps = append(gps, guardParam{name: p.name.Name, typeText: p.typeText})
+				gps = append(gps, guardParam{name: p.name.Name, typeText: p.typeText, linear: p.quantity == "1"})
 			}
 			edits = append(edits, guardEdits(f, fd, gps, plan)...)
 		}
@@ -329,6 +329,7 @@ func processDeps(f *sourceFile, pkgPath string, totals map[*ast.FuncDecl]bool, p
 type guardParam struct {
 	name     string
 	typeText string
+	linear   bool
 }
 
 // guardEdits synthesizes runtime precondition checks for one exported
@@ -389,7 +390,11 @@ func guardEdits(f *sourceFile, fd *ast.FuncDecl, params []guardParam, plan *enum
 			if len(targs) > 0 {
 				head += "[" + strings.Join(targs, ", ") + "]"
 			}
-			guards = append(guards, "\tif _, ok := any("+p.name+").("+head+"); ok {\n\t\tpanic(\"goplus: "+fd.Name.Name+": "+p.name+" with index "+strings.Join(idxTerms, ", ")+" cannot be "+v.Name+"\")\n\t}")
+			value := p.name
+			if p.linear {
+				value += ".peek()"
+			}
+			guards = append(guards, "\tif _, ok := any("+value+").("+head+"); ok {\n\t\tpanic(\"goplus: "+fd.Name.Name+": "+p.name+" with index "+strings.Join(idxTerms, ", ")+" cannot be "+v.Name+"\")\n\t}")
 		}
 	}
 	if len(guards) == 0 {
@@ -487,6 +492,9 @@ type Lin[T any] struct {
 
 // LinOf wraps a value for a linear parameter.
 func LinOf[T any](v T) Lin[T] { return Lin[T]{v: v, taken: new(atomic.Bool)} }
+
+// peek supports generated runtime index guards without consuming the cell.
+func (c Lin[T]) peek() T { return c.v }
 
 // Use consumes the value; a second Use panics.
 func (c Lin[T]) Use() T {

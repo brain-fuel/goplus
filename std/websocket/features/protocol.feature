@@ -30,6 +30,21 @@ Feature: RFC 6455 wire protocol
     When a server parses the header
     Then parsing fails with "fragmented control"
 
+  Scenario: reserved bits are rejected without a negotiated extension
+    Given the wire header bytes "a28001020304"
+    When a server parses the header
+    Then parsing fails with "reserved bits"
+
+  Scenario: extended lengths must use their canonical encoding
+    Given the wire header bytes "82fe007d01020304"
+    When a server parses the header
+    Then parsing fails with "non-canonical"
+
+  Scenario: control payloads cannot exceed 125 bytes
+    Given the wire header bytes "89fe007e01020304"
+    When a server parses the header
+    Then parsing fails with "control payload"
+
   Scenario: payload masking is involutive
     Given payload "The quick brown fox" and mask "37fa213d"
     When I apply the mask twice

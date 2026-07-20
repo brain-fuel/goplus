@@ -139,6 +139,25 @@ func AppendHeader(dst []byte, h Header) ([]byte, error) {
 	return appendHeader(dst, h), nil
 }
 
+// AppendFrame appends a complete frame to dst. It copies payload and applies
+// the mask to the appended copy, preserving caller ownership. Reusing dst
+// makes complete frame construction allocation-free.
+func AppendFrame(dst []byte, h Header, payload []byte) ([]byte, error) {
+	if h.Length != int64(len(payload)) {
+		return dst, ErrNeedMoreData
+	}
+	framed, err := AppendHeader(dst, h)
+	if err != nil {
+		return dst, err
+	}
+	body := len(framed)
+	framed = append(framed, payload...)
+	if h.Masked {
+		Mask(framed[body:], h.Mask, 0)
+	}
+	return framed, nil
+}
+
 func appendHeader(dst []byte, h Header) []byte {
 	b0 := byte(h.Opcode)
 	if h.FIN {

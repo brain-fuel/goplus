@@ -41,6 +41,29 @@ _ = response
 return conn.WriteMessage(websocket.TextMessage{Payload: []byte("hello")})
 ```
 
+Go callers can use the concise `WriteText`, `WriteBinary`, `WritePing`,
+`WritePong`, and `WriteClose` methods. Go+ callers can instead construct and
+exhaustively match the closed `Message` enum; indexed `Capability[Phase]`
+values make opening and closing transitions explicit in protocol orchestration.
+
+```goplus
+capability := websocket.OpenCapability(conn)
+capability, err = websocket.Send(capability,
+    websocket.TextMessage([]byte("hello")))
+attempt := websocket.BeginClose(capability, websocket.CloseNormalClosure, "done")
+match attempt {
+case CloseStarted(closing):
+    closed, err := websocket.FinishClose(closing)
+case CloseFailed(open, cause):
+    // `open` retains ownership, so the caller can recover or retry.
+}
+```
+
+The capability is quantity-1: Go+ proves it is consumed exactly once on every
+path. Generated Go carries the same guarantee with a use-once `Lin` cell and
+runtime index guards. This layer is optional; direct `Conn` calls remain the
+idiomatic Go API.
+
 `WriteMessage` preserves caller-owned payload bytes. `WriteMessageOwned`
 transfers ownership and avoids the defensive masking copy on clients. One
 reader and one writer may operate concurrently; writes are serialized.
@@ -65,5 +88,13 @@ The comparative gobwas/ws performance contract is:
 go run ./websocket/cmd/benchgate
 ```
 
-Protocol, compression, conformance, and performance requirements live in
-`features/*.feature`; normal tests execute every non-benchmark scenario.
+The handwritten implementation is held at complete statement coverage:
+
+```sh
+go test -coverprofile=/tmp/websocket.cover ./websocket
+go run ./websocket/cmd/covergate -profile /tmp/websocket.cover
+```
+
+Protocol, compression, conformance, coverage, and performance requirements live
+in `features/*.feature`; normal tests execute behavioral scenarios, while the
+coverage and benchmark tags are enforced by their dedicated gates.

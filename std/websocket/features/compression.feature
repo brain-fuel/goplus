@@ -19,6 +19,19 @@ Feature: RFC 7692 permessage-deflate
     When I validate response "permessage-deflate; server_no_context_takeover; client_no_context_takeover; client_max_window_bits=9"
     Then extension negotiation fails
 
+  Scenario Outline: malformed or ambiguous responses are rejected
+    Given compression options with client window 15 and server window 15
+    When I validate response "<response>"
+    Then extension negotiation fails
+
+    Examples:
+      | response                                                                                         |
+      | permessage-deflate; server_max_window_bits=7                                                     |
+      | permessage-deflate; server_max_window_bits=15; server_max_window_bits=15                         |
+      | permessage-deflate; unknown_parameter                                                            |
+      | permessage-deflate; server_no_context_takeover=true                                             |
+      | permessage-deflate, permessage-deflate                                                           |
+
   Scenario: decompressed size is bounded
     Given 4096 repeated bytes compressed with window 8
     When I decompress with a 4095 byte limit

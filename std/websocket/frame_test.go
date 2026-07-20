@@ -58,6 +58,31 @@ func TestAppendHeaderRejectsInvalidValues(t *testing.T) {
 	}
 }
 
+func TestAppendFramePreservesPayloadAndMasksAppendedCopy(t *testing.T) {
+	payload := []byte("hello")
+	original := append([]byte(nil), payload...)
+	h := Header{FIN: true, Opcode: OpBinary, Length: int64(len(payload)), Masked: true, Mask: [4]byte{1, 2, 3, 4}}
+	frame, err := AppendFrame(make([]byte, 0, 32), h, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, consumed, err := ParseHeader(frame, ServerSide, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := append([]byte(nil), frame[consumed:]...)
+	Mask(body, parsed.Mask, 0)
+	if !bytes.Equal(body, original) || !bytes.Equal(payload, original) {
+		t.Fatalf("decoded=%q payload=%q", body, payload)
+	}
+	if _, err := AppendFrame(nil, Header{FIN: true, Opcode: OpBinary, Length: 2}, payload); !errors.Is(err, ErrNeedMoreData) {
+		t.Fatalf("length mismatch: %v", err)
+	}
+	if _, err := AppendFrame(nil, Header{FIN: true, Opcode: Opcode(3), Length: int64(len(payload))}, payload); !errors.Is(err, ErrInvalidOpcode) {
+		t.Fatalf("invalid header: %v", err)
+	}
+}
+
 func TestMaskMatchesRFCExampleAndOffsets(t *testing.T) {
 	key := [4]byte{0x37, 0xfa, 0x21, 0x3d}
 	payload := []byte("Hello")

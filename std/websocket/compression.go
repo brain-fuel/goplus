@@ -331,6 +331,10 @@ func deflateMessage(payload []byte, bits int) ([]byte, error) {
 	compressed := append([]byte(nil), d.buffer.Bytes()...)
 	d.writer.Reset(io.Discard)
 	deflaterPools[bits].Put(d)
+	return finishDeflate(compressed, err)
+}
+
+func finishDeflate(compressed []byte, err error) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
@@ -346,19 +350,48 @@ type messageInflater struct {
 	context bool
 }
 
+type inflaterDecoder struct {
+	reader io.ReadCloser
+	reset  flate.Resetter
+}
+
+var inflaterPool sync.Pool
+
+func acquireInflater(src io.Reader, dict []byte) (*inflaterDecoder, error) {
+	if value := inflaterPool.Get(); value != nil {
+		decoder := value.(*inflaterDecoder)
+		if err := decoder.reset.Reset(src, dict); err != nil {
+			return nil, err
+		}
+		return decoder, nil
+	}
+	reader := flate.NewReaderDict(src, dict)
+	return &inflaterDecoder{reader: reader, reset: reader.(flate.Resetter)}, nil
+}
+
+func releaseInflater(decoder *inflaterDecoder) {
+	inflaterPool.Put(decoder)
+}
+
 func (d *messageInflater) inflate(payload []byte, limit int64) ([]byte, error) {
+	return d.inflateWith(payload, limit, acquireInflater)
+}
+
+func (d *messageInflater) inflateWith(payload []byte, limit int64, acquire func(io.Reader, []byte) (*inflaterDecoder, error)) ([]byte, error) {
 	src := make([]byte, len(payload)+4)
 	copy(src, payload)
 	copy(src[len(payload):], []byte{0, 0, 0xff, 0xff})
-	var r io.ReadCloser
-	if d.context && len(d.history) != 0 {
-		r = flate.NewReaderDict(bytes.NewReader(src), d.history)
-	} else {
-		r = flate.NewReader(bytes.NewReader(src))
+	var dict []byte
+	if d.context {
+		dict = d.history
 	}
-	defer r.Close()
+	decoder, err := acquire(bytes.NewReader(src), dict)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseInflater(decoder)
+	r := decoder.reader
 	var out []byte
-	var err error
 	if limit <= 0 {
 		out, err = io.ReadAll(r)
 	} else {

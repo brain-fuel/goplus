@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -33,6 +34,8 @@ type featureWorld struct {
 	compression CompressionOptions
 	extension   string
 	settings    compressionSettings
+	request     *http.Request
+	key         string
 }
 
 func (w *featureWorld) reset() { *w = featureWorld{} }
@@ -211,8 +214,44 @@ func TestFeatures(t *testing.T) {
 				}
 				return nil
 			})
+			sc.Step(`^a canonical WebSocket opening request$`, func() {
+				w.request = &http.Request{
+					Method:     http.MethodGet,
+					ProtoMajor: 1,
+					ProtoMinor: 1,
+					Host:       "example.test",
+					Header: http.Header{
+						"Upgrade":               {"websocket"},
+						"Connection":            {"keep-alive, Upgrade"},
+						"Sec-Websocket-Version": {"13"},
+						"Sec-Websocket-Key":     {"dGhlIHNhbXBsZSBub25jZQ=="},
+					},
+				}
+			})
+			sc.Step(`^Connection is split across repeated header fields$`, func() {
+				w.request.Header["Connection"] = []string{"keep-alive", "Upgrade"}
+			})
+			sc.Step(`^the request has duplicate (Sec-WebSocket-Key|Sec-WebSocket-Version) fields$`, func(header string) {
+				canonical := http.CanonicalHeaderKey(header)
+				w.request.Header[canonical] = append(w.request.Header[canonical], w.request.Header.Get(canonical))
+			})
+			sc.Step(`^the request method is POST$`, func() { w.request.Method = http.MethodPost })
+			sc.Step(`^the request Host is empty$`, func() { w.request.Host = "" })
+			sc.Step(`^I validate the opening request$`, func() { w.key, w.err = ValidateServerRequest(w.request) })
+			sc.Step(`^opening validation succeeds$`, func() error {
+				if w.err != nil || w.key == "" {
+					return fmt.Errorf("key=%q error=%v", w.key, w.err)
+				}
+				return nil
+			})
+			sc.Step(`^opening validation fails$`, func() error {
+				if !errors.Is(w.err, ErrHandshake) {
+					return fmt.Errorf("error=%v", w.err)
+				}
+				return nil
+			})
 		},
-		Options: &godog.Options{Format: "pretty", Paths: []string{"features"}, Tags: "~@benchmark", TestingT: t},
+		Options: &godog.Options{Format: "pretty", Paths: []string{"features"}, Tags: "~@benchmark && ~@coverage", TestingT: t},
 	}
 	if status := suite.Run(); status != 0 {
 		t.Fatalf("feature suite exited %d", status)

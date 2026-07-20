@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"testing"
@@ -106,6 +107,63 @@ func TestConnCanSurfacePingForManualControl(t *testing.T) {
 		t.Fatalf("message=%#v", message)
 	}
 	if err = <-writeErr; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGoConvenienceWriters(t *testing.T) {
+	clientNet, serverNet := net.Pipe()
+	client := NewConn(clientNet, ClientSide, nil, ConnConfig{})
+	server := NewConn(serverNet, ServerSide, nil, ConnConfig{ManualControl: true})
+	t.Cleanup(func() { _ = client.Close(); _ = server.Close() })
+
+	writes := []struct {
+		write func() error
+		want  Message
+	}{
+		{func() error { return client.WriteText([]byte("text")) }, TextMessage{Payload: []byte("text")}},
+		{func() error { return client.WriteBinaryOwned([]byte{1, 2, 3}) }, BinaryMessage{Payload: []byte{1, 2, 3}}},
+		{func() error { return client.WritePing([]byte("ping")) }, PingMessage{Payload: []byte("ping")}},
+		{func() error { return client.WritePong([]byte("pong")) }, PongMessage{Payload: []byte("pong")}},
+	}
+	for _, test := range writes {
+		done := make(chan error, 1)
+		go func() { done <- test.write() }()
+		got, err := server.ReadMessage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		if fmt.Sprintf("%#v", got) != fmt.Sprintf("%#v", test.want) {
+			t.Fatalf("got %#v want %#v", got, test.want)
+		}
+	}
+	if err := client.WriteTextOwned([]byte{0xff}); !errors.Is(err, ErrInvalidUTF8) {
+		t.Fatalf("invalid text: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- client.WriteClose(CloseNormalClosure, "done") }()
+	type readResult struct {
+		message Message
+		err     error
+	}
+	serverRead := make(chan readResult, 1)
+	go func() {
+		message, err := server.ReadMessage()
+		serverRead <- readResult{message: message, err: err}
+	}()
+	_, _ = client.ReadMessage()
+	result := <-serverRead
+	message, err := result.message, result.err
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("close read: %v", err)
+	}
+	if closeMessage, ok := message.(CloseMessage); !ok || closeMessage.Code != CloseNormalClosure || closeMessage.Reason != "done" {
+		t.Fatalf("close message: %#v", message)
+	}
+	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
 }

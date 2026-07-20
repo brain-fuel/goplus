@@ -173,3 +173,41 @@ Feature: Derived structural equality
       """
     And the file "main_gp.go" does not contain "ThunkEqual"
     And the file "main_gp.go" does not contain "ValEqual"
+
+  Scenario: Error fields with uncomparable dynamic values never panic
+    Given a file "slice_error.go":
+      """
+      package main
+
+      import "fmt"
+
+      type SliceError []string
+
+      func (e SliceError) Error() string { return fmt.Sprint([]string(e)) }
+      """
+    And a Go+ file "main.gp":
+      """
+      package main
+
+      import "fmt"
+
+      type Failure enum {
+        Failed(err error)
+      }
+
+      func main() {
+        fmt.Println(FailureEqual(Failed(SliceError{"network"}), Failed(SliceError{"network"})))
+        fmt.Println(FailureEqual(Failed(SliceError{"one"}), Failed(SliceError{"two"})))
+      }
+      """
+    When I run goplus with arguments "run ."
+    Then the exit code is 0
+    And stdout contains:
+      """
+      true
+      false
+      """
+    And the file "main_gp.go" contains:
+      """
+      if x.Err != nil && x.Err.Error() != y.Err.Error()
+      """

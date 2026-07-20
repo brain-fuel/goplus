@@ -25,6 +25,11 @@ jobs:
       - name: Race, Gherkin, unit, integration, and fuzz seeds
         working-directory: std
         run: go test -race ./websocket/...
+      - name: Enforce complete handwritten statement coverage
+        working-directory: std
+        run: |
+          go test -coverprofile=/tmp/websocket.cover ./websocket
+          go run ./websocket/cmd/covergate -profile /tmp/websocket.cover
       - name: Cross-compile optimized framing paths
         working-directory: std
         run: |
