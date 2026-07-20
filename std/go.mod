@@ -6,7 +6,11 @@ require (
 	github.com/cucumber/godog v0.15.1
 	github.com/gobwas/ws v1.4.0
 	github.com/klauspost/compress v1.18.6
-	golang.org/x/net v0.48.0
+	github.com/quic-go/qpack v0.6.0
+	github.com/quic-go/quic-go v0.59.1
+	golang.org/x/crypto v0.48.0
+	golang.org/x/net v0.50.0
+	golang.org/x/sys v0.41.0
 )
 
 require (
@@ -19,5 +23,5 @@ require (
 	github.com/hashicorp/go-memdb v1.3.4 // indirect
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/spf13/pflag v1.0.7 // indirect
-	golang.org/x/text v0.32.0 // indirect
+	golang.org/x/text v0.34.0 // indirect
 )

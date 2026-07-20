@@ -71,11 +71,13 @@ func TestDialInputFailures(t *testing.T) {
 }
 
 func TestDialTLSDefaultFailureAndConfiguredSuccess(t *testing.T) {
+	handlerDone := make(chan struct{})
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, _, err := Upgrade(w, r, UpgradeOptions{})
 		if err == nil {
 			_ = conn.Close()
 		}
+		close(handlerDone)
 	}))
 	defer server.Close()
 	url := "wss" + strings.TrimPrefix(server.URL, "https")
@@ -87,6 +89,7 @@ func TestDialTLSDefaultFailureAndConfiguredSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = conn.Close()
+	<-handlerDone
 }
 
 func TestDialEntropyFailureClosesTransport(t *testing.T) {

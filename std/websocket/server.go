@@ -76,8 +76,15 @@ func Upgrade(w http.ResponseWriter, r *http.Request, opts UpgradeOptions) (*Conn
 			return nil, "", ErrHandshake
 		}
 	}
+	if isRFC9220Request(r) {
+		return upgradeExtendedCONNECT(w, r, opts, RFC9220Handshake)
+	}
 	if isRFC8441Request(r) {
-		return upgradeRFC8441(w, r, opts)
+		return upgradeExtendedCONNECT(w, r, opts, RFC8441Handshake)
+	}
+	if isUnsupportedExtendedCONNECT(r) {
+		w.WriteHeader(http.StatusNotImplemented)
+		return nil, "", ErrHandshake
 	}
 	key, err := ValidateServerRequest(r)
 	if err != nil {
@@ -135,6 +142,16 @@ func Upgrade(w http.ResponseWriter, r *http.Request, opts UpgradeOptions) (*Conn
 	return conn, protocol, nil
 }
 
+func isUnsupportedExtendedCONNECT(r *http.Request) bool {
+	if r == nil || r.Method != http.MethodConnect {
+		return false
+	}
+	if r.ProtoMajor == 3 {
+		return r.Proto != "" && r.Proto != "websocket"
+	}
+	return r.ProtoMajor == 2 && r.Header.Get(":protocol") != "" && r.Header.Get(":protocol") != "websocket"
+}
+
 // IsRFC8441Request reports whether r is an HTTP/2 WebSocket extended CONNECT
 // request. It does not imply that the rest of the opening handshake is valid.
 func IsRFC8441Request(r *http.Request) bool {
@@ -143,6 +160,14 @@ func IsRFC8441Request(r *http.Request) bool {
 
 func isRFC8441Request(r *http.Request) bool {
 	return r != nil && r.ProtoMajor == 2 && r.Method == http.MethodConnect && r.Header.Get(":protocol") == "websocket"
+}
+
+// IsRFC9220Request reports whether r is an HTTP/3 WebSocket extended CONNECT
+// request. It does not imply that the rest of the handshake is valid.
+func IsRFC9220Request(r *http.Request) bool { return isRFC9220Request(r) }
+
+func isRFC9220Request(r *http.Request) bool {
+	return r != nil && r.ProtoMajor == 3 && r.Method == http.MethodConnect && r.Proto == "websocket"
 }
 
 func validateRFC8441Request(r *http.Request) error {
@@ -167,8 +192,40 @@ func validateRFC8441Request(r *http.Request) error {
 	return nil
 }
 
+func validateRFC9220Request(r *http.Request) error {
+	if !isRFC9220Request(r) || r.Host == "" {
+		return ErrHandshake
+	}
+	for _, forbidden := range []string{"Connection", "Upgrade", "Sec-WebSocket-Key", "Sec-WebSocket-Accept", ":protocol"} {
+		if len(r.Header.Values(forbidden)) != 0 {
+			return ErrHandshake
+		}
+	}
+	version, ok := singleHeader(r.Header, "Sec-WebSocket-Version")
+	if !ok || version != "13" {
+		return ErrHandshake
+	}
+	for _, protocol := range strings.Split(joinedHeader(r.Header, "Sec-WebSocket-Protocol"), ",") {
+		protocol = strings.TrimSpace(protocol)
+		if protocol != "" && !validToken(protocol) {
+			return ErrHandshake
+		}
+	}
+	return nil
+}
+
 func upgradeRFC8441(w http.ResponseWriter, r *http.Request, opts UpgradeOptions) (*Conn, string, error) {
-	if err := validateRFC8441Request(r); err != nil {
+	return upgradeExtendedCONNECT(w, r, opts, RFC8441Handshake)
+}
+
+func upgradeExtendedCONNECT(w http.ResponseWriter, r *http.Request, opts UpgradeOptions, handshake HandshakeProtocol) (*Conn, string, error) {
+	var err error
+	if handshake == RFC9220Handshake {
+		err = validateRFC9220Request(r)
+	} else {
+		err = validateRFC8441Request(r)
+	}
+	if err != nil {
 		return nil, "", err
 	}
 	if opts.CheckOrigin != nil && !opts.CheckOrigin(r) {
@@ -198,7 +255,7 @@ func upgradeRFC8441(w http.ResponseWriter, r *http.Request, opts UpgradeOptions)
 	stream.setReadDeadline = controller.SetReadDeadline
 	stream.setWriteDeadline = controller.SetWriteDeadline
 	conn := NewConn(stream, ServerSide, nil, opts.Config)
-	conn.handshake = RFC8441Handshake
+	conn.handshake = handshake
 	if compressionResponse != "" {
 		conn.enableCompression(negotiated)
 	}

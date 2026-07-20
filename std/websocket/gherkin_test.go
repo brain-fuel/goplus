@@ -39,6 +39,7 @@ type featureWorld struct {
 	request     *http.Request
 	key         string
 	useHTTP2    bool
+	useHTTP3    bool
 }
 
 func (w *featureWorld) reset() { *w = featureWorld{} }
@@ -297,6 +298,24 @@ func TestFeatures(t *testing.T) {
 			sc.Step(`^RFC 6455 is used unless HTTP 2 is explicitly requested$`, func() error {
 				if w.useHTTP2 || !shouldTryHTTP2(&url.URL{Scheme: "ws"}, DialOptions{HTTP2: HTTP2Only}) {
 					return errors.New("cleartext transport policy mismatch")
+				}
+				return nil
+			})
+			sc.Step(`^a canonical RFC 9220 opening request$`, func() {
+				w.request = httptest.NewRequest(http.MethodConnect, "https://example.test/socket", nil)
+				w.request.Proto = "websocket"
+				w.request.ProtoMajor = 3
+				w.request.ProtoMinor = 0
+				w.request.Header.Set("Sec-WebSocket-Version", "13")
+			})
+			sc.Step(`^I validate the HTTP 3 extended CONNECT request$`, func() { w.err = validateRFC9220Request(w.request) })
+			sc.Step(`^the HTTP 3 protocol pseudo-header is not websocket$`, func() { w.request.Proto = "other" })
+			sc.Step(`^a secure WebSocket URL with learned HTTP 3 capability$`, func() {
+				w.useHTTP3 = shouldTryHTTP3(&url.URL{Scheme: "wss"}, DialOptions{HTTP3Transport: failingHTTP3Transport{err: errors.New("probe")}})
+			})
+			sc.Step(`^RFC 9220 is attempted before RFC 8441 and RFC 6455$`, func() error {
+				if !w.useHTTP3 {
+					return errors.New("RFC 9220 was not preferred")
 				}
 				return nil
 			})

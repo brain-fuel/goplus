@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "std/websocket/**"
+      - "std/http/**"
+      - "std/http3/**"
       - "std/go.mod"
       - "std/go.sum"
       - ".github/workflows/websocket.yml"

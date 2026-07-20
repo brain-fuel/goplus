@@ -41,12 +41,25 @@ _ = response
 return conn.WriteMessage(websocket.TextMessage{Payload: []byte("hello")})
 ```
 
-For `wss://` URLs, `Dial` first attempts RFC 8441 extended CONNECT over
-HTTP/2 and automatically retries with the RFC 6455 HTTP/1.1 Upgrade when the
-peer does not advertise `SETTINGS_ENABLE_CONNECT_PROTOCOL`. The same `Upgrade`
-handler accepts both forms and `Conn.HandshakeProtocol()` exposes which path
-was selected when metrics need it. Cleartext `ws://` remains RFC 6455 by
-default; use `HTTP2: websocket.HTTP2Only` for h2c prior knowledge.
+For `wss://` URLs, `Dial` uses RFC 9220 over HTTP/3 when origin capability is
+known, then RFC 8441 over HTTP/2, then the RFC 6455 HTTP/1.1 Upgrade. The same
+`Upgrade` handler accepts all three forms and `Conn.HandshakeProtocol()` exposes
+which path was selected when metrics need it. Cleartext `ws://` remains RFC
+6455 by default; use `HTTP2: websocket.HTTP2Only` for h2c prior knowledge.
+
+Pass the regular Go+ HTTP transport as `HTTP3Transport` to share Alt-Svc
+learning and connection policy between ordinary requests and WebSockets:
+
+```go
+transport := new(http.Transport)
+_, _ = (&nethttp.Client{Transport: transport}).Get("https://example.test/")
+conn, response, err := websocket.Dial(ctx, "wss://example.test/events",
+    websocket.DialOptions{HTTP3Transport: transport})
+```
+
+`HTTP3Only` performs a direct QUIC attempt. Automatic mode does not blindly
+probe UDP for an origin with no learned capability, because a dropped UDP
+packet must not consume the deadline needed by HTTP/2 and HTTP/1.1 fallback.
 
 ```go
 conn, response, err := websocket.Dial(ctx, "wss://example.test/events", websocket.DialOptions{})

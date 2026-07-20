@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"io"
 	"net"
@@ -14,7 +15,21 @@ import (
 	"sync/atomic"
 	"time"
 
+	"goforge.dev/goplus/std/http3"
 	"golang.org/x/net/http2"
+)
+
+// HTTP3Mode controls RFC 9220 selection.
+type HTTP3Mode uint8
+
+const (
+	// HTTP3Auto prefers RFC 9220 for secure WebSockets and falls back through
+	// RFC 8441 to RFC 6455 when HTTP/3 is unavailable.
+	HTTP3Auto HTTP3Mode = iota
+	// HTTP3Disabled skips HTTP/3.
+	HTTP3Disabled
+	// HTTP3Only requires RFC 9220.
+	HTTP3Only
 )
 
 // HTTP2Mode controls selection of the opening-handshake transport.
@@ -42,17 +57,32 @@ type HandshakeProtocol uint8
 const (
 	RFC6455Handshake HandshakeProtocol = iota
 	RFC8441Handshake
+	RFC9220Handshake
 )
 
 func (p HandshakeProtocol) String() string {
-	if p == RFC8441Handshake {
+	switch p {
+	case RFC8441Handshake:
 		return "RFC 8441"
+	case RFC9220Handshake:
+		return "RFC 9220"
+	default:
+		return "RFC 6455"
 	}
-	return "RFC 6455"
 }
 
 func dial(ctx context.Context, rawURL string, opts DialOptions) (*Conn, *http.Response, error) {
 	u, err := url.Parse(rawURL)
+	if err == nil && shouldTryHTTP3(u, opts) {
+		conn, response, h3Err := dialRFC9220(ctx, u, opts)
+		if h3Err == nil || opts.HTTP3 == HTTP3Only || ctx.Err() != nil {
+			return conn, response, h3Err
+		}
+		var unavailable *http3UnavailableError
+		if !errors.As(h3Err, &unavailable) {
+			return nil, response, h3Err
+		}
+	}
 	tryHTTP2 := err == nil && shouldTryHTTP2(u, opts)
 	if tryHTTP2 {
 		conn, response, h2Err := dialRFC8441(ctx, u, opts)
@@ -65,6 +95,146 @@ func dial(ctx context.Context, rawURL string, opts DialOptions) (*Conn, *http.Re
 		}
 	}
 	return dialRFC6455(ctx, rawURL, opts)
+}
+
+type http3UnavailableError struct{ cause error }
+
+func (e *http3UnavailableError) Error() string { return e.cause.Error() }
+func (e *http3UnavailableError) Unwrap() error { return e.cause }
+
+func shouldTryHTTP3(u *url.URL, opts DialOptions) bool {
+	if opts.HTTP3 == HTTP3Disabled || u == nil || u.Scheme != "wss" {
+		return false
+	}
+	// Automatic HTTP/3 requires learned origin capability (normally Alt-Svc)
+	// or an explicitly supplied transport. Blind UDP probing delays fallback
+	// when a TCP-only origin drops packets. HTTP3Only is the direct-probe mode.
+	if opts.HTTP3 == HTTP3Only {
+		return true
+	}
+	if opts.HTTP3Transport == nil {
+		return false
+	}
+	if capability, ok := opts.HTTP3Transport.(interface{ SupportsHTTP3(*url.URL) bool }); ok {
+		origin := *u
+		origin.Scheme = "https"
+		return capability.SupportsHTTP3(&origin)
+	}
+	return true
+}
+
+func dialRFC9220(ctx context.Context, u *url.URL, opts DialOptions) (*Conn, *http.Response, error) {
+	compressionHeader, err := validateDialOptions(opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	if u.Scheme != "wss" || u.Hostname() == "" || u.Fragment != "" {
+		return nil, nil, ErrHandshake
+	}
+	head := opts.Header.Clone()
+	if head == nil {
+		head = make(http.Header)
+	}
+	for _, forbidden := range []string{"Connection", "Upgrade", "Host", "Sec-WebSocket-Key", "Sec-WebSocket-Accept", ":protocol"} {
+		if len(head.Values(forbidden)) != 0 {
+			return nil, nil, ErrHandshake
+		}
+	}
+	head.Set("Sec-WebSocket-Version", "13")
+	head.Set("Accept-Encoding", "identity")
+	if len(opts.Protocols) != 0 {
+		head.Set("Sec-WebSocket-Protocol", strings.Join(opts.Protocols, ", "))
+	}
+	if compressionHeader != "" {
+		head.Set("Sec-WebSocket-Extensions", compressionHeader)
+	}
+	target := &url.URL{Scheme: "https", Host: u.Host, Path: u.Path, RawPath: u.RawPath, RawQuery: u.RawQuery}
+	if target.Path == "" {
+		target.Path = "/"
+	}
+	reader, writer := io.Pipe()
+	streamContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	stopCancellation := context.AfterFunc(ctx, cancel)
+	req := (&http.Request{
+		Method: http.MethodConnect, URL: target, Host: u.Host, Header: head,
+		Body: reader, ContentLength: -1, Proto: "websocket",
+	}).WithContext(streamContext)
+	transport := opts.HTTP3Transport
+	var owned *http3.Transport
+	if transport == nil {
+		owned = &http3.Transport{QUICConfig: opts.QUICConfig}
+		if opts.TLSConfig != nil {
+			owned.TLSClientConfig = opts.TLSConfig.Clone()
+		}
+		transport = owned
+	}
+	response, err := transport.RoundTrip(req)
+	if err != nil {
+		stopCancellation()
+		cancel()
+		_ = writer.CloseWithError(err)
+		_ = reader.CloseWithError(err)
+		if owned != nil {
+			_ = owned.Close()
+		}
+		if isHTTP3Unavailable(err) {
+			return nil, nil, &http3UnavailableError{cause: err}
+		}
+		return nil, nil, err
+	}
+	if response.ProtoMajor != 3 || response.StatusCode < 200 || response.StatusCode >= 300 {
+		stopCancellation()
+		cancel()
+		_ = response.Body.Close()
+		_ = writer.CloseWithError(ErrHandshake)
+		if owned != nil {
+			_ = owned.Close()
+		}
+		if response.ProtoMajor != 3 || fallbackStatus(response.StatusCode) {
+			return nil, response, &http3UnavailableError{cause: ErrHandshake}
+		}
+		return nil, response, ErrHandshake
+	}
+	settings, err := validateClientHandshakeResponse(response, opts)
+	if err != nil {
+		stopCancellation()
+		cancel()
+		_ = response.Body.Close()
+		_ = writer.CloseWithError(err)
+		if owned != nil {
+			_ = owned.Close()
+		}
+		return nil, response, err
+	}
+	if !stopCancellation() || ctx.Err() != nil {
+		cancel()
+		_ = response.Body.Close()
+		_ = writer.CloseWithError(ctx.Err())
+		return nil, response, ctx.Err()
+	}
+	stream := newStreamConn(response.Body, writer, cancel)
+	if owned != nil {
+		stream.onClose = func() { _ = owned.Close() }
+	}
+	response.Body = http.NoBody
+	conn := NewConn(stream, ClientSide, nil, opts.Config)
+	conn.handshake = RFC9220Handshake
+	if settings.enabled {
+		conn.enableCompression(settings.compression)
+	}
+	return conn, response, nil
+}
+
+func isHTTP3Unavailable(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var verification *tls.CertificateVerificationError
+	var unknownAuthority x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	return !errors.As(err, &verification) && !errors.As(err, &unknownAuthority) &&
+		!errors.As(err, &hostname) && !errors.As(err, &invalid)
 }
 
 type http2UnavailableError struct{ cause error }

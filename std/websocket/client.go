@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/quic-go/quic-go"
 )
 
 type DialOptions struct {
@@ -25,6 +27,16 @@ type DialOptions struct {
 	DialContext func(context.Context, string, string) (net.Conn, error)
 	Config      ConnConfig
 	Compression *CompressionOptions
+	// HTTP3 controls RFC 9220 extended CONNECT. Auto tries HTTP/3 when an
+	// HTTP3Transport supplies learned origin capability, then falls back to
+	// HTTP/2 and HTTP/1.1 when the transport is unavailable. HTTP/3 always
+	// uses TLS.
+	HTTP3 HTTP3Mode
+	// HTTP3Transport optionally supplies a shared HTTP/3 transport. The
+	// transport must support extended CONNECT and a streaming request body.
+	HTTP3Transport http.RoundTripper
+	// QUICConfig configures QUIC when the package owns the HTTP/3 transport.
+	QUICConfig *quic.Config
 	// HTTP2 controls RFC 8441 extended CONNECT. Auto prefers HTTP/2 for wss
 	// URLs and transparently falls back to RFC 6455. Cleartext ws remains on
 	// HTTP/1.1 unless HTTP2Only is selected.

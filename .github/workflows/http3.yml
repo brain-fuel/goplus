@@ -1,0 +1,67 @@
+name: HTTP 3 and RFC 9220 gates
+
+on:
+  pull_request:
+    paths:
+      - "std/http/**"
+      - "std/http3/**"
+      - "std/internal/quic/**"
+      - "std/websocket/**"
+      - "std/go.mod"
+      - "std/go.sum"
+      - ".github/workflows/http3.yml"
+  workflow_dispatch:
+
+jobs:
+  correctness:
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ["1.24.x", stable]
+    runs-on: ubuntu-latest
+    env:
+      GODEBUG: http2xconnect=1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+      - name: RFC 9000, RFC 9114, RFC 9220, and fallback tests
+        working-directory: std
+        run: go test -race ./internal/quic/... ./http3 ./http ./websocket
+      - name: Cross-implementation fuzzing
+        working-directory: std
+        run: |
+          go test ./http3 -run '^$' -fuzz FuzzFieldSectionCrossDecode -fuzztime=10s
+          go test ./http3 -run '^$' -fuzz FuzzQUICVarintRoundTrip -fuzztime=10s
+          go test ./http3 -run '^$' -fuzz FuzzParseSettings -fuzztime=10s
+      - name: Preserve complete WebSocket coverage
+        working-directory: std
+        run: |
+          go test -coverprofile=/tmp/websocket.cover ./websocket
+          go run ./websocket/cmd/covergate -profile /tmp/websocket.cover
+
+  performance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Enforce HTTP 3 performance contract against quic-go
+        working-directory: std
+        run: go run ./http3/cmd/benchgate
+
+  portability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Cross-compile HTTP transports
+        working-directory: std
+        run: |
+          GOOS=linux GOARCH=amd64 go test -c ./http3 -o /tmp/http3-linux-amd64.test
+          GOOS=linux GOARCH=arm64 go test -c ./http3 -o /tmp/http3-linux-arm64.test
+          GOOS=windows GOARCH=amd64 go test -c ./http3 -o /tmp/http3-windows-amd64.test.exe
