@@ -1,6 +1,7 @@
 package gen
 
 import (
+	"bytes"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -64,11 +65,13 @@ func main() {
 	}
 	cmd := exec.Command("go", "run", "-mod=mod", ".")
 	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err = cmd.Run()
 	if err != nil {
-		t.Fatalf("Go+ serde consumer: %v\n%s", err, out)
+		t.Fatalf("Go+ serde consumer: %v\n%s", err, stderr.Bytes())
 	}
-	if got := string(out); got != "Go+ true\n" {
+	if got := stdout.String(); got != "Go+ true\n" {
 		t.Fatalf("output = %q", got)
 	}
 }

@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"os"
+	"os/exec"
 	"testing"
 
 	"goforge.dev/goplus/internal/sourcemap"
@@ -43,6 +44,9 @@ func (devNull) Read(p []byte) (int, error)  { select {} } // blocks: the probe n
 func (devNull) Write(p []byte) (int, error) { return len(p), nil }
 
 func TestStartGopls(t *testing.T) {
+	if _, err := exec.LookPath("gopls"); err != nil {
+		t.Skip("gopls is not installed")
+	}
 	dir, _ := fixtureModule(t, goodSrc)
 	c := startGopls(dir)
 	if c == nil {

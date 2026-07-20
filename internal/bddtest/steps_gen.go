@@ -32,6 +32,17 @@ func initGenSteps(sc *godog.ScenarioContext, w func() *World, gs *genState) {
 		return nil
 	})
 
+	sc.Step(`^the file "([^"]+)" contains "([^"]*)"$`, func(name, wanted string) error {
+		got, err := w().readFile(name)
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(got, wanted) {
+			return fmt.Errorf("%s does not contain %q; full content:\n%s", name, wanted, got)
+		}
+		return nil
+	})
+
 	sc.Step(`^the file "([^"]+)" does not contain "([^"]*)"$`, func(name, unwanted string) error {
 		got, err := w().readFile(name)
 		if err != nil {

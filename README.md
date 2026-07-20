@@ -7,6 +7,29 @@ Generated packages compile with the standard Go toolchain and may be
 distributed and consumed **without** Go+ — the same interoperability story
 Kotlin, Scala, and Clojure have with Java.
 
+## v0.24.0 — Durable Workflows and Effect Boundaries
+
+Six Go+-authored standard-library packages make command-line and delivery
+workflows explicit without pretending external systems are transactional:
+
+- `std/process` executes commands with capture/stream modes, cancellation,
+  typed exit failures, and secret-safe diagnostics.
+- `std/semver` implements strict Semantic Versioning 2.0 parsing, precedence,
+  formatting, and major/minor/patch increments.
+- `std/workflow` journals resumable saga steps and compensations; its supplied
+  file journal uses crash-safe replacement.
+- `std/config` composes defaults, format adapters, semantic validators, and
+  field-path errors.
+- `std/fsatomic` replaces files through write, sync, rename, and directory
+  sync, with platform-correct durability behavior.
+- `std/cas` defines typed observations and the exhaustive `Updated`, `Changed`,
+  and `Missing` outcomes shared by compare-and-swap stores.
+
+These packages deliberately separate locally provable workflow state from
+facts that must be observed again at an external mutation boundary. Go+
+enums make CAS outcomes exhaustive, while generated Go keeps every package
+usable by ordinary Go programs.
+
 ## v0.23.0 — QUIC v2, CBOR, and Proven DAG-CBOR
 
 The zero-configuration HTTP client now discovers HTTP/3 through Alt-Svc and
@@ -617,6 +640,9 @@ The spec is executable: the Godog/Cucumber feature suite under
 | v0.18.0 | RFC 8441 WebSockets over HTTP/2 with transparent RFC 6455 fallback and stream multiplexing — shipped |
 | v0.20.0 | Native RFC 9000 QUIC, RFC 9114 HTTP/3, RFC 9220 WebSockets, and H3 → H2 → H1.1 fallback — shipped |
 | v0.21.0 | Explicit `tail func` / `recur` lowering to constant-stack Go loops — implemented |
+| v0.22.0 | Refinement types and structural GADT elimination — shipped |
+| v0.23.0 | QUIC v2, CBOR, serde, and proven DAG-CBOR — shipped |
+| v0.24.0 | Process, SemVer, durable workflows, validated config, atomic files, and CAS — implemented |
 
 ## License
 

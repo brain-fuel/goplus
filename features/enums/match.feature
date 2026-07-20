@@ -50,8 +50,10 @@ Feature: Match statements
       	switch __gp_m0 := any(o).(type) {
       	case Some[T]:
       		v := __gp_m0.Value
+
       		return Some[U]{Value: f(v)}
       	case None[T]:
+
       		return None[U]{}
       	default:
       		panic("goplus: impossible enum value in match")
