@@ -68,6 +68,7 @@ type Term[S any] enum {
 	integerVariable(ID int) Term[S]
 	Add(Values []Term[IntSort]) Term[IntSort]
 	Subtract(Left Term[IntSort], Right Term[IntSort]) Term[IntSort]
+	IntegerScale(Coefficient IntegerValue, Value Term[IntSort]) Term[IntSort]
 	LessEqual(Left Term[IntSort], Right Term[IntSort]) Term[BoolSort]
 	Less(Left Term[IntSort], Right Term[IntSort]) Term[BoolSort]
 	Real(Value Rational) Term[RealSort]
@@ -193,6 +194,9 @@ func New() Solver[0, 0] { return solverValue(0, 0, newEngine()) }
 
 func IntegerTerm(value IntegerValue) Term[IntSort] { return Term[IntSort].integerExact(value) }
 func IntegerVariable(id int) Term[IntSort] { return Term[IntSort].integerVariable(id) }
+func ScaleInteger(coefficient IntegerValue, value Term[IntSort]) Term[IntSort] {
+	return IntegerScale(coefficient, value)
+}
 
 func IntegerVariableID(term Term[IntSort]) (int, bool) {
 	match term {

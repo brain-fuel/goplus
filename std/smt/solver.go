@@ -301,6 +301,9 @@ func (e *engine) solveAdditional(assumptions []Term[BoolSort]) checkOutcome {
 		if outcome, recognized := solveDifferenceAssertions(allAssertions); recognized {
 			return outcome
 		}
+		if outcome, recognized := solveLinearIntegerAssertions(allAssertions); recognized {
+			return outcome
+		}
 	}
 	termCount := 0
 	for _, assertion := range e.assertions {
@@ -633,6 +636,12 @@ func evaluateIntegerWithBitVectors(term Term[IntSort], booleans booleanModel, in
 		left, leftOK := evaluateIntegerWithBitVectors(value.Left, booleans, integers, reals, bitVectors)
 		right, rightOK := evaluateIntegerWithBitVectors(value.Right, booleans, integers, reals, bitVectors)
 		return SubIntegerValue(left, right), leftOK && rightOK
+	case IntegerScale:
+		operand, ok := evaluateIntegerWithBitVectors(value.Value, booleans, integers, reals, bitVectors)
+		if !ok {
+			return IntegerValue{}, false
+		}
+		return MultiplyIntegerValue(value.Coefficient, operand), true
 	case If[IntSort]:
 		condition, ok := evaluateBool(value.Condition, booleans, integers, reals)
 		if !ok {

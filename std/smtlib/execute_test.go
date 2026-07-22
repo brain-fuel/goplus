@@ -60,6 +60,36 @@ func TestExecuteDifferenceLogicPushPop(t *testing.T) {
 	}
 }
 
+func TestExecuteLinearIntegerArithmetic(t *testing.T) {
+	script := `(set-logic QF_LIA)
+(declare-const x Int)
+(declare-const y Int)
+(assert (<= (+ x y) 10))
+(assert (>= (+ (* 2 x) y) 11))
+(check-sat)
+(get-value (x y))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[5].(Satisfiable); !ok {
+		t.Fatalf("check=%T", result.Responses[5])
+	}
+	values, ok := result.Responses[6].(ValuesAvailable)
+	if !ok || len(values.Values) != 2 {
+		t.Fatalf("values=%#v", result.Responses[6])
+	}
+
+	unsat := `(set-logic QF_LIA)
+(declare-const x Int)
+(assert (= (* 2 x) 1))
+(check-sat)`
+	unsatResult := Execute(unsat).(Executed)
+	if _, ok := unsatResult.Responses[3].(Unsatisfiable); !ok {
+		t.Fatalf("integrality check=%T", unsatResult.Responses[3])
+	}
+}
+
 func TestExecuteAssumptionCore(t *testing.T) {
 	script := `(declare-const a Bool)
 (declare-const b Bool)

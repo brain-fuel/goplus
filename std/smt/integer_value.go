@@ -71,6 +71,15 @@ func SubIntegerValue(left, right IntegerValue) IntegerValue {
 	return AddIntegerValue(left, NegateIntegerValue(right))
 }
 
+func MultiplyIntegerValue(left, right IntegerValue) IntegerValue {
+	if left.large == nil && right.large == nil {
+		if product, ok := checkedMulInt64(left.small, right.small); ok {
+			return NewIntegerValue(product)
+		}
+	}
+	return integerValueFromBig(new(big.Int).Mul(left.big(), right.big()))
+}
+
 func (value IntegerValue) big() *big.Int {
 	if value.large != nil {
 		return new(big.Int).Set(value.large)

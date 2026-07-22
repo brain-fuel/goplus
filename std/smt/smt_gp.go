@@ -254,6 +254,14 @@ type Subtract struct {
 
 func (Subtract) isTerm(IntSort) {}
 
+//goplus:variant (Term[S]) IntegerScale(Coefficient IntegerValue, Value Term[IntSort]) Term[IntSort]
+type IntegerScale struct {
+	Coefficient IntegerValue
+	Value       Term[IntSort]
+}
+
+func (IntegerScale) isTerm(IntSort) {}
+
 //goplus:variant (Term[S]) LessEqual(Left Term[IntSort], Right Term[IntSort]) Term[BoolSort]
 type LessEqual struct {
 	Left  Term[IntSort]
@@ -723,6 +731,7 @@ type TermCases[S any, R any] struct {
 	integerVariable               func(ID int) R
 	Add                           func(Values []Term[IntSort]) R
 	Subtract                      func(Left Term[IntSort], Right Term[IntSort]) R
+	IntegerScale                  func(Coefficient IntegerValue, Value Term[IntSort]) R
 	LessEqual                     func(Left Term[IntSort], Right Term[IntSort]) R
 	Less                          func(Left Term[IntSort], Right Term[IntSort]) R
 	Real                          func(Value Rational) R
@@ -821,6 +830,8 @@ func TermFold[S any, R any](t Term[S], cs TermCases[S, R]) R {
 		return cs.Add(m.Values)
 	case Subtract:
 		return cs.Subtract(m.Left, m.Right)
+	case IntegerScale:
+		return cs.IntegerScale(m.Coefficient, m.Value)
 	case LessEqual:
 		return cs.LessEqual(m.Left, m.Right)
 	case Less:
@@ -1336,6 +1347,9 @@ func New() Solver { return solverValue{contextID: 0, depth: 0, state: newEngine(
 
 func IntegerTerm(value IntegerValue) Term[IntSort] { return integerExact[IntSort]{value: value} }
 func IntegerVariable(id int) Term[IntSort]         { return integerVariable[IntSort]{iD: id} }
+func ScaleInteger(coefficient IntegerValue, value Term[IntSort]) Term[IntSort] {
+	return IntegerScale{Coefficient: coefficient, Value: value}
+}
 
 func IntegerVariableID(term Term[IntSort]) (int, bool) {
 	switch __gp_m0 := any(term).(type) {

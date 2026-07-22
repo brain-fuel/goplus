@@ -751,8 +751,28 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 		if values, ok := integers(); ok && len(values) == 2 {
 			return dynamicTerm{sort: sortBool, boolean: smt.Less{Left: values[0], Right: values[1]}}, nil
 		}
+	case ">=":
+		if values, ok := reals(); ok && len(values) == 2 && hasReal() {
+			return dynamicTerm{sort: sortBool, boolean: smt.RealLessEqual{Left: values[1], Right: values[0]}}, nil
+		}
+		if values, ok := integers(); ok && len(values) == 2 {
+			return dynamicTerm{sort: sortBool, boolean: smt.LessEqual{Left: values[1], Right: values[0]}}, nil
+		}
+	case ">":
+		if values, ok := reals(); ok && len(values) == 2 && hasReal() {
+			return dynamicTerm{sort: sortBool, boolean: smt.RealLess{Left: values[1], Right: values[0]}}, nil
+		}
+		if values, ok := integers(); ok && len(values) == 2 {
+			return dynamicTerm{sort: sortBool, boolean: smt.Less{Left: values[1], Right: values[0]}}, nil
+		}
 	case "*":
 		if len(terms) == 2 {
+			if coefficient, ok := integerConstant(terms[0]); ok && terms[1].sort == sortInt {
+				return dynamicTerm{sort: sortInt, integer: smt.ScaleInteger(coefficient, terms[1].integer)}, nil
+			}
+			if coefficient, ok := integerConstant(terms[1]); ok && terms[0].sort == sortInt {
+				return dynamicTerm{sort: sortInt, integer: smt.ScaleInteger(coefficient, terms[0].integer)}, nil
+			}
 			if coefficient, ok := rationalConstant(terms[0]); ok && terms[1].sort == sortReal {
 				return dynamicTerm{sort: sortReal, real: smt.RealScale{Coefficient: coefficient, Value: terms[1].real}}, nil
 			}
@@ -1020,6 +1040,13 @@ func bitVectorConstArrayOperator(expression SExpr) (int, int, bool) {
 func rationalConstant(term dynamicTerm) (smt.Rational, bool) {
 	value, ok := term.real.(smt.Real)
 	return value.Value, ok
+}
+
+func integerConstant(term dynamicTerm) (smt.IntegerValue, bool) {
+	if term.integer == nil {
+		return smt.IntegerValue{}, false
+	}
+	return smt.ExactIntegerConstant(term.integer)
 }
 
 func (executor *executor) recordCheck(result smt.CheckResult) {

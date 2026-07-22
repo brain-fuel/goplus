@@ -239,6 +239,8 @@ func containsBitVectorIntegerTerm(term any) bool {
 		}
 	case Subtract:
 		return containsBitVectorIntegerTerm(value.Left) || containsBitVectorIntegerTerm(value.Right)
+	case IntegerScale:
+		return containsBitVectorIntegerTerm(value.Value)
 	case If[IntSort]:
 		return containsBitVectorIntegerTerm(value.Then) || containsBitVectorIntegerTerm(value.Else)
 	}
@@ -1382,6 +1384,12 @@ func exactIntegerConstant(term any) (IntegerValue, bool) {
 			return IntegerValue{}, false
 		}
 		return SubIntegerValue(left, right), true
+	case IntegerScale:
+		operand, ok := exactIntegerConstant(value.Value)
+		if !ok {
+			return IntegerValue{}, false
+		}
+		return MultiplyIntegerValue(value.Coefficient, operand), true
 	}
 	return IntegerValue{}, false
 }

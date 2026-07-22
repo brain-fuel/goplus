@@ -33,16 +33,34 @@ func TestBooleanUnsatProof(t *testing.T) {
 	}
 }
 
-func TestUnsupportedArithmeticIsExplicit(t *testing.T) {
+func TestLinearIntegerArithmeticSatModel(t *testing.T) {
 	x := IntSymbol{ID: 1, Name: "x"}
 	y := IntSymbol{ID: 2, Name: "y"}
-	formula := LessEqual{Left: Add{Values: []Term[IntSort]{x, y}}, Right: Integer{Value: 10}}
-	result, ok := Check(Assert(1, New(), formula)).(Unknown)
+	formula := And{Values: []Term[BoolSort]{
+		LessEqual{Left: Add{Values: []Term[IntSort]{x, y}}, Right: Integer{Value: 10}},
+		LessEqual{Left: Integer{Value: 11}, Right: Add{Values: []Term[IntSort]{ScaleInteger(NewIntegerValue(2), x), y}}},
+	}}
+	result, ok := Check(Assert(1, New(), formula)).(Satisfiable)
 	if !ok {
 		t.Fatalf("result=%T", result)
 	}
-	if _, ok := result.Reason.(UnsupportedTheory); !ok {
-		t.Fatalf("reason=%T", result.Reason)
+	xValue, xOK := IntegerModelValue(result.Value, x)
+	yValue, yOK := IntegerModelValue(result.Value, y)
+	if !xOK || !yOK {
+		t.Fatalf("model x=(%v,%v) y=(%v,%v)", xValue, xOK, yValue, yOK)
+	}
+	if CompareIntegerValue(AddIntegerValue(xValue, yValue), NewIntegerValue(10)) > 0 || CompareIntegerValue(AddIntegerValue(MultiplyIntegerValue(NewIntegerValue(2), xValue), yValue), NewIntegerValue(11)) < 0 {
+		t.Fatalf("invalid model x=%v y=%v", xValue, yValue)
+	}
+}
+
+func TestLinearIntegerArithmeticIntegralityUnsat(t *testing.T) {
+	x := IntSymbol{ID: 1, Name: "x"}
+	twoX := ScaleInteger(NewIntegerValue(2), x)
+	formula := Equal{Left: twoX, Right: Integer{Value: 1}}
+	result := Check(Assert(1, New(), formula))
+	if _, ok := result.(Unsatisfiable); !ok {
+		t.Fatalf("result=%T", result)
 	}
 }
 

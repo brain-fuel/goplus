@@ -867,6 +867,9 @@ func solveConjunctiveTheoryProduct(assertions []Term[BoolSort]) (checkOutcome, b
 		terms, _ := partition.integers.values()
 		outcome, recognized := solveDifferenceAssertions(terms)
 		if !recognized {
+			outcome, recognized = solveLinearIntegerAssertions(terms)
+		}
+		if !recognized {
 			return checkOutcome{}, false
 		}
 		if outcome.status == checkUnsat {
@@ -1161,6 +1164,8 @@ func collectTheoryIntegerIDs(term any, add func(int)) {
 	case Subtract:
 		collectTheoryIntegerIDs(value.Left, add)
 		collectTheoryIntegerIDs(value.Right, add)
+	case IntegerScale:
+		collectTheoryIntegerIDs(value.Value, add)
 	case Not:
 		collectTheoryIntegerIDs(value.Value, add)
 	case arraySelectionTerm:

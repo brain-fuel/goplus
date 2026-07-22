@@ -108,6 +108,8 @@ func containsIntegerTheory(term Term[BoolSort]) bool {
 		return true
 	case IntegerDifferenceConstraint, IntegerDifferenceSystem:
 		return true
+	case IntegerLinearEquality:
+		return true
 	}
 	return false
 }
@@ -276,6 +278,8 @@ func (p *differenceProblem) boolean(term Term[BoolSort]) bool {
 			}
 		}
 		return true
+	case IntegerLinearEquality:
+		return false
 	default:
 		return false
 	}
@@ -391,6 +395,18 @@ func accumulateInteger(term Term[IntSort], multiplier int64, form *linearInteger
 			return
 		}
 		accumulateInteger(value.Right, negated, form)
+	case IntegerScale:
+		coefficient, ok := value.Coefficient.Int64()
+		if !ok {
+			form.valid = false
+			return
+		}
+		scaled, ok := checkedMulInt64(multiplier, coefficient)
+		if !ok {
+			form.valid = false
+			return
+		}
+		accumulateInteger(value.Value, scaled, form)
 	default:
 		form.valid = false
 	}
