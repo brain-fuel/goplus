@@ -25,24 +25,50 @@ func (r *fileResolver) indexDependentVariables() {
 	r.dependentVars = map[*types.Var]dependentValueType{}
 	r.dependentUnstable = map[*types.Var]bool{}
 	assignments := map[*types.Var]int{}
-	candidates := map[*types.Var]dependentValueType{}
-	record := func(lhs ast.Expr, rhs ast.Expr) {
+	objectOf := func(lhs ast.Expr) *types.Var {
 		id, ok := lhs.(*ast.Ident)
 		if !ok {
-			return
+			return nil
 		}
 		obj, _ := r.pkg.TypesInfo.ObjectOf(id).(*types.Var)
-		if obj == nil {
+		return obj
+	}
+	// Count first so the ordered recovery pass never trusts a value which is
+	// reassigned later in the function.
+	ast.Inspect(r.file, func(node ast.Node) bool {
+		switch statement := node.(type) {
+		case *ast.AssignStmt:
+			for _, lhs := range statement.Lhs {
+				if object := objectOf(lhs); object != nil {
+					assignments[object]++
+				}
+			}
+		case *ast.ValueSpec:
+			for _, name := range statement.Names {
+				if object := objectOf(name); object != nil {
+					assignments[object]++
+				}
+			}
+		}
+		return true
+	})
+	for object, count := range assignments {
+		if count != 1 {
+			r.dependentUnstable[object] = true
+		}
+	}
+	record := func(lhs ast.Expr, rhs ast.Expr) {
+		obj := objectOf(lhs)
+		if obj == nil || assignments[obj] != 1 {
 			return
 		}
-		assignments[obj]++
 		call, ok := rhs.(*ast.CallExpr)
 		if !ok {
 			return
 		}
 		pkgPath, typeText, ok := r.dependentCallResult(call)
 		if ok {
-			candidates[obj] = dependentValueType{pkgPath: pkgPath, typeText: typeText, origin: call}
+			r.dependentVars[obj] = dependentValueType{pkgPath: pkgPath, typeText: typeText, origin: call}
 		}
 	}
 	ast.Inspect(r.file, func(node ast.Node) bool {
@@ -62,13 +88,6 @@ func (r *fileResolver) indexDependentVariables() {
 		}
 		return true
 	})
-	for object, known := range candidates {
-		if assignments[object] == 1 {
-			r.dependentVars[object] = known
-		} else {
-			r.dependentUnstable[object] = true
-		}
-	}
 }
 
 func (r *fileResolver) dependentCallResult(call *ast.CallExpr) (string, string, bool) {
@@ -80,12 +99,44 @@ func (r *fileResolver) dependentCallResult(call *ast.CallExpr) (string, string, 
 	if !ok {
 		return r.dependentConstructorResult(call)
 	}
-	if len(call.Args) != len(d.Params) || d.Result == "" {
+	aligned, full, ok := alignDependentCallArgs(call.Args, d)
+	if !ok || d.Result == "" {
 		return "", "", false
 	}
+	_ = full
 	sub := map[string]string{}
 	for i, p := range d.Params {
-		sub[p.Name] = r.text(call.Args[i].Pos(), call.Args[i].End())
+		if aligned[i] != nil {
+			sub[p.Name] = r.text(aligned[i].Pos(), aligned[i].End())
+		}
+	}
+	// Infer omitted index parameters from an indexed runtime argument. This is
+	// the common preservation shape: Header(1 request Request[m,...]) returns
+	// Request[m,...], while m itself is erased and omitted at the call site.
+	if !full {
+		variables := map[string]bool{}
+		for _, p := range d.Params {
+			if p.Quantity == "0" && p.Type == "nat" {
+				variables[p.Name] = true
+			}
+		}
+		for i, p := range d.Params {
+			if aligned[i] == nil {
+				continue
+			}
+			var actual string
+			switch argument := aligned[i].(type) {
+			case *ast.CallExpr:
+				_, actual, _ = r.dependentCallResult(argument)
+			case *ast.Ident:
+				if known, found := r.dependentIdentType(argument); found {
+					actual = known.typeText
+				}
+			}
+			if actual != "" {
+				unifyDependentInstantiation(p.Type, actual, variables, sub)
+			}
+		}
 	}
 	result, err := substTypeTextLite(d.Result, sub)
 	if err != nil {
@@ -266,6 +317,33 @@ func (r *fileResolver) dependentIdentType(id *ast.Ident) (dependentValueType, bo
 // arity is left alone. Erased arguments must be index expressions
 // (pure); anything effectful is an error — its evaluation would vanish.
 
+// alignDependentCallArgs maps surface arguments back to authored parameter
+// positions. Go+ permits inferable quantity-0 indices to be omitted, so a call
+// may already have erased arity even though it still needs dependent checking
+// and quantity-1 wrapping.
+func alignDependentCallArgs(args []ast.Expr, d *registry.DepFn) (aligned []ast.Expr, full bool, ok bool) {
+	if len(args) == len(d.Params) {
+		return append([]ast.Expr(nil), args...), true, true
+	}
+	if len(args) != len(d.Params)-len(d.Dropped) {
+		return nil, false, false
+	}
+	dropped := map[int]bool{}
+	for _, position := range d.Dropped {
+		dropped[position] = true
+	}
+	aligned = make([]ast.Expr, len(d.Params))
+	next := 0
+	for position := range d.Params {
+		if dropped[position] {
+			continue
+		}
+		aligned[position] = args[next]
+		next++
+	}
+	return aligned, false, true
+}
+
 // depCallCandidate drops erased arguments from one call.
 func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 	if r.dependentBlocked[call] {
@@ -279,16 +357,9 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 	if !ok {
 		return
 	}
-	if len(call.Args) == len(d.Params) {
-		indicesArePure := true
-		for _, position := range d.Dropped {
-			if position < len(call.Args) && !pureIndexArg(call.Args[position]) {
-				indicesArePure = false
-			}
-		}
-		if indicesArePure && !r.validateDependentIndexedArgs(call, d, pkgPath) {
-			return
-		}
+	aligned, full, shapeOK := alignDependentCallArgs(call.Args, d)
+	if !shapeOK {
+		return
 	}
 	hasLinear := false
 	for _, p := range d.Params {
@@ -296,13 +367,25 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 			hasLinear = true
 		}
 	}
+	if !full && !hasLinear {
+		return // an already-erased non-linear call from an earlier fixpoint
+	}
+	if full {
+		indicesArePure := true
+		for _, position := range d.Dropped {
+			if position < len(call.Args) && !pureIndexArg(call.Args[position]) {
+				indicesArePure = false
+			}
+		}
+		if indicesArePure && !r.validateDependentIndexedArgs(call, d, pkgPath, aligned) {
+			return
+		}
+	} else if !r.validateDependentIndexedArgs(call, d, pkgPath, aligned) {
+		return
+	}
 	if len(d.Dropped) == 0 && !hasLinear {
 		return
 	}
-	if len(call.Args) != len(d.Params) {
-		return // already erased (or an arity error for the backstop)
-	}
-
 	// Linear positions: wrap the argument in the callee package's
 	// use-once constructor (LinOf / pkg.LinOf), once.
 	linOf := "LinOf"
@@ -311,8 +394,8 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 			linOf = alias + ".LinOf"
 		}
 	}
-	for i, a := range call.Args {
-		if d.Params[i].Quantity != "1" || isLinOfCall(a) {
+	for i, a := range aligned {
+		if a == nil || d.Params[i].Quantity != "1" || isLinOfCall(a) {
 			continue
 		}
 		r.edits = append(r.edits,
@@ -321,6 +404,9 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 	}
 	if len(d.Dropped) == 0 {
 		return
+	}
+	if !full {
+		return // erased parameters were inferred and are already absent
 	}
 	dropped := map[int]bool{}
 	for _, i := range d.Dropped {
@@ -408,17 +494,49 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 // their original signatures from markers. Reassigned indexed locals are
 // rejected because an erased Go interface cannot carry a flow-insensitive
 // static index safely.
-func (r *fileResolver) validateDependentIndexedArgs(call *ast.CallExpr, d *registry.DepFn, pkgPath string) bool {
+func (r *fileResolver) validateDependentIndexedArgs(call *ast.CallExpr, d *registry.DepFn, pkgPath string, args []ast.Expr) bool {
 	valid := true
 	outer := map[string]string{}
+	variables := map[string]bool{}
 	for i, p := range d.Params {
-		if i < len(call.Args) {
-			outer[p.Name] = r.text(call.Args[i].Pos(), call.Args[i].End())
+		if i < len(args) && args[i] != nil {
+			outer[p.Name] = r.text(args[i].Pos(), args[i].End())
+		}
+		if p.Quantity == "0" && p.Type == "nat" {
+			variables[p.Name] = true
+		}
+	}
+	implicit := false
+	for _, argument := range args {
+		implicit = implicit || argument == nil
+	}
+	if implicit {
+		// Recover omitted natural indices from indexed runtime arguments before
+		// substituting expected types below.
+		for i, p := range d.Params {
+			if i >= len(args) || args[i] == nil {
+				continue
+			}
+			var actual string
+			switch argument := args[i].(type) {
+			case *ast.CallExpr:
+				_, actual, _ = r.dependentCallResult(argument)
+			case *ast.Ident:
+				if known, found := r.dependentIdentType(argument); found {
+					actual = known.typeText
+				}
+			}
+			if actual != "" {
+				unifyDependentInstantiation(p.Type, actual, variables, outer)
+			}
 		}
 	}
 	for i, p := range d.Params {
-		if i >= len(call.Args) {
+		if i >= len(args) {
 			break
+		}
+		if args[i] == nil {
+			continue
 		}
 		expectedRawBase, expectedRawArgs := instantiationBase(p.Type)
 		expected, err := substTypeTextLite(p.Type, outer)
@@ -453,7 +571,7 @@ func (r *fileResolver) validateDependentIndexedArgs(call *ast.CallExpr, d *regis
 		actualPkg, actual := "", ""
 		var actualOrigin *ast.CallExpr
 		actualKnown := true
-		switch argument := call.Args[i].(type) {
+		switch argument := args[i].(type) {
 		case *ast.CallExpr:
 			var found bool
 			actualPkg, actual, found = r.dependentCallResult(argument)
@@ -514,14 +632,14 @@ func (r *fileResolver) validateDependentIndexedArgs(call *ast.CallExpr, d *regis
 			// Both signatures and all substitutions are concrete marker facts;
 			// unlike inference give-ups this mismatch cannot resolve in a later
 			// fixpoint iteration. Report it before nested calls erase their args.
-			r.errorf(call.Args[i].Pos(), "dependent index mismatch for argument %d to %s: requires %s[%s], got %s[%s]", i+1, d.Name, expectedBase, want, actualBase, got)
+			r.errorf(args[i].Pos(), "dependent index mismatch for argument %d to %s: requires %s[%s], got %s[%s]", i+1, d.Name, expectedBase, want, actualBase, got)
 			// Keep a mismatching nested producer unerased in this iteration.
 			// Otherwise its index arguments disappear before the audit pass and
 			// the enclosing mismatch can be lost at the next fixpoint.
-			if nested, ok := call.Args[i].(*ast.CallExpr); ok {
+			if nested, ok := args[i].(*ast.CallExpr); ok {
 				r.dependentBlocked[nested] = true
 			}
-			if identifier, ok := call.Args[i].(*ast.Ident); ok {
+			if identifier, ok := args[i].(*ast.Ident); ok {
 				if known, found := r.dependentIdentType(identifier); found && known.origin != nil {
 					r.blockDependentOrigin(known.origin)
 				}

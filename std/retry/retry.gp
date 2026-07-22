@@ -21,6 +21,34 @@ type Policy struct {
 	Cap      time.Duration
 }
 
+// Attempts returns the normalized total attempt count.
+func Attempts(policy Policy) int {
+	if policy.Attempts < 1 { return 1 }
+	return policy.Attempts
+}
+
+// Wait pauses for delay or returns the context cancellation. Non-positive
+// delays complete immediately without allocating a timer.
+func Wait(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 { return nil }
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done(): return ctx.Err()
+	case <-timer.C: return nil
+	}
+}
+
+// NextDelay doubles delay and clamps it to policy.Cap. Overflow saturates
+// before the cap is applied.
+func NextDelay(policy Policy, delay time.Duration) time.Duration {
+	if delay <= 0 { return 0 }
+	maximum := time.Duration(1<<63 - 1)
+	if delay > maximum/2 { delay = maximum } else { delay *= 2 }
+	if policy.Cap > 0 && delay > policy.Cap { return policy.Cap }
+	return delay
+}
+
 // Do runs f up to p.Attempts times. It returns f's first success, or —
 // after the final failure — the zero T and the last error. Between
 // attempts it sleeps the backoff delay unless ctx is done first, in which
@@ -28,10 +56,7 @@ type Policy struct {
 // done before the first attempt still gets one attempt: f observes ctx
 // itself (matching the attempt-then-check shape of hand-rolled loops).
 func Do[T any](ctx context.Context, p Policy, f func(context.Context) (T, error)) (T, error) {
-	attempts := p.Attempts
-	if attempts < 1 {
-		attempts = 1
-	}
+	attempts := Attempts(p)
 	var lastErr error
 	delay := p.Base
 	for i := 0; i < attempts; i++ {
@@ -43,20 +68,11 @@ func Do[T any](ctx context.Context, p Policy, f func(context.Context) (T, error)
 		if i == attempts-1 {
 			break
 		}
-		if delay > 0 {
-			t := time.NewTimer(delay)
-			select {
-			case <-ctx.Done():
-				t.Stop()
-				var zero T
-				return zero, ctx.Err()
-			case <-t.C:
-			}
-			delay *= 2
-			if p.Cap > 0 && delay > p.Cap {
-				delay = p.Cap
-			}
+		if err := Wait(ctx, delay); err != nil {
+			var zero T
+			return zero, err
 		}
+		delay = NextDelay(p, delay)
 	}
 	var zero T
 	return zero, lastErr

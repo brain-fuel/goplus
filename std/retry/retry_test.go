@@ -86,3 +86,23 @@ func TestBackoffDoublesAndCaps(t *testing.T) {
 		t.Fatalf("elapsed %v: backoff waits not applied", elapsed)
 	}
 }
+
+func TestPolicyPrimitives(t *testing.T) {
+	if got := Attempts(Policy{}); got != 1 {
+		t.Fatalf("Attempts = %d, want 1", got)
+	}
+	if got := NextDelay(Policy{Cap: 3 * time.Second}, 2*time.Second); got != 3*time.Second {
+		t.Fatalf("capped delay = %v", got)
+	}
+	maximum := time.Duration(1<<63 - 1)
+	if got := NextDelay(Policy{}, maximum); got != maximum {
+		t.Fatalf("overflow delay = %v, want saturation", got)
+	}
+	if allocations := testing.AllocsPerRun(1000, func() {
+		if err := Wait(context.Background(), 0); err != nil {
+			panic(err)
+		}
+	}); allocations != 0 {
+		t.Fatalf("zero-delay Wait allocations = %.1f", allocations)
+	}
+}

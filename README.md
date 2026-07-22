@@ -11,6 +11,21 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.26.0 — Method-Indexed Linear HTTP Foundations
+
+The `/goals/09-resty` forcing case adds cross-package inference for omitted
+quantity-0 natural indices when the same call also consumes a quantity-1
+capability. Method, body replayability, and decode phase can now travel through
+an erased request type without making Go+ callers spell proof-only arguments or
+ordinary-Go `LinOf` wrappers. Stable local index recovery is ordered by source,
+so chained indexed transitions retain concrete results.
+
+`std/retry` now exposes the protocol-neutral pieces shared by its original
+consumer and the HTTP client rewrite: normalized attempt counts, cancellable
+waiting with a zero-allocation immediate path, and overflow-safe capped delay
+progression. HTTP status policy and response-body ownership remain outside the
+standard library.
+
 ## v0.25.0 — Dependent Rewrite Foundations
 
 `std/decimal` provides immutable arbitrary-precision base-10 arithmetic,
@@ -717,6 +732,7 @@ The spec is executable: the Godog/Cucumber feature suite under
 | v0.24.0 | Process, SemVer, durable workflows, validated config, atomic files, and CAS — implemented |
 | v0.24.1 | Cross-host analyzer compatibility and stable workflow-journal JSON — implemented |
 | v0.25.0 | Goals 01–08 dependent rewrite foundations: indexed decimal, collections, config, HTTP routes, expressions, JSON paths, validation, and schedules — shipped |
+| v0.26.0 | Goal 09 foundations: inferred preserved indices across linear calls and shared overflow-safe retry primitives — shipped |
 
 ## License
 
