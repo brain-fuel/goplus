@@ -14,6 +14,24 @@ type IntegerLinearEquality struct {
 
 func (IntegerLinearEquality) isTerm(BoolSort) {}
 
+type IntegerLinearDisequality struct{ Equality IntegerLinearEquality }
+
+func (IntegerLinearDisequality) isTerm(BoolSort) {}
+
+type IntegerLinearChoice struct {
+	First  IntegerLinearEquality
+	Second IntegerLinearEquality
+}
+
+func (IntegerLinearChoice) isTerm(BoolSort) {}
+
+type integerLinearStrictBound struct {
+	Equality IntegerLinearEquality
+	Reverse  bool
+}
+
+func (integerLinearStrictBound) isTerm(BoolSort) {}
+
 func CompactIntegerLinearEquality(left, right Term[IntSort]) (IntegerLinearEquality, bool) {
 	form := linearInteger{valid: true}
 	accumulateInteger(left, 1, &form)
@@ -351,6 +369,18 @@ func (problem *integerLinearProblem) boolean(term Term[BoolSort]) bool {
 		problem.appendConstraint(integerLinearConstraint{coefficients: first, bound: value.Value})
 		problem.appendConstraint(integerLinearConstraint{coefficients: second, bound: NegateIntegerValue(value.Value)})
 		problem.addSymbol(value.ID)
+		return true
+	case integerLinearStrictBound:
+		coefficient := NewIntegerValue(value.Equality.Coefficient)
+		bound := AddIntegerValue(value.Equality.Value, NewIntegerValue(-1))
+		if value.Reverse {
+			coefficient = NegateIntegerValue(coefficient)
+			bound = AddIntegerValue(NegateIntegerValue(value.Equality.Value), NewIntegerValue(-1))
+		}
+		coefficients := integerCoefficients{}
+		coefficients.add(value.Equality.ID, coefficient)
+		problem.appendConstraint(integerLinearConstraint{coefficients: coefficients, bound: bound})
+		problem.addSymbol(value.Equality.ID)
 		return true
 	default:
 		return false

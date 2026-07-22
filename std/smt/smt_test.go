@@ -89,6 +89,42 @@ func TestLinearIntegerArithmeticCoefficientOverflow(t *testing.T) {
 	}
 }
 
+func TestBooleanLinearIntegerArithmetic(t *testing.T) {
+	x := IntSymbol{ID: 1, Name: "x"}
+	zero := Equal{Left: x, Right: Integer{Value: 0}}
+	two := Equal{Left: x, Right: Integer{Value: 2}}
+	formula := And{Values: []Term[BoolSort]{Or{Values: []Term[BoolSort]{zero, two}}, Not{Value: zero}}}
+	result, ok := Check(Assert(1, New(), formula)).(Satisfiable)
+	if !ok {
+		t.Fatalf("result=%T", result)
+	}
+	value, found := IntegerModelValue(result.Value, x)
+	if !found || CompareIntegerValue(value, NewIntegerValue(2)) != 0 {
+		t.Fatalf("x=(%v,%v)", value, found)
+	}
+
+	contradiction := And{Values: []Term[BoolSort]{zero, Implies{Left: zero, Right: two}}}
+	implicationResult := Check(Assert(2, New(), contradiction))
+	if _, ok := implicationResult.(Unsatisfiable); !ok {
+		t.Fatalf("implication result=%T", implicationResult)
+	}
+}
+
+func TestBooleanLinearIntegerBranchLimitIsExplicit(t *testing.T) {
+	x := IntSymbol{ID: 1, Name: "x"}
+	terms := make([]Term[BoolSort], 9)
+	for index := range terms {
+		terms[index] = Not{Value: Equal{Left: x, Right: Integer{Value: int64(index)}}}
+	}
+	result, ok := Check(Assert(1, New(), And{Values: terms})).(Unknown)
+	if !ok {
+		t.Fatalf("result=%T", result)
+	}
+	if limit, ok := result.Reason.(ResourceLimit); !ok || limit.Limit != linearIntegerBooleanBranchLimit {
+		t.Fatalf("reason=%#v", result.Reason)
+	}
+}
+
 func TestIntegerDifferenceLogicSatModel(t *testing.T) {
 	x := IntSymbol{ID: 1, Name: "x"}
 	y := IntSymbol{ID: 2, Name: "y"}

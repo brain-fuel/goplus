@@ -876,6 +876,9 @@ func solveConjunctiveTheoryProduct(assertions []Term[BoolSort]) (checkOutcome, b
 			outcome, recognized = solveLinearIntegerAssertions(terms)
 		}
 		if !recognized {
+			outcome, recognized = solveBooleanLinearIntegerAssertions(terms)
+		}
+		if !recognized {
 			return checkOutcome{}, false
 		}
 		if outcome.status == checkUnsat {

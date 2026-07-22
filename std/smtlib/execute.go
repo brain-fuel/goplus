@@ -636,6 +636,22 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 		if values, ok := booleans(); ok && len(values) == 2 {
 			return dynamicTerm{sort: sortBool, boolean: smt.Implies{Left: values[0], Right: values[1]}}, nil
 		}
+	case "distinct":
+		if values, ok := integers(); ok {
+			if len(values) < 2 {
+				return dynamicTerm{sort: sortBool, boolean: smt.Bool{Value: true}}, nil
+			}
+			disequalities := make([]smt.Term[smt.BoolSort], 0, len(values)*(len(values)-1)/2)
+			for left := 0; left < len(values); left++ {
+				for right := left + 1; right < len(values); right++ {
+					disequalities = append(disequalities, smt.Not{Value: smt.Equal{Left: values[left], Right: values[right]}})
+				}
+			}
+			if len(disequalities) == 1 {
+				return dynamicTerm{sort: sortBool, boolean: disequalities[0]}, nil
+			}
+			return dynamicTerm{sort: sortBool, boolean: smt.And{Values: disequalities}}, nil
+		}
 	case "=":
 		if len(terms) >= 2 && terms[0].sort == sortArrayBitVec {
 			equalities := make([]smt.Term[smt.BoolSort], len(terms)-1)

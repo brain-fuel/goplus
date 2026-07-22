@@ -90,6 +90,40 @@ func TestExecuteLinearIntegerArithmetic(t *testing.T) {
 	}
 }
 
+func TestExecuteBooleanLinearIntegerArithmetic(t *testing.T) {
+	script := `(set-logic QF_LIA)
+(declare-const x Int)
+(assert (or (= x 1) (= x 2)))
+(assert (distinct x 1))
+(assert (=> (= x 2) (> x 0)))
+(check-sat)
+(get-value (x))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[5].(Satisfiable); !ok {
+		t.Fatalf("check=%T", result.Responses[5])
+	}
+	values, ok := result.Responses[6].(ValuesAvailable)
+	if !ok || len(values.Values) != 1 {
+		t.Fatalf("values=%#v", result.Responses[6])
+	}
+	value, ok := values.Values[0].(IntegerValue)
+	if !ok || value.Value != 2 {
+		t.Fatalf("x=%#v", values.Values[0])
+	}
+
+	unsat := `(set-logic QF_LIA)
+(declare-const x Int)
+(assert (distinct x x))
+(check-sat)`
+	unsatResult := Execute(unsat).(Executed)
+	if _, ok := unsatResult.Responses[3].(Unsatisfiable); !ok {
+		t.Fatalf("distinct check=%T", unsatResult.Responses[3])
+	}
+}
+
 func TestExecuteAssumptionCore(t *testing.T) {
 	script := `(declare-const a Bool)
 (declare-const b Bool)
