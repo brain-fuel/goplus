@@ -309,7 +309,7 @@ func containsArrayTheory(term Term[BoolSort]) bool {
 		return containsArrayTheory(value.Left) || containsArrayTheory(value.Right)
 	case Equal:
 		return isArrayTerm(value.Left) || isArrayTerm(value.Right) || isArraySelect(value.Left) || isArraySelect(value.Right)
-	case ArrayEqualityRelation, ArrayReadRelation, ArrayCongruenceConjunction, ArrayStoreEqualityRelation, ArrayStoreBridgeReadConjunction, ArrayConstantEqualityRelation, ArrayReadValueRelation, ArrayConstantReadConjunction, ArrayStoreReadValueRelation, ArrayIntegerEqualityExchange, BitVectorArrayStoreReadValueRelation, BitVectorArrayEqualityExchange:
+	case ArrayEqualityRelation, ArrayReadRelation, ArrayCongruenceConjunction, ArrayStoreEqualityRelation, ArrayStoreBridgeReadConjunction, ArrayConstantEqualityRelation, ArrayReadValueRelation, ArrayConstantReadConjunction, ArrayStoreReadValueRelation, ArrayIntegerEqualityExchange, BitVectorArrayEqualityRelation, BitVectorArrayStoreReadValueRelation, BitVectorArrayEqualityExchange:
 		return true
 	}
 	return false

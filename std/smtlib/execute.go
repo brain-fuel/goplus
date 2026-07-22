@@ -205,6 +205,13 @@ func (executor *executor) command(index int, command Command) {
 				} else {
 					values[valueIndex] = UnavailableValue{Expression: expression, Reason: "model has no Boolean value"}
 				}
+			} else if term.sort == sortBitVector {
+				result, found := smt.BitVecModelValue(*executor.lastModel, term.bitVector)
+				if found {
+					values[valueIndex] = BitVectorValue{Expression: expression, Value: result}
+				} else {
+					values[valueIndex] = UnavailableValue{Expression: expression, Reason: "model has no bit-vector value"}
+				}
 			} else if term.sort == sortReal || term.sort == sortNumber && term.real != nil && term.integer == nil {
 				result, found := smt.RealValue(*executor.lastModel, term.real)
 				if found {
@@ -268,7 +275,7 @@ func (executor *executor) declare(index int, name string, sortExpression SExpr, 
 		executor.nextSymbol++
 		executor.arrays[name] = dynamicTerm{
 			sort: sortArrayBitVec, arrayIndexWidth: indexWidth, arrayElementWidth: elementWidth,
-			arrayBitVec: smt.ArrayConst[smt.BitVecSort, smt.BitVecSort](executor.nextSymbol, name),
+			arrayBitVec: smt.BitVectorArrayConst(indexWidth, elementWidth, executor.nextSymbol, name),
 		}
 		executor.acknowledge(index)
 		return

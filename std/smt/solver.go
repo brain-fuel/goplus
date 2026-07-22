@@ -62,7 +62,7 @@ func runtimeCheckResult(context int, e *engine) CheckResult {
 		status, booleans, integers, reals, bitVectors, reason := e.check()
 		switch status {
 		case checkSat:
-			e.publicResult = Satisfiable{Value: modelValue{contextID: context, booleans: booleans, integers: integers, reals: reals, bitVectors: bitVectors, arrays: e.result.arrays}}
+			e.publicResult = Satisfiable{Value: modelValue{contextID: context, booleans: booleans, integers: integers, reals: reals, bitVectors: bitVectors, arrays: e.result.arrays, bitVectorArrays: e.result.bitVectorArrays}}
 		case checkUnsat:
 			e.publicResult = Unsatisfiable{Value: proofValue{contextID: context, assertions: len(e.assertions)}}
 		default:
@@ -76,13 +76,14 @@ func runtimeCheckResult(context int, e *engine) CheckResult {
 }
 
 type checkOutcome struct {
-	status     int
-	booleans   booleanModel
-	integers   integerModel
-	reals      rationalModel
-	bitVectors bitVectorModel
-	arrays     *integerArrayModel
-	reason     UnknownReason
+	status          int
+	booleans        booleanModel
+	integers        integerModel
+	reals           rationalModel
+	bitVectors      bitVectorModel
+	arrays          *integerArrayModel
+	bitVectorArrays *bitVectorArrayModel
+	reason          UnknownReason
 }
 
 type integerModelEntry struct {

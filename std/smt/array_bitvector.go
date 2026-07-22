@@ -1,5 +1,136 @@
 package smt
 
+type bitVectorArrayModelEntry struct {
+	arrayID int
+	index   BitVectorValue
+	value   BitVectorValue
+}
+
+type bitVectorArrayModelDefault struct {
+	arrayID int
+	value   BitVectorValue
+}
+
+type bitVectorArrayModel struct {
+	entryCount   int
+	entries      [64]bitVectorArrayModelEntry
+	defaultCount int
+	defaults     [16]bitVectorArrayModelDefault
+}
+
+func (model *bitVectorArrayModel) setDefault(id int, value BitVectorValue) {
+	for index := 0; index < model.defaultCount; index++ {
+		if model.defaults[index].arrayID == id {
+			model.defaults[index].value = value
+			return
+		}
+	}
+	if model.defaultCount < len(model.defaults) {
+		model.defaults[model.defaultCount] = bitVectorArrayModelDefault{arrayID: id, value: value}
+		model.defaultCount++
+	}
+}
+
+func (model *bitVectorArrayModel) set(id int, index, value BitVectorValue) {
+	for position := 0; position < model.entryCount; position++ {
+		if model.entries[position].arrayID == id && EqualBitVectorValue(model.entries[position].index, index) {
+			model.entries[position].value = value
+			return
+		}
+	}
+	if model.entryCount < len(model.entries) {
+		model.entries[model.entryCount] = bitVectorArrayModelEntry{arrayID: id, index: index, value: value}
+		model.entryCount++
+	}
+}
+
+func (model *bitVectorArrayModel) lookup(id int, index BitVectorValue) (BitVectorValue, bool) {
+	if model == nil {
+		return BitVectorValue{}, false
+	}
+	for position := model.entryCount - 1; position >= 0; position-- {
+		entry := model.entries[position]
+		if entry.arrayID == id && EqualBitVectorValue(entry.index, index) {
+			return entry.value, true
+		}
+	}
+	for position := 0; position < model.defaultCount; position++ {
+		if model.defaults[position].arrayID == id {
+			return model.defaults[position].value, true
+		}
+	}
+	return BitVectorValue{}, false
+}
+
+func evaluateBitVectorArray(array Term[ArraySort[BitVecSort, BitVecSort]], index BitVectorValue, model *bitVectorArrayModel) (BitVectorValue, bool) {
+	if stored, ok := any(array).(arrayStoreTerm); ok {
+		base, storedIndexTerm, storedValueTerm := stored.arrayStoreParts()
+		storedIndex, indexOK := exactBitVectorArrayValue(storedIndexTerm)
+		storedValue, valueOK := exactBitVectorArrayValue(storedValueTerm)
+		if indexOK && valueOK && EqualBitVectorValue(storedIndex, index) {
+			return storedValue, true
+		}
+		baseArray, ok := base.(Term[ArraySort[BitVecSort, BitVecSort]])
+		if !ok {
+			return BitVectorValue{}, false
+		}
+		return evaluateBitVectorArray(baseArray, index, model)
+	}
+	if constant, ok := any(array).(arrayConstantTerm); ok {
+		return exactBitVectorArrayValue(constant.arrayDefaultValue())
+	}
+	id, ok := arraySymbolID(array)
+	if !ok {
+		return BitVectorValue{}, false
+	}
+	return model.lookup(id, index)
+}
+
+func evaluateBitVectorModelTerm(term Term[BitVecSort], bitVectors bitVectorModel, integers integerModel, arrays *bitVectorArrayModel) (BitVectorValue, bool) {
+	if selection, ok := any(term).(arraySelectionTerm); ok {
+		arrayTerm, indexTerm := selection.arraySelectionParts()
+		array, arrayOK := arrayTerm.(Term[ArraySort[BitVecSort, BitVecSort]])
+		index, indexOK := exactBitVectorArrayValue(indexTerm)
+		if !indexOK {
+			if typed, ok := indexTerm.(Term[BitVecSort]); ok {
+				index, indexOK = evaluateBitVector(typed, bitVectors, integers)
+			}
+		}
+		if !arrayOK || !indexOK {
+			return BitVectorValue{}, false
+		}
+		return evaluateBitVectorArray(array, index, arrays)
+	}
+	return evaluateBitVector(term, bitVectors, integers)
+}
+
+// bitVectorArraySymbol retains runtime sort widths after Go+ erases dependent
+// indices from the generated Go type. That evidence is required for finite
+// extensional witnesses and model evaluation.
+type bitVectorArraySymbol struct {
+	indexWidth, elementWidth int
+	id                       int
+	name                     string
+}
+
+func (bitVectorArraySymbol) isTerm(ArraySort[BitVecSort, BitVecSort]) {}
+func (value bitVectorArraySymbol) arraySymbolParts() (int, string)    { return value.id, value.name }
+func (bitVectorArraySymbol) arrayTermKind() uint8                     { return 1 }
+
+// BitVectorArrayConst constructs a width-aware array symbol for the erased Go
+// boundary. Go+ callers should retain the widths in their dependent result.
+func BitVectorArrayConst(indexWidth, elementWidth, id int, name string) Term[ArraySort[BitVecSort, BitVecSort]] {
+	if indexWidth <= 0 || elementWidth <= 0 {
+		panic("smt: bit-vector array widths must be positive")
+	}
+	return bitVectorArraySymbol{indexWidth: indexWidth, elementWidth: elementWidth, id: id, name: name}
+}
+
+func bitVectorArraySymbolWidths(term any) (int, int, bool) {
+	value, ok := term.(bitVectorArraySymbol)
+	return value.indexWidth, value.elementWidth, ok
+}
+
 // BitVectorArrayStoreReadValueRelation is the compact official-API form of a
 // symbolic-address read from a one-store array compared with an exact value.
 type BitVectorArrayStoreReadValueRelation struct {
@@ -8,6 +139,14 @@ type BitVectorArrayStoreReadValueRelation struct {
 	StoredValue, ComparedValue         BitVectorValue
 	Negated                            bool
 }
+
+type BitVectorArrayEqualityRelation struct {
+	LeftID, RightID          int
+	IndexWidth, ElementWidth int
+	Negated                  bool
+}
+
+func (BitVectorArrayEqualityRelation) isTerm(BoolSort) {}
 
 func (BitVectorArrayStoreReadValueRelation) isTerm(BoolSort) {}
 
@@ -43,23 +182,80 @@ func solveCompactBitVectorArrayExchange(assertions []Term[BoolSort]) (checkOutco
 	return checkOutcome{status: checkSat}, true
 }
 
+func (problem *groundBitVectorArrayProblem) model() *bitVectorArrayModel {
+	model := &bitVectorArrayModel{}
+	for position := 0; position < problem.arrayCount; position++ {
+		width := problem.arrayElementWidths[position]
+		if width > 0 {
+			model.setDefault(problem.arrayIDs[position], NewBitVectorUint64(width, 0))
+		}
+	}
+	for position := 0; position < problem.readCount; position++ {
+		read := problem.reads[position]
+		if read.constant || read.index.symbol {
+			continue
+		}
+		root := problem.readRoot(position)
+		value := BitVectorValue{}
+		found := false
+		for candidate := 0; candidate < problem.readCount; candidate++ {
+			if problem.reads[candidate].constant && problem.readRoot(candidate) == root {
+				value, found = problem.reads[candidate].value, true
+				break
+			}
+		}
+		if !found {
+			arrayPosition := problem.arrayPosition(read.arrayID)
+			if arrayPosition < 0 || problem.arrayElementWidths[arrayPosition] <= 0 {
+				continue
+			}
+			value = NewBitVectorUint64(problem.arrayElementWidths[arrayPosition], 0)
+		}
+		for arrayPosition := 0; arrayPosition < problem.arrayCount; arrayPosition++ {
+			if problem.arrayRoot(problem.arrayIDs[arrayPosition]) == problem.arrayRoot(read.arrayID) {
+				model.set(problem.arrayIDs[arrayPosition], read.index.value, value)
+			}
+		}
+	}
+	for _, pair := range problem.arrayDiseqs[:problem.arrayDiseqCount] {
+		leftPosition, rightPosition := problem.arrayPosition(pair[0]), problem.arrayPosition(pair[1])
+		if leftPosition < 0 || rightPosition < 0 {
+			continue
+		}
+		indexWidth, elementWidth := problem.arrayIndexWidths[leftPosition], problem.arrayElementWidths[leftPosition]
+		if indexWidth <= 0 || elementWidth <= 0 {
+			continue
+		}
+		witness := NewBitVectorUint64(indexWidth, 0)
+		model.set(pair[0], witness, NewBitVectorUint64(elementWidth, 0))
+		model.set(pair[1], witness, NewBitVectorUint64(elementWidth, 1))
+	}
+	return model
+}
+
 // groundBitVectorArrayProblem is the allocation-free exact-index QF_AUFBV
 // congruence layer. It complements the integer-array engine without erasing
 // bit-vector widths or routing array reads through the general bit blaster.
 type groundBitVectorArrayProblem struct {
-	arrayCount    int
-	arrayIDs      [16]int
-	arrayParents  [16]int
-	indexCount    int
-	indexIDs      [16]int
-	indexWidths   [16]int
-	indexParents  [16]int
-	readCount     int
-	reads         [32]groundBitVectorArrayRead
-	readParents   [32]int
-	diseqCount    int
-	diseqs        [16][2]int
-	bitVectorSeen bool
+	arrayCount              int
+	arrayIDs                [16]int
+	arrayParents            [16]int
+	arrayIndexWidths        [16]int
+	arrayElementWidths      [16]int
+	indexCount              int
+	indexIDs                [16]int
+	indexWidths             [16]int
+	indexParents            [16]int
+	readCount               int
+	reads                   [32]groundBitVectorArrayRead
+	readParents             [32]int
+	diseqCount              int
+	diseqs                  [16][2]int
+	arrayDiseqCount         int
+	arrayDiseqs             [16][2]int
+	expressionEqualityCount int
+	expressionEqualities    [16]groundBitVectorArrayExpressionEquality
+	bitVectorSeen           bool
 }
 
 type groundBitVectorArrayRead struct {
@@ -76,11 +272,39 @@ type groundBitVectorArrayIndex struct {
 	value  BitVectorValue
 }
 
+type groundBitVectorArrayExpressionEquality struct {
+	left, right any
+	negated     bool
+}
+
+type groundBitVectorArrayExpression struct {
+	baseID       int
+	indexWidth   int
+	elementWidth int
+	indices      [8]BitVectorValue
+	values       [8]BitVectorValue
+	count        int
+}
+
 func solveGroundBitVectorArrays(assertions []Term[BoolSort]) (checkOutcome, bool) {
 	problem := groundBitVectorArrayProblem{}
 	for _, assertion := range assertions {
 		if !problem.collectArrays(assertion, false) {
 			return checkOutcome{}, false
+		}
+	}
+	for _, pair := range problem.arrayDiseqs[:problem.arrayDiseqCount] {
+		if problem.arrayRoot(pair[0]) == problem.arrayRoot(pair[1]) {
+			return checkOutcome{status: checkUnsat}, true
+		}
+	}
+	for _, equality := range problem.expressionEqualities[:problem.expressionEqualityCount] {
+		holds, known := problem.expressionEquality(equality.left, equality.right, equality.negated)
+		if !known {
+			return checkOutcome{}, false
+		}
+		if !holds {
+			return checkOutcome{status: checkUnsat}, true
 		}
 	}
 	for _, assertion := range assertions {
@@ -106,7 +330,7 @@ func solveGroundBitVectorArrays(assertions []Term[BoolSort]) (checkOutcome, bool
 			}
 		}
 	}
-	return checkOutcome{status: checkSat}, true
+	return checkOutcome{status: checkSat, bitVectorArrays: problem.model()}, true
 }
 
 // solveSharedArrayBitVector exchanges equalities entailed by QF_BV into the
@@ -351,18 +575,49 @@ func (problem *groundBitVectorArrayProblem) collectArrays(term Term[BoolSort], n
 		leftArray, leftOK := arraySymbolID(value.Left)
 		rightArray, rightOK := arraySymbolID(value.Right)
 		if leftOK || rightOK {
-			if !leftOK || !rightOK || negated {
+			if !leftOK || !rightOK {
 				return false
 			}
-			problem.ensureArray(leftArray)
-			problem.ensureArray(rightArray)
-			problem.unionArray(leftArray, rightArray)
+			problem.ensureArrayTerm(value.Left)
+			problem.ensureArrayTerm(value.Right)
+			if negated {
+				if problem.arrayDiseqCount == len(problem.arrayDiseqs) {
+					return false
+				}
+				problem.arrayDiseqs[problem.arrayDiseqCount] = [2]int{leftArray, rightArray}
+				problem.arrayDiseqCount++
+			} else {
+				problem.unionArray(leftArray, rightArray)
+			}
+			return true
+		}
+		if isArrayTerm(value.Left) || isArrayTerm(value.Right) {
+			if !isArrayTerm(value.Left) || !isArrayTerm(value.Right) || problem.expressionEqualityCount == len(problem.expressionEqualities) {
+				return false
+			}
+			problem.expressionEqualities[problem.expressionEqualityCount] = groundBitVectorArrayExpressionEquality{left: value.Left, right: value.Right, negated: negated}
+			problem.expressionEqualityCount++
 			return true
 		}
 		leftIndex, leftIndexOK := problem.index(value.Left)
 		rightIndex, rightIndexOK := problem.index(value.Right)
 		if leftIndexOK && rightIndexOK && !negated {
 			problem.unionIndex(leftIndex, rightIndex)
+		}
+		return true
+	case BitVectorArrayEqualityRelation:
+		problem.ensureArrayWidths(value.LeftID, value.IndexWidth, value.ElementWidth)
+		problem.ensureArrayWidths(value.RightID, value.IndexWidth, value.ElementWidth)
+		problem.bitVectorSeen = true
+		effectiveNegated := value.Negated != negated
+		if effectiveNegated {
+			if problem.arrayDiseqCount == len(problem.arrayDiseqs) {
+				return false
+			}
+			problem.arrayDiseqs[problem.arrayDiseqCount] = [2]int{value.LeftID, value.RightID}
+			problem.arrayDiseqCount++
+		} else {
+			problem.unionArray(value.LeftID, value.RightID)
 		}
 		return true
 	}
@@ -398,7 +653,7 @@ func (problem *groundBitVectorArrayProblem) collectElements(term Term[BoolSort],
 		return problem.collectElements(value.Value, !negated)
 	case Equal:
 		if isArrayTerm(value.Left) || isArrayTerm(value.Right) {
-			return !negated
+			return true
 		}
 		if _, leftIndex := problem.index(value.Left); leftIndex {
 			if _, rightIndex := problem.index(value.Right); rightIndex {
@@ -421,6 +676,8 @@ func (problem *groundBitVectorArrayProblem) collectElements(term Term[BoolSort],
 		} else {
 			problem.unionRead(left, right)
 		}
+		return true
+	case BitVectorArrayEqualityRelation:
 		return true
 	}
 	return false
@@ -472,6 +729,70 @@ func exactBitVectorArrayValue(term any) (BitVectorValue, bool) {
 		return BitVectorValue{}, false
 	}
 	return value.value, true
+}
+
+func (problem *groundBitVectorArrayProblem) expression(term any) (groundBitVectorArrayExpression, bool) {
+	expression := groundBitVectorArrayExpression{}
+	for {
+		if store, ok := term.(arrayStoreTerm); ok {
+			base, indexTerm, valueTerm := store.arrayStoreParts()
+			index, indexOK := exactBitVectorArrayValue(indexTerm)
+			value, valueOK := exactBitVectorArrayValue(valueTerm)
+			if !indexOK || !valueOK {
+				return groundBitVectorArrayExpression{}, false
+			}
+			problem.bitVectorSeen = true
+			seen := false
+			for position := 0; position < expression.count; position++ {
+				if EqualBitVectorValue(expression.indices[position], index) {
+					seen = true
+					break
+				}
+			}
+			// Stores are visited outside-in, so the first occurrence is the
+			// final value after overwrite normalization.
+			if !seen {
+				if expression.count == len(expression.indices) {
+					return groundBitVectorArrayExpression{}, false
+				}
+				expression.indices[expression.count], expression.values[expression.count] = index, value
+				expression.count++
+			}
+			term = base
+			continue
+		}
+		id, ok := arraySymbolID(term)
+		if !ok {
+			return groundBitVectorArrayExpression{}, false
+		}
+		expression.baseID = problem.arrayRoot(id)
+		expression.indexWidth, expression.elementWidth, _ = bitVectorArraySymbolWidths(term)
+		return expression, true
+	}
+}
+
+func (problem *groundBitVectorArrayProblem) expressionEquality(leftTerm, rightTerm any, negated bool) (bool, bool) {
+	left, leftOK := problem.expression(leftTerm)
+	right, rightOK := problem.expression(rightTerm)
+	if !leftOK || !rightOK || left.baseID != right.baseID || left.count != right.count {
+		return false, false
+	}
+	for leftPosition := 0; leftPosition < left.count; leftPosition++ {
+		matched := false
+		for rightPosition := 0; rightPosition < right.count; rightPosition++ {
+			if EqualBitVectorValue(left.indices[leftPosition], right.indices[rightPosition]) {
+				if !EqualBitVectorValue(left.values[leftPosition], right.values[rightPosition]) {
+					return negated, true
+				}
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false, false
+		}
+	}
+	return !negated, true
 }
 
 func (problem *groundBitVectorArrayProblem) index(term any) (groundBitVectorArrayIndex, bool) {
@@ -551,8 +872,27 @@ func (problem *groundBitVectorArrayProblem) unionIndex(left, right groundBitVect
 }
 
 func (problem *groundBitVectorArrayProblem) ensureArray(id int) {
+	problem.ensureArrayWidths(id, 0, 0)
+}
+
+func (problem *groundBitVectorArrayProblem) ensureArrayTerm(term any) {
+	id, ok := arraySymbolID(term)
+	if !ok {
+		return
+	}
+	indexWidth, elementWidth, _ := bitVectorArraySymbolWidths(term)
+	if indexWidth > 0 && elementWidth > 0 {
+		problem.bitVectorSeen = true
+	}
+	problem.ensureArrayWidths(id, indexWidth, elementWidth)
+}
+
+func (problem *groundBitVectorArrayProblem) ensureArrayWidths(id, indexWidth, elementWidth int) {
 	for index := 0; index < problem.arrayCount; index++ {
 		if problem.arrayIDs[index] == id {
+			if indexWidth != 0 {
+				problem.arrayIndexWidths[index], problem.arrayElementWidths[index] = indexWidth, elementWidth
+			}
 			return
 		}
 	}
@@ -560,6 +900,8 @@ func (problem *groundBitVectorArrayProblem) ensureArray(id int) {
 		return
 	}
 	problem.arrayIDs[problem.arrayCount] = id
+	problem.arrayIndexWidths[problem.arrayCount] = indexWidth
+	problem.arrayElementWidths[problem.arrayCount] = elementWidth
 	problem.arrayParents[problem.arrayCount] = problem.arrayCount
 	problem.arrayCount++
 }

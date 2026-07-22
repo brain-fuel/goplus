@@ -1177,14 +1177,15 @@ func (solverValue) isSolver() {}
 //goplus:repr transparent
 type Model = modelValue
 
-//goplus:variant (Model) modelValue(ContextID int, Booleans booleanModel, Integers integerModel, Reals rationalModel, BitVectors bitVectorModel, Arrays *integerArrayModel) Model[c]
+//goplus:variant (Model) modelValue(ContextID int, Booleans booleanModel, Integers integerModel, Reals rationalModel, BitVectors bitVectorModel, Arrays *integerArrayModel, BitVectorArrays *bitVectorArrayModel) Model[c]
 type modelValue struct {
-	contextID  int
-	booleans   booleanModel
-	integers   integerModel
-	reals      rationalModel
-	bitVectors bitVectorModel
-	arrays     *integerArrayModel
+	contextID       int
+	booleans        booleanModel
+	integers        integerModel
+	reals           rationalModel
+	bitVectors      bitVectorModel
+	arrays          *integerArrayModel
+	bitVectorArrays *bitVectorArrayModel
 }
 
 func (modelValue) isModel() {}
@@ -1790,7 +1791,7 @@ func CheckAssuming(solver Solver, assumptions ...Term[BoolSort]) AssumptionCheck
 		status, booleans, integers, reals, bitVectors, core, reason := state.checkAssuming(assumptions)
 		switch status {
 		case checkSat:
-			return AssumptionsSatisfiable{Value: modelValue{contextID: context, booleans: booleans, integers: integers, reals: reals, bitVectors: bitVectors, arrays: nil}}
+			return AssumptionsSatisfiable{Value: modelValue{contextID: context, booleans: booleans, integers: integers, reals: reals, bitVectors: bitVectors, arrays: nil, bitVectorArrays: nil}}
 		case checkUnsat:
 			return AssumptionsUnsatisfiable{Value: proofValue{contextID: context, assertions: len(state.assertions)}, Indices: core}
 		default:
@@ -1875,7 +1876,8 @@ func BitVecModelValue(model Model, term Term[BitVecSort]) (BitVectorValue, bool)
 	case modelValue:
 		integers := __gp_m15.integers
 		bitVectors := __gp_m15.bitVectors
-		return evaluateBitVector(term, bitVectors, integers)
+		arrays := __gp_m15.bitVectorArrays
+		return evaluateBitVectorModelTerm(term, bitVectors, integers, arrays)
 	default:
 		panic("goplus: impossible enum value in match")
 	}
@@ -1888,6 +1890,17 @@ func IntegerArrayValue(model Model, array Term[ArraySort[IntSort, IntSort]], ind
 		integers := __gp_m16.integers
 		arrays := __gp_m16.arrays
 		return evaluateIntegerArray(array, index, integers, arrays)
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+}
+
+//goplus:dep BitVectorArrayValue(0 c nat, 0 indexWidth nat, 0 elementWidth nat, model Model[c], array Term[ArraySort[BitVecSort[indexWidth], BitVecSort[elementWidth]]], index BitVectorValue) (BitVectorValue, bool)
+func BitVectorArrayValue(model Model, array Term[ArraySort[BitVecSort, BitVecSort]], index BitVectorValue) (BitVectorValue, bool) {
+	switch __gp_m17 := any(model).(type) {
+	case modelValue:
+		arrays := __gp_m17.bitVectorArrays
+		return evaluateBitVectorArray(array, index, arrays)
 	default:
 		panic("goplus: impossible enum value in match")
 	}

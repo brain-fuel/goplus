@@ -1,6 +1,10 @@
 package smtlib
 
-import "testing"
+import (
+	"testing"
+
+	"goforge.dev/goplus/std/smt"
+)
 
 func TestExecuteBooleanModelAndValues(t *testing.T) {
 	script := `(set-logic QF_BOOL)
@@ -415,6 +419,92 @@ func TestExecuteGroundBitVectorArrayCongruence(t *testing.T) {
 	}
 	if _, ok := result.Responses[len(result.Responses)-1].(Unsatisfiable); !ok {
 		t.Fatalf("last=%#v", result.Responses[len(result.Responses)-1])
+	}
+}
+
+func TestExecuteGroundBitVectorArrayDisequality(t *testing.T) {
+	for name, script := range map[string]string{
+		"distinct-satisfiable": `(set-logic QF_AUFBV)
+(declare-const a (Array (_ BitVec 4) (_ BitVec 8)))
+(declare-const b (Array (_ BitVec 4) (_ BitVec 8)))
+(assert (not (= a b)))
+(check-sat)`,
+		"equal-and-distinct": `(set-logic QF_AUFBV)
+(declare-const a (Array (_ BitVec 4) (_ BitVec 8)))
+(declare-const b (Array (_ BitVec 4) (_ BitVec 8)))
+(assert (= a b))
+(assert (not (= a b)))
+(check-sat)`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, ok := Execute(script).(Executed)
+			if !ok {
+				t.Fatalf("execute=%#v", Execute(script))
+			}
+			last := result.Responses[len(result.Responses)-1]
+			if name == "distinct-satisfiable" {
+				if _, ok := last.(Satisfiable); !ok {
+					t.Fatalf("last=%#v", last)
+				}
+			} else if _, ok := last.(Unsatisfiable); !ok {
+				t.Fatalf("last=%#v", last)
+			}
+		})
+	}
+}
+
+func TestExecuteGroundBitVectorArrayStoreExtensionality(t *testing.T) {
+	for name, assertion := range map[string]string{
+		"commuting": `(not (= (store (store a #x3 #x01) #x4 #x02)
+                         (store (store a #x4 #x02) #x3 #x01)))`,
+		"overwrite": `(not (= (store (store a #x3 #x01) #x3 #x02)
+                        (store a #x3 #x02)))`,
+		"different": `(not (= (store a #x3 #x01) (store a #x3 #x02)))`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			script := `(set-logic QF_AUFBV)
+(declare-const a (Array (_ BitVec 4) (_ BitVec 8)))
+(assert ` + assertion + `)
+(check-sat)`
+			result, ok := Execute(script).(Executed)
+			if !ok {
+				t.Fatalf("execute=%#v", Execute(script))
+			}
+			last := result.Responses[len(result.Responses)-1]
+			if name == "different" {
+				if _, ok := last.(Satisfiable); !ok {
+					t.Fatalf("last=%#v", last)
+				}
+			} else if _, ok := last.(Unsatisfiable); !ok {
+				t.Fatalf("last=%#v", last)
+			}
+		})
+	}
+}
+
+func TestExecuteGroundBitVectorArrayModelValues(t *testing.T) {
+	script := `(set-logic QF_AUFBV)
+(declare-const a (Array (_ BitVec 4) (_ BitVec 8)))
+(declare-const b (Array (_ BitVec 4) (_ BitVec 8)))
+(assert (not (= a b)))
+(check-sat)
+(get-value ((select a #x0) (select b #x0) (select (store a #x3 #xa5) #x3)))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("execute=%#v", Execute(script))
+	}
+	values, ok := result.Responses[len(result.Responses)-1].(ValuesAvailable)
+	if !ok || len(values.Values) != 3 {
+		t.Fatalf("last=%#v", result.Responses[len(result.Responses)-1])
+	}
+	left := values.Values[0].(BitVectorValue).Value
+	right := values.Values[1].(BitVectorValue).Value
+	stored := values.Values[2].(BitVectorValue).Value
+	if smt.EqualBitVectorValue(left, right) {
+		t.Fatalf("missing extensional witness: left=%#v right=%#v", left, right)
+	}
+	if !smt.EqualBitVectorValue(stored, smt.NewBitVectorUint64(8, 0xa5)) {
+		t.Fatalf("stored=%#v", stored)
 	}
 }
 

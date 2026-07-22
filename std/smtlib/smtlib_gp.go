@@ -916,6 +916,14 @@ type RationalValue struct {
 
 func (RationalValue) isValue() {}
 
+//goplus:variant (Value) BitVectorValue(Expression SExpr, Value smt.BitVectorValue)
+type BitVectorValue struct {
+	Expression SExpr
+	Value      smt.BitVectorValue
+}
+
+func (BitVectorValue) isValue() {}
+
 //goplus:variant (Value) UnavailableValue(Expression SExpr, Reason string)
 type UnavailableValue struct {
 	Expression SExpr
@@ -930,6 +938,7 @@ type ValueCases[R any] struct {
 	IntegerValue          func(Expression SExpr, Value int64) R
 	ArbitraryIntegerValue func(Expression SExpr, Value smt.IntegerValue) R
 	RationalValue         func(Expression SExpr, Value smt.Rational) R
+	BitVectorValue        func(Expression SExpr, Value smt.BitVectorValue) R
 	UnavailableValue      func(Expression SExpr, Reason string) R
 }
 
@@ -944,6 +953,8 @@ func ValueFold[R any](v Value, cs ValueCases[R]) R {
 		return cs.ArbitraryIntegerValue(m.Expression, m.Value)
 	case RationalValue:
 		return cs.RationalValue(m.Expression, m.Value)
+	case BitVectorValue:
+		return cs.BitVectorValue(m.Expression, m.Value)
 	case UnavailableValue:
 		return cs.UnavailableValue(m.Expression, m.Reason)
 	default:
@@ -958,6 +969,7 @@ type ValueEqOverrides struct {
 	IntegerValue          func(x, y IntegerValue) (eq, handled bool)
 	ArbitraryIntegerValue func(x, y ArbitraryIntegerValue) (eq, handled bool)
 	RationalValue         func(x, y RationalValue) (eq, handled bool)
+	BitVectorValue        func(x, y BitVectorValue) (eq, handled bool)
 	UnavailableValue      func(x, y UnavailableValue) (eq, handled bool)
 }
 
@@ -1025,6 +1037,23 @@ func ValueEqualWith(a, b Value, ov ValueEqOverrides) bool {
 		}
 		if ov.RationalValue != nil {
 			if eq, handled := ov.RationalValue(x, y); handled {
+				return eq
+			}
+		}
+		if !SExprEqual(x.Expression, y.Expression) {
+			return false
+		}
+		if x.Value != y.Value {
+			return false
+		}
+		return true
+	case BitVectorValue:
+		y, ok := any(b).(BitVectorValue)
+		if !ok {
+			return false
+		}
+		if ov.BitVectorValue != nil {
+			if eq, handled := ov.BitVectorValue(x, y); handled {
 				return eq
 			}
 		}

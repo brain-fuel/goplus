@@ -54,6 +54,7 @@ type Value enum {
 	IntegerValue(Expression SExpr, Value int64)
 	ArbitraryIntegerValue(Expression SExpr, Value smt.IntegerValue)
 	RationalValue(Expression SExpr, Value smt.Rational)
+	BitVectorValue(Expression SExpr, Value smt.BitVectorValue)
 	UnavailableValue(Expression SExpr, Reason string)
 }
 

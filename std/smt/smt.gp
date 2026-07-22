@@ -150,7 +150,7 @@ type Solver[c nat, d nat] enum {
 //goplus:derive off
 //goplus:repr transparent
 type Model[c nat] enum {
-	modelValue(ContextID int, Booleans booleanModel, Integers integerModel, Reals rationalModel, BitVectors bitVectorModel, Arrays *integerArrayModel) Model[c]
+	modelValue(ContextID int, Booleans booleanModel, Integers integerModel, Reals rationalModel, BitVectors bitVectorModel, Arrays *integerArrayModel, BitVectorArrays *bitVectorArrayModel) Model[c]
 }
 
 //goplus:derive off
@@ -501,7 +501,7 @@ func CheckAssuming(0 c nat, 0 d nat, solver Solver[c, d], assumptions ...Term[Bo
 		if depth < 0 { panic("smt: invalid depth") }
 		status, booleans, integers, reals, bitVectors, core, reason := state.checkAssuming(assumptions)
 		switch status {
-		case checkSat: return AssumptionsSatisfiable(modelValue(context, booleans, integers, reals, bitVectors, nil))
+		case checkSat: return AssumptionsSatisfiable(modelValue(context, booleans, integers, reals, bitVectors, nil, nil))
 		case checkUnsat: return AssumptionsUnsatisfiable(proofValue(context, len(state.assertions)), core)
 		default: return AssumptionsUnknown(proofValue(context, len(state.assertions)), reason)
 		}
@@ -509,29 +509,33 @@ func CheckAssuming(0 c nat, 0 d nat, solver Solver[c, d], assumptions ...Term[Bo
 }
 
 func BoolValue(0 c nat, model Model[c], term Term[BoolSort]) (bool, bool) {
-	match model { case modelValue(_, booleans, integers, reals, _, _): return evaluateBool(term, booleans, integers, reals) }
+	match model { case modelValue(_, booleans, integers, reals, _, _, _): return evaluateBool(term, booleans, integers, reals) }
 }
 
 func IntValue(0 c nat, model Model[c], term Term[IntSort]) (int64, bool) {
-	match model { case modelValue(_, booleans, integers, reals, _, _): return evaluateInt(term, booleans, integers, reals) }
+	match model { case modelValue(_, booleans, integers, reals, _, _, _): return evaluateInt(term, booleans, integers, reals) }
 }
 
 func ExactIntValue(0 c nat, model Model[c], term Term[IntSort]) (IntegerValue, bool) {
-	match model { case modelValue(_, booleans, integers, reals, bitVectors, _): return evaluateIntegerWithBitVectors(term, booleans, integers, reals, bitVectors) }
+	match model { case modelValue(_, booleans, integers, reals, bitVectors, _, _): return evaluateIntegerWithBitVectors(term, booleans, integers, reals, bitVectors) }
 }
 
 func IntegerModelValue(0 c nat, model Model[c], term Term[IntSort]) (IntegerValue, bool) {
-	match model { case modelValue(_, booleans, integers, reals, bitVectors, arrays): return evaluateIntegerModelTerm(term, booleans, integers, reals, bitVectors, arrays) }
+	match model { case modelValue(_, booleans, integers, reals, bitVectors, arrays, _): return evaluateIntegerModelTerm(term, booleans, integers, reals, bitVectors, arrays) }
 }
 
 func RealValue(0 c nat, model Model[c], term Term[RealSort]) (Rational, bool) {
-	match model { case modelValue(_, booleans, integers, reals, _, _): return evaluateReal(term, booleans, integers, reals) }
+	match model { case modelValue(_, booleans, integers, reals, _, _, _): return evaluateReal(term, booleans, integers, reals) }
 }
 
 func BitVecModelValue(0 c nat, 0 width nat, model Model[c], term Term[BitVecSort[width]]) (BitVectorValue, bool) {
-	match model { case modelValue(_, _, integers, _, bitVectors, _): return evaluateBitVector(term, bitVectors, integers) }
+	match model { case modelValue(_, _, integers, _, bitVectors, _, arrays): return evaluateBitVectorModelTerm(term, bitVectors, integers, arrays) }
 }
 
 func IntegerArrayValue(0 c nat, model Model[c], array Term[ArraySort[IntSort, IntSort]], index IntegerValue) (IntegerValue, bool) {
-	match model { case modelValue(_, _, integers, _, _, arrays): return evaluateIntegerArray(array, index, integers, arrays) }
+	match model { case modelValue(_, _, integers, _, _, arrays, _): return evaluateIntegerArray(array, index, integers, arrays) }
+}
+
+func BitVectorArrayValue(0 c nat, 0 indexWidth nat, 0 elementWidth nat, model Model[c], array Term[ArraySort[BitVecSort[indexWidth], BitVecSort[elementWidth]]], index BitVectorValue) (BitVectorValue, bool) {
+	match model { case modelValue(_, _, _, _, _, _, arrays): return evaluateBitVectorArray(array, index, arrays) }
 }

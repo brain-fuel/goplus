@@ -1495,6 +1495,27 @@ func TestGroundBitVectorArrayCompactSymbolicIndex(t *testing.T) {
 	}
 }
 
+func TestGroundBitVectorArrayExtensionalModel(t *testing.T) {
+	left := BitVectorArrayConst(4, 8, 1, "left")
+	right := BitVectorArrayConst(4, 8, 2, "right")
+	solver := Assert(1, New(), Not{Value: Equal{Left: left, Right: right}})
+	result, ok := Check(solver).(Satisfiable)
+	if !ok {
+		t.Fatalf("result=%#v", Check(solver))
+	}
+	index := NewBitVectorUint64(4, 0)
+	leftValue, leftOK := BitVectorArrayValue(result.Value, left, index)
+	rightValue, rightOK := BitVectorArrayValue(result.Value, right, index)
+	if !leftOK || !rightOK || EqualBitVectorValue(leftValue, rightValue) {
+		t.Fatalf("left=%#v/%v right=%#v/%v", leftValue, leftOK, rightValue, rightOK)
+	}
+	stored := Store(left, BitVectorTerm(NewBitVectorUint64(4, 3)), BitVectorTerm(NewBitVectorUint64(8, 0xa5)))
+	storedValue, storedOK := BitVectorArrayValue(result.Value, stored, NewBitVectorUint64(4, 3))
+	if !storedOK || !EqualBitVectorValue(storedValue, NewBitVectorUint64(8, 0xa5)) {
+		t.Fatalf("stored=%#v/%v", storedValue, storedOK)
+	}
+}
+
 func BenchmarkGroundEUFCold(b *testing.B) {
 	a := UninterpretedConstant(1, 1, "a")
 	c := UninterpretedConstant(1, 2, "b")
