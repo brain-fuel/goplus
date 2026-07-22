@@ -88,6 +88,28 @@ func (r *fileResolver) indexDependentVariables() {
 		}
 		return true
 	})
+	// go/types sees only erased representations, so it cannot reject an
+	// explicitly annotated dependent binding whose result index differs. Audit
+	// those declarations while both the authored type and call witness remain.
+	ast.Inspect(r.file, func(node ast.Node) bool {
+		spec, ok := node.(*ast.ValueSpec)
+		if !ok || spec.Type == nil || len(spec.Names) != len(spec.Values) {
+			return true
+		}
+		expected := r.text(spec.Type.Pos(), spec.Type.End())
+		for index, value := range spec.Values {
+			call, ok := value.(*ast.CallExpr)
+			if !ok {
+				continue
+			}
+			_, actual, found := r.dependentCallResult(call)
+			if !found || dependentTypeTextsEqual(expected, actual, r.reg.TotalDefs()) {
+				continue
+			}
+			r.errorf(value.Pos(), "dependent index mismatch in binding %s: declared %s, got %s", spec.Names[index].Name, expected, actual)
+		}
+		return true
+	})
 }
 
 func (r *fileResolver) dependentCallResult(call *ast.CallExpr) (string, string, bool) {
@@ -99,6 +121,7 @@ func (r *fileResolver) dependentCallResult(call *ast.CallExpr) (string, string, 
 	if !ok {
 		return r.dependentConstructorResult(call)
 	}
+	d = r.expandVariadicDependentCall(call, d)
 	aligned, full, ok := alignDependentCallArgs(call.Args, d)
 	if !ok || d.Result == "" {
 		return "", "", false
@@ -344,6 +367,50 @@ func alignDependentCallArgs(args []ast.Expr, d *registry.DepFn) (aligned []ast.E
 	return aligned, false, true
 }
 
+// expandVariadicDependentCall gives each variadic runtime argument its own
+// authored parameter slot. This lets the ordinary dependent checker infer and
+// compare a shared index across calls such as And(a, b, c), while preserving
+// the single marker representation `values ...BoolExpr[n]`.
+func (r *fileResolver) expandVariadicDependentCall(call *ast.CallExpr, d *registry.DepFn) *registry.DepFn {
+	if len(d.Params) == 0 || !strings.HasPrefix(strings.TrimSpace(d.Params[len(d.Params)-1].Type), "...") {
+		return d
+	}
+	explicitDropped := true
+	for _, position := range d.Dropped {
+		if position >= len(call.Args) || !r.explicitNaturalArgument(call.Args[position]) {
+			explicitDropped = false
+			break
+		}
+	}
+	runtimeCount := len(call.Args)
+	if explicitDropped {
+		runtimeCount -= len(d.Dropped)
+	}
+	fixedRuntime := len(d.Params) - 1 - len(d.Dropped)
+	variadicCount := runtimeCount - fixedRuntime
+	if variadicCount < 0 {
+		return d
+	}
+	clone := *d
+	clone.Params = append([]registry.DepParam(nil), d.Params[:len(d.Params)-1]...)
+	last := d.Params[len(d.Params)-1]
+	last.Type = strings.TrimPrefix(strings.TrimSpace(last.Type), "...")
+	for i := 0; i < variadicCount; i++ {
+		clone.Params = append(clone.Params, last)
+	}
+	clone.Dropped = append([]int(nil), d.Dropped...)
+	return &clone
+}
+
+func (r *fileResolver) explicitNaturalArgument(argument ast.Expr) bool {
+	typeOf := r.pkg.TypesInfo.TypeOf(argument)
+	if typeOf == nil {
+		return pureIndexArg(argument)
+	}
+	basic, ok := types.Unalias(typeOf).(*types.Basic)
+	return ok && basic.Info()&types.IsInteger != 0
+}
+
 // depCallCandidate drops erased arguments from one call.
 func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 	if r.dependentBlocked[call] {
@@ -357,6 +424,7 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 	if !ok {
 		return
 	}
+	d = r.expandVariadicDependentCall(call, d)
 	aligned, full, shapeOK := alignDependentCallArgs(call.Args, d)
 	if !shapeOK {
 		return
@@ -532,6 +600,34 @@ func (r *fileResolver) validateDependentIndexedArgs(call *ast.CallExpr, d *regis
 			}
 		}
 	}
+	// A natural index can occur below an ordinary type parameter, for example
+	// Term[UninterpretedSort[domain]]. The outer Term is not itself indexed,
+	// so the direct index-position audit below cannot see this fact. Once the
+	// omitted witnesses have been inferred, compare these nested dependent
+	// instantiations structurally as well.
+	for i, p := range d.Params {
+		if i >= len(args) || args[i] == nil || !nestedDependentType(p.Type, variables) {
+			continue
+		}
+		expected, err := substTypeTextLite(p.Type, outer)
+		if err != nil {
+			continue
+		}
+		actual := ""
+		switch argument := args[i].(type) {
+		case *ast.CallExpr:
+			_, actual, _ = r.dependentCallResult(argument)
+		case *ast.Ident:
+			if known, found := r.dependentIdentType(argument); found {
+				actual = known.typeText
+			}
+		}
+		if actual == "" || dependentTypeTextsEqual(expected, actual, r.reg.TotalDefs()) {
+			continue
+		}
+		r.errorf(args[i].Pos(), "dependent index mismatch for argument %d to %s: requires %s, got %s", i+1, d.Name, expected, actual)
+		valid = false
+	}
 	for i, p := range d.Params {
 		if i >= len(args) {
 			break
@@ -663,6 +759,41 @@ func (r *fileResolver) validateDependentIndexedArgs(call *ast.CallExpr, d *regis
 		}
 	}
 	return valid
+}
+
+func dependentTypeTextsEqual(left, right string, totals core.Defs) bool {
+	leftBase, leftArguments := instantiationBase(left)
+	rightBase, rightArguments := instantiationBase(right)
+	if leftBase != "" || rightBase != "" {
+		if leftBase == "" || leftBase != rightBase || len(leftArguments) != len(rightArguments) {
+			return false
+		}
+		for index := range leftArguments {
+			if !dependentTypeTextsEqual(leftArguments[index], rightArguments[index], totals) {
+				return false
+			}
+		}
+		return true
+	}
+	if equal, err := core.DecideEqTexts(left, right, nil, totals, nil); err == nil && equal {
+		return true
+	}
+	return strings.TrimSpace(left) == strings.TrimSpace(right)
+}
+
+func nestedDependentType(typeText string, variables map[string]bool) bool {
+	_, arguments := instantiationBase(typeText)
+	for _, argument := range arguments {
+		if nestedBase, _ := instantiationBase(argument); nestedBase == "" {
+			continue
+		}
+		for variable := range variables {
+			if containsTypeIdentifier(argument, variable) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (r *fileResolver) blockDependentOrigin(origin *ast.CallExpr) {

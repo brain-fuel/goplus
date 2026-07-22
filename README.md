@@ -11,6 +11,30 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.28.0 — Solver-Driven Representation and Existential Foundations
+
+Go+ now supports opt-in `//goplus:repr transparent` lowering for monomorphic
+single-variant enums. Indexed wrappers retain dependent markers and exhaustive
+match semantics while generated Go uses a concrete alias, eliminating
+interface boxing. True sum types and existential variants cannot select this
+representation.
+
+Unbounded existential variant parameters may now use `any`; authored fields
+retain their shared hidden-type relationship for constructor checking while
+generated Go erases compositions containing that existential. Variadic indexed
+arguments participate fully in inferred-index consistency and result recovery.
+Natural indices nested below ordinary generic arguments are also preserved and
+checked across package boundaries; a value such as
+`Term[UninterpretedSort[3]]` cannot satisfy a parameter requiring
+`Term[UninterpretedSort[1]]` after outer-type erasure.
+Cross-package GADT matching now evaluates fixed result types in the enum's
+package even when the consumer spells them through an import qualifier. This
+lets compatibility packages exhaustively recognize standard-library term
+variants without weakening GADT reachability checks.
+Together these features support `std/smt`'s sorted terms, context-indexed
+immutable solvers, models, proofs, assumptions, unsat cores, adaptive Boolean
+solving, exact integer difference logic, and ground congruence closure.
+
 ## v0.27.0 — Grammar-Indexed Parser Foundations
 
 Go+ now validates omitted natural witnesses against every indexed runtime

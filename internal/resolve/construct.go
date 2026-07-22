@@ -335,6 +335,11 @@ func (r *fileResolver) finishCtor(use *ctorUse, targs []string) {
 		r.errorf(use.call.Ellipsis, "constructor arguments cannot be spread with ...")
 		return
 	}
+	if ready, valid := r.validateExistentialArgs(use); !ready {
+		return
+	} else if !valid {
+		return
+	}
 	var phIdx []int
 	for i, a := range use.call.Args {
 		if id, isID := a.(*ast.Ident); isID && id.Name == "_" {
@@ -350,6 +355,39 @@ func (r *fileResolver) finishCtor(use *ctorUse, targs []string) {
 		argTexts[i] = r.text(a.Pos(), a.End())
 	}
 	r.emitCtor(use, targs, argTexts)
+}
+
+// validateExistentialArgs preserves the authored relationship between fields
+// that erase to interface bounds (or any) in generated Go. Go cannot express
+// a constructor-local hidden type parameter, but Go+ can still infer it from
+// each argument and reject inconsistent instantiations before lowering.
+func (r *fileResolver) validateExistentialArgs(use *ctorUse) (ready, valid bool) {
+	v := use.variant
+	if len(v.Exist) == 0 || use.call == nil {
+		return true, true
+	}
+	index := make(map[string]int, len(v.Exist))
+	for i, parameter := range v.Exist {
+		index[parameter.Name] = i
+	}
+	bound := make([]types.Type, len(v.Exist))
+	for i, parameter := range v.Params {
+		decl, err := parser.ParseExpr(parameter.RawType)
+		if err != nil {
+			return true, true
+		}
+		argument := use.call.Args[i]
+		text := r.text(argument.Pos(), argument.End())
+		value, err := types.Eval(r.pkg.Fset, r.pkg.Types, use.call.Pos(), text)
+		if err != nil || value.Type == nil || value.Type == types.Typ[types.Invalid] {
+			return false, false
+		}
+		if !r.unifyDecl(decl, types.Default(value.Type), index, bound) {
+			r.errorf(argument.Pos(), "existential type mismatch for argument %d to %s: fields sharing a hidden type parameter must have the same instantiation", i+1, v.Name)
+			return true, false
+		}
+	}
+	return true, true
 }
 
 // emitCtorPartial lowers a constructor call with placeholder arguments to

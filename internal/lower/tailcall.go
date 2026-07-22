@@ -1,6 +1,7 @@
 package lower
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -23,6 +24,12 @@ type TailError struct {
 // uniformly inside authored Go control flow and lowered constructs such as
 // match.
 func LowerTailCalls(filename string, src []byte) ([]byte, []TailError) {
+	// Most Go+ files do not use tail recursion. Avoid feeding otherwise valid
+	// Go+ syntax (notably nested dependent type applications) to go/parser
+	// unless a declaration can actually require this lowering pass.
+	if !bytes.Contains(src, []byte(TailPrefix)) && !bytes.Contains(src, []byte("//goplus:total ")) {
+		return src, nil
+	}
 	fset := token.NewFileSet()
 	// Keep parser object resolution here solely to distinguish the predeclared
 	// panic from a shadowing user symbol in the fallthrough proof.

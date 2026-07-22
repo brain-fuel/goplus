@@ -196,6 +196,9 @@ func replaceChildIdents(root ast.Node, repl map[string]ast.Expr, skip map[*ast.I
 		}
 		if id, ok := v.Interface().(*ast.Ident); ok && !skip[id] {
 			if r, hit := repl[id.Name]; hit {
+				if _, compound := r.(*ast.BinaryExpr); compound {
+					r = &ast.ParenExpr{X: r}
+				}
 				v.Set(reflect.ValueOf(r))
 			}
 		}

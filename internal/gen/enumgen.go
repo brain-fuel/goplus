@@ -295,7 +295,7 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table, probe domainPro
 					boundText := string(src.Src[src.Offset(field.Type.Pos()):src.Offset(field.Type.End())])
 					for _, n := range field.Names {
 						name := n.Name
-						if boundText == "any" || strings.Contains(boundText, "|") || strings.Contains(boundText, "~") {
+						if strings.Contains(boundText, "|") || strings.Contains(boundText, "~") {
 							errAt(n.Pos(), "existential type parameter %s of variant %s must have a plain interface bound: Go cannot express a match arm generic in a hidden type; give %s an interface bound or store the composition instead",
 								name, vName, name)
 							ok = false
@@ -407,7 +407,19 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table, probe domainPro
 							ok = false
 						}
 					}
-					if len(existSubst) > 0 {
+					eraseWholeField := false
+					for name, bound := range existSubst {
+						if bound == "any" {
+							for _, occurrence := range tparamOccurrences(field.Type) {
+								if occurrence == name {
+									eraseWholeField = true
+								}
+							}
+						}
+					}
+					if eraseWholeField {
+						erased = "any"
+					} else if len(existSubst) > 0 {
 						var eerr error
 						erased, eerr = substituteTypeText(erased, existSubst)
 						if eerr != nil {
@@ -462,6 +474,13 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table, probe domainPro
 		if !ok {
 			continue
 		}
+		if transparentEnumRequested(e) {
+			if len(spec.Variants) != 1 || len(spec.TParamNames) != 0 || len(spec.Variants[0].TParamNames) != 0 {
+				errAt(e.Spec.Name.Pos(), "//goplus:repr transparent requires exactly one variant and no surviving or existential type parameters")
+				continue
+			}
+			spec.Transparent = true
+		}
 		if enumNeedsErasedView(model) {
 			spec.ViewName = naming.ErasedViewName(enumName)
 			spec.ViewMethod = naming.ErasedViewMethodName(enumName)
@@ -483,6 +502,18 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table, probe domainPro
 		plan.model[e] = model
 	}
 	return plan, diags
+}
+
+func transparentEnumRequested(e *syntax.EnumDecl) bool {
+	if e.Gen == nil || e.Gen.Doc == nil {
+		return false
+	}
+	for _, comment := range e.Gen.Doc.List {
+		if strings.TrimSpace(comment.Text) == "//goplus:repr transparent" {
+			return true
+		}
+	}
+	return false
 }
 
 // enumNeedsErasedView reports whether generic type arguments cannot always be

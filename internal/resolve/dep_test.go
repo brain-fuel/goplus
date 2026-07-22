@@ -27,7 +27,21 @@ func TestSubstituteRecursiveIndexIsSimultaneous(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "Vec[int, n+1+1]" {
+	if got != "Vec[int, (n+1)+1]" {
+		t.Fatalf("substitution = %q", got)
+	}
+}
+
+func TestSubstituteCompoundIndexPreservesPrecedence(t *testing.T) {
+	got, err := substTypeTextLite("BitVecExpr[c, width*count]", map[string]string{
+		"c":     "7",
+		"width": "7-4+1",
+		"count": "2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "BitVecExpr[7, (7-4+1)*2]" {
 		t.Fatalf("substitution = %q", got)
 	}
 }

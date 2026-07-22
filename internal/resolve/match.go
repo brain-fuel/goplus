@@ -6,6 +6,8 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"path"
+	"strconv"
 	"strings"
 
 	"goforge.dev/goplus/internal/lower"
@@ -62,8 +64,13 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 	}
 	named, _ := asNamed(tv.Type)
 	var e *registry.Enum
+	if alias, ok := tv.Type.(*types.Alias); ok && alias.Obj().Pkg() != nil {
+		e, _ = r.reg.LookupEnum(alias.Obj().Pkg().Path(), alias.Obj().Name())
+	}
 	if named != nil && named.Obj().Pkg() != nil {
-		e, _ = r.reg.LookupEnum(named.Obj().Pkg().Path(), named.Obj().Name())
+		if e == nil {
+			e, _ = r.reg.LookupEnum(named.Obj().Pkg().Path(), named.Obj().Name())
+		}
 	}
 	if e == nil {
 		if r.report {
@@ -540,7 +547,7 @@ func (r *fileResolver) variantPossible(e *registry.Enum, v *registry.EnumVariant
 	}
 	groundEq := func(a, b string) bool {
 		ga := r.evalInPkg(e.PkgPath, a)
-		gb := r.evalInPkg(e.PkgPath, b)
+		gb := r.evalInPkg(e.PkgPath, r.enumLocalTypeText(e.PkgPath, b))
 		return ga != nil && gb != nil && types.Identical(ga, gb)
 	}
 	argWild := map[string]bool{}
@@ -559,6 +566,23 @@ func (r *fileResolver) variantPossible(e *registry.Enum, v *registry.EnumVariant
 		}
 	}
 	return true
+}
+
+func (r *fileResolver) enumLocalTypeText(pkgPath, text string) string {
+	for _, spec := range r.file.Imports {
+		importPath, err := strconv.Unquote(spec.Path.Value)
+		if err != nil || importPath != pkgPath {
+			continue
+		}
+		alias := path.Base(importPath)
+		if spec.Name != nil {
+			alias = spec.Name.Name
+		}
+		if alias != "." && alias != "_" {
+			return strings.ReplaceAll(text, alias+".", "")
+		}
+	}
+	return text
 }
 
 // collectTypeParams gathers type-parameter names occurring anywhere in a

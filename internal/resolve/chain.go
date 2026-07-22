@@ -339,6 +339,9 @@ func substTypeTextLite(text string, subst map[string]string) (string, error) {
 		}
 		if id, ok := v.Interface().(*ast.Ident); ok && !skip[id] {
 			if re, hit := repl[id.Name]; hit {
+				if _, compound := re.(*ast.BinaryExpr); compound {
+					re = &ast.ParenExpr{X: re}
+				}
 				v.Set(reflect.ValueOf(re))
 			}
 		}
@@ -416,6 +419,14 @@ func substTypeIdentifiers(text string, subst map[string]string) string {
 		to, replace := subst[name]
 		// Selector fields and bare callees are vocabulary, not variables.
 		if replace && !((prev >= 0 && runes[prev] == '.') || (next < len(runes) && runes[next] == '(')) {
+			if replacement, err := parser.ParseExpr(to); err == nil {
+				if _, compound := replacement.(*ast.BinaryExpr); compound {
+					out.WriteByte('(')
+					out.WriteString(to)
+					out.WriteByte(')')
+					continue
+				}
+			}
 			out.WriteString(to)
 		} else {
 			out.WriteString(name)

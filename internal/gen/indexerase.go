@@ -147,6 +147,19 @@ func eraseOrdinaryIndexUses(f *sourceFile, isIndexed registry.IndexArity) []lowe
 			inType(x.Type)
 		case *ast.TypeAssertExpr:
 			inType(x.Type)
+		case *ast.CallExpr:
+			// Explicit generic call arguments are type positions too.  Walk
+			// their contents so imported indexed enums nested in an ordinary
+			// generic type (for example ArraySort[BitVecSort[4], ...]) lose
+			// their value-level indices before the shadow Go is parsed.
+			switch fun := x.Fun.(type) {
+			case *ast.IndexExpr:
+				inType(fun.Index)
+			case *ast.IndexListExpr:
+				for _, arg := range fun.Indices {
+					inType(arg)
+				}
+			}
 		}
 		return true
 	})

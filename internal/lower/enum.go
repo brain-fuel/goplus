@@ -22,6 +22,7 @@ type EnumSpec struct {
 	EqualText     string // derived Equal/EqualWith/EqOverrides (v0.11.0); "" = none
 	ViewName      string // erased GADT view helper; empty when every case head is spellable
 	ViewMethod    string // sealed per-variant payload method
+	Transparent   bool   // concrete alias representation for one monomorphic variant
 }
 
 // EnumVariantSpec is one variant ready to render.
@@ -64,9 +65,13 @@ func EnumEdits(f *syntax.File, e *syntax.EnumDecl, spec *EnumSpec) []Edit {
 	edits = append(edits, Edit{Start: markerAt, End: markerAt, New: spec.EnumMarker + "\n"})
 
 	var b strings.Builder
-	// Sealed interface.
-	fmt.Fprintf(&b, "type %s%s interface{ %s(%s) }\n",
-		spec.Name, bracket(spec.TParamsSrc), spec.MarkerName, strings.Join(spec.TParamNames, ", "))
+	if spec.Transparent {
+		fmt.Fprintf(&b, "type %s = %s\n", spec.Name, spec.Variants[0].TypeName)
+	} else {
+		// Sealed interface.
+		fmt.Fprintf(&b, "type %s%s interface{ %s(%s) }\n",
+			spec.Name, bracket(spec.TParamsSrc), spec.MarkerName, strings.Join(spec.TParamNames, ", "))
+	}
 
 	for _, v := range spec.Variants {
 		b.WriteString("\n")

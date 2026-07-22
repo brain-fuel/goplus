@@ -1,10 +1,12 @@
 Feature: Bounded existential variants
   A variant may bind existential type variables CONSTRAINED by an
-  interface: `Packed[A fmt.Stringer, B error](x A, y A, e B)`. Erasure
+  interface, or `any` when a fully erased field is intentional:
+  `Packed[A fmt.Stringer, B error](x A, y A, e B)`. Erasure
   happens at the boundary — struct fields, lowered constructors, and
   match binders are typed at the bound; two fields sharing an existential
-  variable lose the same-dynamic-type fact. An unbounded variable is a
-  compile error: Go cannot express a match arm generic in a hidden type.
+  variable lose the same-dynamic-type fact. An `any` existential erases every
+  field containing it to `any`, because Go cannot express the hidden generic
+  relationship; the authored marker retains it for Go+ checking.
   Existential variables must not appear in the result type and must be
   used by at least one field.
 
@@ -72,7 +74,7 @@ Feature: Bounded existential variants
       import "fmt"
 
       type Row[T any] enum {
-      	A1[X any](v X)
+        A1[X interface{ ~int }](v X)
       	A2[X fmt.Stringer](v X) Row[X]
       	A3[X fmt.Stringer](v int)
       }
