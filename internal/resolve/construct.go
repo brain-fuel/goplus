@@ -371,12 +371,33 @@ func (r *fileResolver) validateExistentialArgs(use *ctorUse) (ready, valid bool)
 		index[parameter.Name] = i
 	}
 	bound := make([]types.Type, len(v.Exist))
+	dependentVariables := make(map[string]bool, len(v.Exist))
+	for _, parameter := range v.Exist {
+		dependentVariables[parameter.Name] = true
+	}
+	dependentBound := map[string]string{}
 	for i, parameter := range v.Params {
 		decl, err := parser.ParseExpr(parameter.RawType)
 		if err != nil {
 			return true, true
 		}
 		argument := use.call.Args[i]
+		actualDependent := ""
+		switch value := argument.(type) {
+		case *ast.CallExpr:
+			_, actualDependent, _ = r.dependentCallResult(value)
+		case *ast.Ident:
+			if known, found := r.dependentIdentType(value); found {
+				actualDependent = known.typeText
+			}
+		}
+		if actualDependent != "" {
+			if !unifyDependentInstantiation(parameter.RawType, actualDependent, dependentVariables, dependentBound) {
+				r.errorf(argument.Pos(), "existential type mismatch for argument %d to %s: fields sharing a hidden type parameter must have the same instantiation (requires %s, got %s)", i+1, v.Name, parameter.RawType, actualDependent)
+				return true, false
+			}
+			continue
+		}
 		text := r.text(argument.Pos(), argument.End())
 		value, err := types.Eval(r.pkg.Fset, r.pkg.Types, use.call.Pos(), text)
 		if err != nil || value.Type == nil || value.Type == types.Typ[types.Invalid] {

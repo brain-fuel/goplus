@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/printer"
 	"go/token"
+	"strings"
 
 	"goforge.dev/goplus/internal/registry"
 )
@@ -28,9 +29,39 @@ func unifyText(patText, argText string, tparams map[string]bool, bind map[string
 	pat, perr := parser.ParseExpr(patText)
 	arg, aerr := parser.ParseExpr(argText)
 	if perr != nil || aerr != nil {
-		return patText == argText
+		return unifyUnparsedTypeText(patText, argText, tparams, bind)
 	}
 	return unifyExprs(pat, arg, tparams, bind)
+}
+
+// unifyUnparsedTypeText preserves dependent natural indices which are legal
+// Go+ type arguments but not legal Go type arguments. In particular, the Go
+// parser rejects the second literal in DatatypeSort[1, 3] as a type, even
+// though both positions are value-level nat indices in Go+.
+func unifyUnparsedTypeText(pattern, actual string, tparams map[string]bool, bind map[string]string) bool {
+	pattern = strings.TrimSpace(pattern)
+	actual = strings.TrimSpace(actual)
+	if tparams[pattern] && token.IsIdentifier(pattern) {
+		if previous, found := bind[pattern]; found {
+			return previous == actual
+		}
+		bind[pattern] = actual
+		return true
+	}
+	patternBase, patternArgs := instantiationBase(pattern)
+	actualBase, actualArgs := instantiationBase(actual)
+	if patternBase != "" || actualBase != "" {
+		if patternBase == "" || actualBase == "" || patternBase != actualBase || len(patternArgs) != len(actualArgs) {
+			return false
+		}
+		for index := range patternArgs {
+			if !unifyUnparsedTypeText(patternArgs[index], actualArgs[index], tparams, bind) {
+				return false
+			}
+		}
+		return true
+	}
+	return strings.Join(strings.Fields(pattern), "") == strings.Join(strings.Fields(actual), "")
 }
 
 func unifyExprs(pat, arg ast.Expr, tparams map[string]bool, bind map[string]string) bool {

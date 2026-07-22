@@ -31,3 +31,19 @@ func TestUnifyTextBindsCompositeSubexpression(t *testing.T) {
 		t.Fatalf("T = %q", got)
 	}
 }
+
+func TestUnifyDependentInstantiationBindsMultiIndexNestedType(t *testing.T) {
+	bind := map[string]string{}
+	if !unifyText("Term[X]", "Term[DatatypeSort[1, 3]]", map[string]bool{"X": true}, bind) {
+		pat, perr := parser.ParseExpr("Term[X]")
+		arg, aerr := parser.ParseExpr("Term[DatatypeSort[1, 3]]")
+		t.Fatalf("direct nested multi-index unification failed: %T/%v vs %T/%v", pat, perr, arg, aerr)
+	}
+	bind = map[string]string{}
+	if !unifyDependentInstantiation("Term[X]", "Term[DatatypeSort[1, 3]]", map[string]bool{"X": true}, bind) {
+		t.Fatal("nested multi-index unification failed")
+	}
+	if got := bind["X"]; got != "DatatypeSort[1, 3]" {
+		t.Fatalf("X = %q", got)
+	}
+}
