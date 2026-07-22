@@ -232,7 +232,7 @@ semantic forcing cases above some larger repositories.
   recorded five-run parser gate the rewrite is at least 2.26x faster and uses
   7 rather than 27 allocations (74.1% fewer).
 
-### `/goals/09-resty` - `go-resty/resty` -> typed GoForge HTTP client
+### `/goals/09-resty` - `go-resty/resty` -> typed GoForge HTTP client (complete)
 
 - **Why ninth:** Roughly 11.7k stars and more than 20k reported dependents. It can
   consolidate `std/http`, `std/retry`, streaming, and effect-boundary design.
@@ -246,6 +246,17 @@ semantic forcing cases above some larger repositories.
 - **Gate:** Pin Resty v2/v3 target explicitly, publish compatibility matrix,
   HTTP conformance and cancellation tests, leak/race tests, retry safety tests,
   and compile-time illegal-state rejection.
+- **Status:** implemented as `goforge.dev/resty`, pinned to Resty v2.17.2 at
+  `b1b3aaa32811319f8180a4b211995a2edf21e2ea`. The Go+-authored core carries
+  method, replayability, and decode-phase indices; quantity-1 request/response
+  transitions; exhaustive outcomes; replay-safe 429/5xx/transport retries; and
+  explicit body transfer. Go+ v0.26.0 adds cross-package inference for omitted
+  natural indices on linear calls. `std/retry` gained shared normalized-attempt,
+  cancellable-wait, and overflow-safe delay primitives. Anvil consumes the
+  released module for ICS URL feeds. Generation, compile rejection,
+  cancellation, body cleanup, allocation, race, vet, and compatibility gates
+  pass. The conservative five-run end-to-end gate is at least 3.56x faster with
+  12 versus 29 allocations, a 58.6% reduction.
 
 ### `/goals/10-participle` - `alecthomas/participle` -> typed parser construction
 
