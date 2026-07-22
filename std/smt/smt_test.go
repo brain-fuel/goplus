@@ -779,6 +779,80 @@ func TestFiniteEnumerationDatatypeColoringDetectsExhaustion(t *testing.T) {
 	}
 }
 
+func TestRecursiveUnaryDatatypeConstructorsSelectorsAndModels(t *testing.T) {
+	zero := DatatypeConstructor(10, 2, 0, "zero")
+	succ := DeclareRecursiveDatatypeConstructor(10, 2, 1, "succ", "pred")
+	one := ApplyRecursiveDatatypeConstructor(succ, zero)
+	two := ApplyRecursiveDatatypeConstructor(succ, one)
+	x := DatatypeConst(10, 2, 1, "x")
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: two},
+		IsRecursiveDatatypeConstructor(succ, x),
+		Equal{Left: SelectRecursiveDatatypeConstructor(succ, x), Right: one},
+	}}
+	result, ok := Check(Assert(1, New(), formula)).(Satisfiable)
+	if !ok {
+		t.Fatalf("result=%T", Check(Assert(1, New(), formula)))
+	}
+	value, found := DatatypeModelValue(10, 2, result.Value, x)
+	if !found || value.ConstructorID != 1 || value.Child == nil || value.Child.ConstructorID != 1 || value.Child.Child == nil || value.Child.Child.ConstructorID != 0 {
+		t.Fatalf("x=(%#v,%v)", value, found)
+	}
+	predecessor, found := DatatypeModelValue(10, 2, result.Value, SelectRecursiveDatatypeConstructor(succ, x))
+	if !found || predecessor.ConstructorID != 1 || predecessor.Child == nil || predecessor.Child.ConstructorID != 0 {
+		t.Fatalf("pred(x)=(%#v,%v)", predecessor, found)
+	}
+}
+
+func TestRecursiveUnaryDatatypeInjectivityAndAcyclicity(t *testing.T) {
+	succ := DeclareRecursiveDatatypeConstructor(11, 2, 1, "succ", "pred")
+	x := DatatypeConst(11, 2, 1, "x")
+	y := DatatypeConst(11, 2, 2, "y")
+	injective := And{Values: []Term[BoolSort]{
+		Equal{Left: ApplyRecursiveDatatypeConstructor(succ, x), Right: ApplyRecursiveDatatypeConstructor(succ, y)},
+		Not{Value: Equal{Left: x, Right: y}},
+	}}
+	if _, ok := Check(Assert(1, New(), injective)).(Unsatisfiable); !ok {
+		t.Fatal("equal recursive constructors must have equal fields")
+	}
+	cycle := Equal{Left: x, Right: ApplyRecursiveDatatypeConstructor(succ, x)}
+	if _, ok := Check(Assert(2, New(), cycle)).(Unsatisfiable); !ok {
+		t.Fatal("recursive datatype values must be finite")
+	}
+}
+
+func TestRecursiveUnaryDatatypeDisequalityMayShareConstructor(t *testing.T) {
+	solver := New()
+	zero := DatatypeConstructor(83, 2, 0, "zero")
+	succ := DeclareRecursiveDatatypeConstructor(83, 2, 1, "succ", "pred")
+	one := ApplyRecursiveDatatypeConstructor(succ, zero)
+	two := ApplyRecursiveDatatypeConstructor(succ, one)
+	three := ApplyRecursiveDatatypeConstructor(succ, two)
+	x := DatatypeConst(83, 2, 1, "x")
+	formula := And{
+		Values: []Term[BoolSort]{
+			Equal{Left: x, Right: ApplyRecursiveDatatypeConstructor(succ, three)},
+			Not{Value: Equal{Left: SelectRecursiveDatatypeConstructor(succ, x), Right: two}},
+		},
+	}
+	if _, ok := Check(Assert(1, solver, formula)).(Satisfiable); !ok {
+		t.Fatalf("different recursive depths with the same outer constructor must remain satisfiable")
+	}
+}
+
+func TestRecursiveUnaryDatatypeRecognizerBuildsWellFoundedModel(t *testing.T) {
+	succ := DeclareRecursiveDatatypeConstructor(84, 2, 1, "succ", "pred")
+	x := DatatypeConst(84, 2, 1, "x")
+	result, ok := Check(Assert(1, New(), IsRecursiveDatatypeConstructor(succ, x))).(Satisfiable)
+	if !ok {
+		t.Fatalf("recursive recognizer result=%#v", Check(Assert(1, New(), IsRecursiveDatatypeConstructor(succ, x))))
+	}
+	value, found := DatatypeModelValue(84, 2, result.Value, x)
+	if !found || value.ConstructorID != 1 || value.ConstructorName != "succ" || value.Child == nil || value.Child.ConstructorID != 0 || value.Child.Child != nil {
+		t.Fatalf("recursive recognizer model=%#v/%v", value, found)
+	}
+}
+
 func TestGroundEUFAllowsNonInjectiveFunctions(t *testing.T) {
 	a := UninterpretedConstant(1, 1, "a")
 	c := UninterpretedConstant(1, 2, "b")

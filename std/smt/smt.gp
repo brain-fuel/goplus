@@ -13,6 +13,12 @@ type RealSort struct{}
 type DatatypeSort[d nat, n nat] enum {
 	datatypeSort() DatatypeSort[d, n]
 }
+// RecursiveDatatypeConstructor is a declaration witness for one unary
+// constructor whose field recursively has the enclosing datatype sort.
+//goplus:derive off
+type RecursiveDatatypeConstructor[d nat, n nat, c nat] enum {
+	recursiveDatatypeConstructorValue(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, SelectorName string) RecursiveDatatypeConstructor[d, n, c]
+}
 //goplus:derive off
 type ArraySort[I any, E any] enum {
 	arraySort() ArraySort[I, E]
@@ -136,6 +142,9 @@ type Term[S any] enum {
 	datatypeSymbol(DatatypeID int, ConstructorCount int, ID int, Name string) Term[S]
 	datatypeConstructor(DatatypeID int, ConstructorCount int, ConstructorID int, Name string) Term[S]
 	datatypeRecognizer(DatatypeID int, ConstructorCount int, ConstructorID int, Value any) Term[BoolSort]
+	datatypeRecursiveRecognizer(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, SelectorName string, Value any) Term[BoolSort]
+	datatypeRecursiveApplication(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, SelectorName string, Value any) Term[S]
+	datatypeRecursiveSelector(DatatypeID int, ConstructorCount int, ConstructorID int, SelectorName string, Value any) Term[S]
 }
 
 type AnyTerm enum {
@@ -216,23 +225,46 @@ func ModInteger(dividend Term[IntSort], divisor IntegerValue) Term[IntSort] {
 	return IntegerMod(dividend, divisor)
 }
 
-// DatatypeConst creates a symbolic value of a finite enumeration datatype.
+// DatatypeConst creates a symbolic value of an algebraic datatype.
 // datatype is its declaration identity; constructors is retained in the sort.
 func DatatypeConst(datatype nat, constructors nat, id int, name string) Term[DatatypeSort[datatype, constructors]] {
-	if constructors == 0 { panic("smt: enumeration datatype requires at least one constructor") }
+	if constructors == 0 { panic("smt: datatype requires at least one constructor") }
 	return Term[DatatypeSort[datatype, constructors]].datatypeSymbol(int(datatype), int(constructors), id, name)
 }
 
 // DatatypeConstructor creates one nullary constructor value. The constructor
 // ordinal is checked at runtime and the datatype/cardinality remain indexed.
 func DatatypeConstructor(datatype nat, constructors nat, constructor nat, name string) Term[DatatypeSort[datatype, constructors]] {
-	if constructors == 0 || constructor >= constructors { panic("smt: enumeration constructor outside datatype cardinality") }
+	if constructors == 0 || constructor >= constructors { panic("smt: datatype constructor outside datatype cardinality") }
 	return Term[DatatypeSort[datatype, constructors]].datatypeConstructor(int(datatype), int(constructors), int(constructor), name)
 }
 
 func IsDatatypeConstructor(datatype nat, constructors nat, constructor nat, value Term[DatatypeSort[datatype, constructors]]) Term[BoolSort] {
-	if constructors == 0 || constructor >= constructors { panic("smt: enumeration recognizer outside datatype cardinality") }
+	if constructors == 0 || constructor >= constructors { panic("smt: datatype recognizer outside datatype cardinality") }
 	return datatypeRecognizer(int(datatype), int(constructors), int(constructor), value)
+}
+
+func DeclareRecursiveDatatypeConstructor(datatype nat, constructors nat, constructor nat, name string, selectorName string) RecursiveDatatypeConstructor[datatype, constructors, constructor] {
+	if constructors < 2 || constructor >= constructors { panic("smt: recursive constructor requires a possible base constructor inside datatype cardinality") }
+	return recursiveDatatypeConstructorValue(int(datatype), int(constructors), int(constructor), name, selectorName)
+}
+
+func ApplyRecursiveDatatypeConstructor(0 datatype nat, 0 constructors nat, 0 constructor nat, declaration RecursiveDatatypeConstructor[datatype, constructors, constructor], value Term[DatatypeSort[datatype, constructors]]) Term[DatatypeSort[datatype, constructors]] {
+	match declaration { case recursiveDatatypeConstructorValue(datatypeID, constructorCount, constructorID, name, selectorName):
+		return Term[DatatypeSort[datatype, constructors]].datatypeRecursiveApplication(datatypeID, constructorCount, constructorID, name, selectorName, value)
+	}
+}
+
+func SelectRecursiveDatatypeConstructor(0 datatype nat, 0 constructors nat, 0 constructor nat, declaration RecursiveDatatypeConstructor[datatype, constructors, constructor], value Term[DatatypeSort[datatype, constructors]]) Term[DatatypeSort[datatype, constructors]] {
+	match declaration { case recursiveDatatypeConstructorValue(datatypeID, constructorCount, constructorID, _, selectorName):
+		return Term[DatatypeSort[datatype, constructors]].datatypeRecursiveSelector(datatypeID, constructorCount, constructorID, selectorName, value)
+	}
+}
+
+func IsRecursiveDatatypeConstructor(0 datatype nat, 0 constructors nat, 0 constructor nat, declaration RecursiveDatatypeConstructor[datatype, constructors, constructor], value Term[DatatypeSort[datatype, constructors]]) Term[BoolSort] {
+	match declaration { case recursiveDatatypeConstructorValue(datatypeID, constructorCount, constructorID, name, selectorName):
+		return datatypeRecursiveRecognizer(datatypeID, constructorCount, constructorID, name, selectorName, value)
+	}
 }
 
 func IntegerVariableID(term Term[IntSort]) (int, bool) {

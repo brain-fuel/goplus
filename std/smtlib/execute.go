@@ -47,6 +47,18 @@ type dynamicDatatypeRecognizer struct {
 	constructorCount int
 	constructorID    int
 	sortCode         int
+	recursive        bool
+	witness          smt.RecursiveDatatypeConstructor
+}
+
+type dynamicRecursiveDatatypeConstructor struct {
+	witness  smt.RecursiveDatatypeConstructor
+	sortCode int
+}
+
+type datatypeConstructorDeclaration struct {
+	name         string
+	selectorName string
 }
 
 type dynamicUnaryFunction struct {
@@ -76,43 +88,47 @@ type dynamicBinaryFunction struct {
 }
 
 type executor struct {
-	solver              smt.Solver
-	checkpoints         []smt.Checkpoint
-	booleans            map[string]smt.Term[smt.BoolSort]
-	integers            map[string]smt.Term[smt.IntSort]
-	reals               map[string]smt.Term[smt.RealSort]
-	bitVectors          map[string]dynamicTerm
-	arrays              map[string]dynamicTerm
-	uninterpreted       map[string]dynamicTerm
-	sorts               map[string]int
-	functions           map[string]dynamicUnaryFunction
-	binaryFunctions     map[string]dynamicBinaryFunction
-	datatypes           map[string]dynamicDatatype
-	datatypeTerms       map[string]dynamicTerm
-	datatypeRecognizers map[string]dynamicDatatypeRecognizer
-	nextSymbol          int
-	nextAssertion       int
-	lastModel           *smt.Model
-	responses           []Response
-	errors              []ExecutionError
+	solver               smt.Solver
+	checkpoints          []smt.Checkpoint
+	booleans             map[string]smt.Term[smt.BoolSort]
+	integers             map[string]smt.Term[smt.IntSort]
+	reals                map[string]smt.Term[smt.RealSort]
+	bitVectors           map[string]dynamicTerm
+	arrays               map[string]dynamicTerm
+	uninterpreted        map[string]dynamicTerm
+	sorts                map[string]int
+	functions            map[string]dynamicUnaryFunction
+	binaryFunctions      map[string]dynamicBinaryFunction
+	datatypes            map[string]dynamicDatatype
+	datatypeTerms        map[string]dynamicTerm
+	datatypeRecognizers  map[string]dynamicDatatypeRecognizer
+	datatypeConstructors map[string]dynamicRecursiveDatatypeConstructor
+	datatypeSelectors    map[string]dynamicRecursiveDatatypeConstructor
+	nextSymbol           int
+	nextAssertion        int
+	lastModel            *smt.Model
+	responses            []Response
+	errors               []ExecutionError
 }
 
 func executeCommands(commands []Command) ([]Response, []ExecutionError) {
 	executor := executor{
-		solver:              smt.New(),
-		booleans:            make(map[string]smt.Term[smt.BoolSort]),
-		integers:            make(map[string]smt.Term[smt.IntSort]),
-		reals:               make(map[string]smt.Term[smt.RealSort]),
-		bitVectors:          make(map[string]dynamicTerm),
-		arrays:              make(map[string]dynamicTerm),
-		uninterpreted:       make(map[string]dynamicTerm),
-		sorts:               make(map[string]int),
-		functions:           make(map[string]dynamicUnaryFunction),
-		binaryFunctions:     make(map[string]dynamicBinaryFunction),
-		datatypes:           make(map[string]dynamicDatatype),
-		datatypeTerms:       make(map[string]dynamicTerm),
-		datatypeRecognizers: make(map[string]dynamicDatatypeRecognizer),
-		nextAssertion:       1,
+		solver:               smt.New(),
+		booleans:             make(map[string]smt.Term[smt.BoolSort]),
+		integers:             make(map[string]smt.Term[smt.IntSort]),
+		reals:                make(map[string]smt.Term[smt.RealSort]),
+		bitVectors:           make(map[string]dynamicTerm),
+		arrays:               make(map[string]dynamicTerm),
+		uninterpreted:        make(map[string]dynamicTerm),
+		sorts:                make(map[string]int),
+		functions:            make(map[string]dynamicUnaryFunction),
+		binaryFunctions:      make(map[string]dynamicBinaryFunction),
+		datatypes:            make(map[string]dynamicDatatype),
+		datatypeTerms:        make(map[string]dynamicTerm),
+		datatypeRecognizers:  make(map[string]dynamicDatatypeRecognizer),
+		datatypeConstructors: make(map[string]dynamicRecursiveDatatypeConstructor),
+		datatypeSelectors:    make(map[string]dynamicRecursiveDatatypeConstructor),
+		nextAssertion:        1,
 	}
 	for index, command := range commands {
 		if _, stop := command.(Exit); stop {
@@ -375,12 +391,14 @@ func (executor *executor) declareDatatype(index int, declaration RawCommand) {
 		executor.fail(index, declaration.At, "duplicate sort declaration "+name)
 		return
 	}
-	constructorNames := make([]string, len(constructors.Values))
+	constructorDeclarations := make([]datatypeConstructorDeclaration, len(constructors.Values))
 	seenConstructors := make(map[string]struct{}, len(constructors.Values))
+	seenSelectors := make(map[string]struct{}, len(constructors.Values))
+	hasBaseConstructor := false
 	for constructorIndex, expression := range constructors.Values {
 		entry, ok := expression.(List)
-		if !ok || len(entry.Values) != 1 {
-			executor.fail(index, declaration.At, "this QF_DT foundation requires nullary constructors")
+		if !ok || len(entry.Values) < 1 || len(entry.Values) > 2 {
+			executor.fail(index, declaration.At, "datatype constructors must be nullary or have one recursive field")
 			return
 		}
 		constructorName, ok := atomText(entry.Values[0])
@@ -392,24 +410,78 @@ func (executor *executor) declareDatatype(index int, declaration RawCommand) {
 			executor.fail(index, declaration.At, "duplicate datatype constructor "+constructorName)
 			return
 		}
+		if _, exists := executor.datatypeConstructors[constructorName]; exists {
+			executor.fail(index, declaration.At, "duplicate datatype constructor "+constructorName)
+			return
+		}
 		if _, exists := seenConstructors[constructorName]; exists {
 			executor.fail(index, declaration.At, "duplicate datatype constructor "+constructorName)
 			return
 		}
+		if _, exists := seenSelectors[constructorName]; exists {
+			executor.fail(index, declaration.At, "datatype constructor conflicts with selector "+constructorName)
+			return
+		}
 		seenConstructors[constructorName] = struct{}{}
-		constructorNames[constructorIndex] = constructorName
+		constructorDeclarations[constructorIndex].name = constructorName
+		if len(entry.Values) == 2 {
+			field, ok := entry.Values[1].(List)
+			if !ok || len(field.Values) != 2 {
+				executor.fail(index, declaration.At, "recursive datatype field requires a selector and its datatype sort")
+				return
+			}
+			selectorName, selectorOK := atomText(field.Values[0])
+			fieldSort, sortOK := atomText(field.Values[1])
+			if !selectorOK || !sortOK || fieldSort != name {
+				executor.fail(index, declaration.At, "recursive datatype field must select the enclosing sort "+name)
+				return
+			}
+			if _, exists := seenSelectors[selectorName]; exists {
+				executor.fail(index, declaration.At, "duplicate datatype selector "+selectorName)
+				return
+			}
+			if _, exists := executor.datatypeSelectors[selectorName]; exists {
+				executor.fail(index, declaration.At, "duplicate datatype selector "+selectorName)
+				return
+			}
+			if _, exists := seenConstructors[selectorName]; exists {
+				executor.fail(index, declaration.At, "datatype selector conflicts with constructor "+selectorName)
+				return
+			}
+			seenSelectors[selectorName] = struct{}{}
+			constructorDeclarations[constructorIndex].selectorName = selectorName
+		} else {
+			hasBaseConstructor = true
+		}
+	}
+	if !hasBaseConstructor {
+		executor.fail(index, declaration.At, "recursive datatype requires at least one nullary base constructor")
+		return
 	}
 	executor.nextSymbol++
 	datatypeID := executor.nextSymbol
-	datatype := dynamicDatatype{id: datatypeID, constructorCount: len(constructorNames), sortCode: sortDatatypeBase - datatypeID}
+	datatype := dynamicDatatype{id: datatypeID, constructorCount: len(constructorDeclarations), sortCode: sortDatatypeBase - datatypeID}
 	executor.datatypes[name] = datatype
-	for constructorID, constructorName := range constructorNames {
-		executor.datatypeTerms[constructorName] = dynamicTerm{
-			sort: datatype.sortCode, datatypeID: datatype.id, constructorCount: datatype.constructorCount,
-			datatype: smt.DatatypeConstructor(datatype.id, datatype.constructorCount, constructorID, constructorName),
+	for constructorID, constructor := range constructorDeclarations {
+		if constructor.selectorName == "" {
+			executor.datatypeTerms[constructor.name] = dynamicTerm{
+				sort: datatype.sortCode, datatypeID: datatype.id, constructorCount: datatype.constructorCount,
+				datatype: smt.DatatypeConstructor(datatype.id, datatype.constructorCount, constructorID, constructor.name),
+			}
+		} else {
+			witness := smt.DeclareRecursiveDatatypeConstructor(datatype.id, datatype.constructorCount, constructorID, constructor.name, constructor.selectorName)
+			dynamic := dynamicRecursiveDatatypeConstructor{witness: witness, sortCode: datatype.sortCode}
+			executor.datatypeConstructors[constructor.name] = dynamic
+			executor.datatypeSelectors[constructor.selectorName] = dynamic
 		}
-		executor.datatypeRecognizers["is-"+constructorName] = dynamicDatatypeRecognizer{
+		executor.datatypeRecognizers["is-"+constructor.name] = dynamicDatatypeRecognizer{
 			datatypeID: datatype.id, constructorCount: datatype.constructorCount, constructorID: constructorID, sortCode: datatype.sortCode,
+		}
+		if constructor.selectorName != "" {
+			recognizer := executor.datatypeRecognizers["is-"+constructor.name]
+			recognizer.recursive = true
+			recognizer.witness = executor.datatypeConstructors[constructor.name].witness
+			executor.datatypeRecognizers["is-"+constructor.name] = recognizer
 		}
 	}
 	executor.acknowledge(index)
@@ -608,7 +680,24 @@ func (executor *executor) term(expression SExpr) (dynamicTerm, error) {
 		if len(terms) != 1 || terms[0].sort != recognizer.sortCode || terms[0].datatypeID != recognizer.datatypeID || terms[0].constructorCount != recognizer.constructorCount {
 			return dynamicTerm{}, fmt.Errorf("ill-sorted datatype recognizer %s", operator)
 		}
+		if recognizer.recursive {
+			return dynamicTerm{sort: sortBool, boolean: smt.IsRecursiveDatatypeConstructor(recognizer.witness, terms[0].datatype)}, nil
+		}
 		return dynamicTerm{sort: sortBool, boolean: smt.IsDatatypeConstructor(recognizer.datatypeID, recognizer.constructorCount, recognizer.constructorID, terms[0].datatype)}, nil
+	}
+	if constructor, found := executor.datatypeConstructors[operator]; found {
+		if len(terms) != 1 || terms[0].sort != constructor.sortCode {
+			return dynamicTerm{}, fmt.Errorf("ill-sorted datatype constructor %s", operator)
+		}
+		return dynamicTerm{sort: terms[0].sort, datatypeID: terms[0].datatypeID, constructorCount: terms[0].constructorCount,
+			datatype: smt.ApplyRecursiveDatatypeConstructor(constructor.witness, terms[0].datatype)}, nil
+	}
+	if selector, found := executor.datatypeSelectors[operator]; found {
+		if len(terms) != 1 || terms[0].sort != selector.sortCode {
+			return dynamicTerm{}, fmt.Errorf("ill-sorted datatype selector %s", operator)
+		}
+		return dynamicTerm{sort: terms[0].sort, datatypeID: terms[0].datatypeID, constructorCount: terms[0].constructorCount,
+			datatype: smt.SelectRecursiveDatatypeConstructor(selector.witness, terms[0].datatype)}, nil
 	}
 	if constantBitVecArray {
 		if len(terms) == 1 && terms[0].sort == sortBitVector && terms[0].bitWidth == constantArrayElementWidth {

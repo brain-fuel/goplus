@@ -220,6 +220,76 @@ func TestExecuteFiniteEnumerationDatatypeExhaustion(t *testing.T) {
 	}
 }
 
+func TestExecuteRecursiveUnaryDatatype(t *testing.T) {
+	script := `(set-logic QF_DT)
+(declare-datatype Nat ((zero) (succ (pred Nat))))
+(declare-const x Nat)
+(assert (= x (succ (succ zero))))
+(assert (= (pred x) (succ zero)))
+(assert (is-succ x))
+(check-sat)
+(get-value (x (pred x) (is-succ x)))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[6].(Satisfiable); !ok {
+		t.Fatalf("check=%T", result.Responses[6])
+	}
+	values, ok := result.Responses[7].(ValuesAvailable)
+	if !ok || len(values.Values) != 3 {
+		t.Fatalf("values=%#v", result.Responses[7])
+	}
+	x, xOK := values.Values[0].(DatatypeValue)
+	pred, predOK := values.Values[1].(DatatypeValue)
+	recognized, recognizedOK := values.Values[2].(BooleanValue)
+	if !xOK || x.Value.ConstructorName != "succ" || x.Value.Child == nil || x.Value.Child.ConstructorName != "succ" || x.Value.Child.Child == nil || x.Value.Child.Child.ConstructorName != "zero" {
+		t.Fatalf("x=%#v", values.Values[0])
+	}
+	if !predOK || pred.Value.ConstructorName != "succ" || pred.Value.Child == nil || pred.Value.Child.ConstructorName != "zero" {
+		t.Fatalf("pred=%#v", values.Values[1])
+	}
+	if !recognizedOK || !recognized.Value {
+		t.Fatalf("recognizer=%#v", values.Values[2])
+	}
+}
+
+func TestExecuteRecursiveUnaryDatatypeAcyclicity(t *testing.T) {
+	script := `(set-logic QF_DT)
+(declare-datatype Nat ((zero) (succ (pred Nat))))
+(declare-const x Nat)
+(assert (= x (succ x)))
+(check-sat)`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[4].(Unsatisfiable); !ok {
+		t.Fatalf("check=%T responses=%#v", result.Responses[4], result.Responses)
+	}
+}
+
+func TestExecuteRecursiveUnaryDatatypeRecognizerModel(t *testing.T) {
+	script := `(set-logic QF_DT)
+(declare-datatype Nat ((zero) (succ (pred Nat))))
+(declare-const x Nat)
+(assert (is-succ x))
+(check-sat)
+(get-value (x))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	values, ok := result.Responses[5].(ValuesAvailable)
+	if !ok || len(values.Values) != 1 {
+		t.Fatalf("values=%#v", result.Responses[5])
+	}
+	value, ok := values.Values[0].(DatatypeValue)
+	if !ok || value.Value.ConstructorName != "succ" || value.Value.Child == nil || value.Value.Child.ConstructorID != 0 {
+		t.Fatalf("value=%#v", values.Values[0])
+	}
+}
+
 func TestExecuteAssumptionCore(t *testing.T) {
 	script := `(declare-const a Bool)
 (declare-const b Bool)
