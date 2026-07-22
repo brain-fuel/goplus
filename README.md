@@ -11,6 +11,15 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.27.0 — Grammar-Indexed Parser Foundations
+
+Go+ now validates omitted natural witnesses against every indexed runtime
+argument, including imported calls. A shared `nat` can no longer appear as one
+identity in the first argument and another in the second merely because its
+proof parameter was inferred and erased. The Participle rewrite forced this
+cross-package consistency check while preserving concise call sites and
+portable generated Go.
+
 ## v0.26.0 — Method-Indexed Linear HTTP Foundations
 
 The `/goals/09-resty` forcing case adds cross-package inference for omitted

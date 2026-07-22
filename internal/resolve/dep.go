@@ -367,9 +367,10 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 			hasLinear = true
 		}
 	}
-	if !full && !hasLinear {
-		return // an already-erased non-linear call from an earlier fixpoint
-	}
+	// An omitted quantity-0 argument has the same arity as an already-erased
+	// call from a later fixpoint. Validate both shapes: indexed runtime
+	// arguments still carry enough marker information to infer the witness,
+	// and the !full branch below prevents a second erasure edit.
 	if full {
 		indicesArePure := true
 		for _, position := range d.Dropped {
@@ -628,6 +629,20 @@ func (r *fileResolver) validateDependentIndexedArgs(call *ast.CallExpr, d *regis
 				if existentialEqual, supported := existsConstructorIndexEquality(want, got, variables); supported && existentialEqual {
 					continue
 				}
+			}
+			// An already-erased call encountered by a later fixpoint may no
+			// longer retain enough origin information to solve an omitted
+			// witness. Only diagnose concrete contradictions; an unresolved
+			// callee variable is an inference give-up, not evidence of mismatch.
+			unresolved := false
+			for variable := range variables {
+				if containsTypeIdentifier(want, variable) {
+					unresolved = true
+					break
+				}
+			}
+			if unresolved {
+				continue
 			}
 			// Both signatures and all substitutions are concrete marker facts;
 			// unlike inference give-ups this mismatch cannot resolve in a later
