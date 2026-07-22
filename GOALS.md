@@ -274,7 +274,7 @@ semantic forcing cases above some larger repositories.
 - **Gate:** Participle grammar compatibility corpus, ambiguity diagnostics,
   parser laws, differential/fuzz tests, generated-Go inspection, and realistic
   language benchmarks.
-- **Status:** released as `goforge.dev/participle` v0.1.1, pinned to Participle
+- **Status:** released as `goforge.dev/participle` v0.1.2, pinned to Participle
   v2.1.4 at `bcbb39153e17f8018257f17aba8eac628d396b64`. The Go+-authored core has a
   minimum-token-indexed grammar GADT, grammar/FIRST/parser identity indices,
   three-token immutable assignment spans, explicit lookahead and commit,
@@ -287,7 +287,7 @@ semantic forcing cases above some larger repositories.
   consumer. No `std/parsec` API was promoted because its rune positions and
   consumption model do not yet demonstrate the same token-count-indexed span
   abstraction with a second consumer. Across the recorded five-run semantic
-  benchmark, the conservative gate is at least 38.6x faster with 263 versus
+  benchmark, the conservative gate is at least 38.2x faster with 263 versus
   8,237 allocations, a 96.8% reduction.
 
 ## Package workflow
