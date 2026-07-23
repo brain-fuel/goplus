@@ -135,6 +135,9 @@ type integerSequenceRequirements struct {
 	contains    [4]IntegerSequenceValue
 	overflow    []IntegerSequenceValue
 	containment int
+	excluded    [4]IntegerSequenceValue
+	excludeMore []IntegerSequenceValue
+	exclusion   int
 }
 
 const maximumConstructedIntegerSequenceLength = 4096
@@ -259,6 +262,46 @@ func (requirements integerSequenceRequirements) containmentAt(index int) Integer
 		return requirements.contains[index]
 	}
 	return requirements.overflow[index-len(requirements.contains)]
+}
+
+func (requirements *integerSequenceRequirements) addExclusion(
+	value IntegerSequenceValue,
+) bool {
+	for index := 0; index < requirements.exclusion; index++ {
+		if equalIntegerSequences(requirements.exclusionAt(index), value) {
+			return true
+		}
+	}
+	if requirements.exclusion == maximumConstructedIntegerSequenceLength {
+		return false
+	}
+	if requirements.exclusion < len(requirements.excluded) {
+		requirements.excluded[requirements.exclusion] = value
+	} else {
+		requirements.excludeMore = append(requirements.excludeMore, value)
+	}
+	requirements.exclusion++
+	return true
+}
+
+func (requirements integerSequenceRequirements) exclusionAt(
+	index int,
+) IntegerSequenceValue {
+	if index < len(requirements.excluded) {
+		return requirements.excluded[index]
+	}
+	return requirements.excludeMore[index-len(requirements.excluded)]
+}
+
+func (requirements integerSequenceRequirements) excludes(
+	value IntegerSequenceValue,
+) bool {
+	for index := 0; index < requirements.exclusion; index++ {
+		if equalIntegerSequences(requirements.exclusionAt(index), value) {
+			return true
+		}
+	}
+	return false
 }
 
 // Len reports the number of elements.
@@ -1542,6 +1585,68 @@ func collectAffineIntegerSequenceLengthBound(
 	return consistent, supported, true
 }
 
+func collectNegatedIntegerSequenceRequirement(
+	term Term[BoolSort],
+	model integerSequenceModel,
+	requirements *integerSequenceRequirementSet,
+	aliases *integerSequenceAliases,
+) (bool, bool, bool) {
+	switch value := term.(type) {
+	case Equal:
+		leftID, leftSymbol := integerSequenceSymbolID(value.Left)
+		rightID, rightSymbol := integerSequenceSymbolID(value.Right)
+		if leftSymbol != rightSymbol {
+			id, groundTerm := leftID, value.Right
+			if rightSymbol {
+				id, groundTerm = rightID, value.Left
+			}
+			id = aliases.root(id)
+			ground, ok := groundTerm.(Term[SequenceSort[IntSort]])
+			if !ok {
+				return true, false, true
+			}
+			excluded, ok := evaluateIntegerSequenceWithModel(
+				ground,
+				booleanModel{},
+				integerModel{},
+				rationalModel{},
+				model,
+			)
+			if !ok {
+				return true, false, true
+			}
+			if assigned, ok := model.lookup(id); ok {
+				return !equalIntegerSequences(assigned, excluded), true, true
+			}
+			if !requirements.forSymbol(id).addExclusion(excluded) {
+				return true, false, true
+			}
+			return true, true, true
+		}
+	case Less:
+		left, leftOK := value.Left.(Term[IntSort])
+		right, rightOK := value.Right.(Term[IntSort])
+		if leftOK && rightOK {
+			consistent, supported, recognized :=
+				collectAffineIntegerSequenceLengthBound(
+					right, left, false, model, requirements, aliases,
+				)
+			return consistent, supported, recognized
+		}
+	case LessEqual:
+		left, leftOK := value.Left.(Term[IntSort])
+		right, rightOK := value.Right.(Term[IntSort])
+		if leftOK && rightOK {
+			consistent, supported, recognized :=
+				collectAffineIntegerSequenceLengthBound(
+					right, left, true, model, requirements, aliases,
+				)
+			return consistent, supported, recognized
+		}
+	}
+	return true, true, false
+}
+
 func collectPositiveIntegerSequenceRequirements(
 	term Term[BoolSort],
 	model integerSequenceModel,
@@ -1563,37 +1668,15 @@ func collectPositiveIntegerSequenceRequirements(
 		items, negated := value.values()
 		for index, item := range items {
 			if negated[index] && containsIntegerSequenceTheory(item) {
-				switch atom := item.(type) {
-				case Less:
-					left, leftOK := atom.Left.(Term[IntSort])
-					right, rightOK := atom.Right.(Term[IntSort])
-					if leftOK && rightOK {
-						consistent, supported, recognized :=
-							collectAffineIntegerSequenceLengthBound(
-								right, left, false, model, requirements, aliases,
-							)
-						if recognized && (!consistent || !supported) {
-							return consistent, supported
-						}
-						if recognized {
-							continue
-						}
-					}
-				case LessEqual:
-					left, leftOK := atom.Left.(Term[IntSort])
-					right, rightOK := atom.Right.(Term[IntSort])
-					if leftOK && rightOK {
-						consistent, supported, recognized :=
-							collectAffineIntegerSequenceLengthBound(
-								right, left, true, model, requirements, aliases,
-							)
-						if recognized && (!consistent || !supported) {
-							return consistent, supported
-						}
-						if recognized {
-							continue
-						}
-					}
+				consistent, supported, recognized :=
+					collectNegatedIntegerSequenceRequirement(
+						item, model, requirements, aliases,
+					)
+				if recognized && (!consistent || !supported) {
+					return consistent, supported
+				}
+				if recognized {
+					continue
 				}
 				return true, false
 			}
@@ -1609,31 +1692,12 @@ func collectPositiveIntegerSequenceRequirements(
 		}
 		return true, true
 	case Not:
-		switch atom := value.Value.(type) {
-		case Less:
-			left, leftOK := atom.Left.(Term[IntSort])
-			right, rightOK := atom.Right.(Term[IntSort])
-			if leftOK && rightOK {
-				consistent, supported, recognized :=
-					collectAffineIntegerSequenceLengthBound(
-						right, left, false, model, requirements, aliases,
-					)
-				if recognized {
-					return consistent, supported
-				}
-			}
-		case LessEqual:
-			left, leftOK := atom.Left.(Term[IntSort])
-			right, rightOK := atom.Right.(Term[IntSort])
-			if leftOK && rightOK {
-				consistent, supported, recognized :=
-					collectAffineIntegerSequenceLengthBound(
-						right, left, true, model, requirements, aliases,
-					)
-				if recognized {
-					return consistent, supported
-				}
-			}
+		consistent, supported, recognized :=
+			collectNegatedIntegerSequenceRequirement(
+				value.Value, model, requirements, aliases,
+			)
+		if recognized {
+			return consistent, supported
 		}
 		if containsIntegerSequenceTheory(term) {
 			_, ok := evaluateBoolWithIntegerSequences(
@@ -1938,6 +2002,41 @@ func (builder *fixedIntegerSequenceBuilder) rollbackPlacement(
 	*overflow = (*overflow)[:0]
 }
 
+func (builder *fixedIntegerSequenceBuilder) value() IntegerSequenceValue {
+	var result IntegerSequenceValue
+	for index := 0; index < builder.length; index++ {
+		value, assigned := builder.valueAt(index)
+		if !assigned {
+			value = IntegerValue{}
+		}
+		result.append(value)
+	}
+	return result
+}
+
+func (builder *fixedIntegerSequenceBuilder) avoidExclusions(
+	requirements integerSequenceRequirements,
+) bool {
+	candidate := builder.value()
+	if !requirements.excludes(candidate) {
+		return true
+	}
+	for position := 0; position < builder.length; position++ {
+		_, assigned := builder.valueAt(position)
+		if assigned {
+			continue
+		}
+		for discriminator := 1; discriminator <= requirements.exclusion+1; discriminator++ {
+			builder.assign(position, NewIntegerValue(int64(discriminator)))
+			if !requirements.excludes(builder.value()) {
+				return true
+			}
+			builder.clear(position)
+		}
+	}
+	return false
+}
+
 func placeIntegerSequenceContainments(
 	builder *fixedIntegerSequenceBuilder,
 	requirements integerSequenceRequirements,
@@ -1945,7 +2044,7 @@ func placeIntegerSequenceContainments(
 	states *int,
 ) (bool, bool) {
 	if index == requirements.containment {
-		return true, true
+		return builder.avoidExclusions(requirements), true
 	}
 	part := requirements.containmentAt(index)
 	for offset := 0; offset+part.Len() <= builder.length; offset++ {
@@ -1996,15 +2095,7 @@ func buildFixedLengthIntegerSequenceWitness(
 	if !found {
 		return IntegerSequenceValue{}, !complete, complete
 	}
-	var result IntegerSequenceValue
-	for index := 0; index < length; index++ {
-		value, assigned := builder.valueAt(index)
-		if !assigned {
-			value = IntegerValue{}
-		}
-		result.append(value)
-	}
-	return result, true, true
+	return builder.value(), true, true
 }
 
 func buildIntegerSequenceWitness(
@@ -2059,6 +2150,28 @@ func buildIntegerSequenceWitness(
 			}
 		}
 		return IntegerSequenceValue{}, false, true
+	}
+	if requirements.exclusion > 0 {
+		minimum := result.Len()
+		if requirements.hasMin && requirements.minLength > minimum {
+			minimum = requirements.minLength
+		}
+		states := 0
+		for length := minimum; length <= maximumConstructedIntegerSequenceLength; length++ {
+			candidate := requirements
+			candidate.exactLength = length
+			candidate.hasLength = true
+			witness, consistent, supported := buildFixedLengthIntegerSequenceWitness(
+				candidate, &states,
+			)
+			if !supported {
+				return IntegerSequenceValue{}, true, false
+			}
+			if consistent {
+				return witness, true, true
+			}
+		}
+		return IntegerSequenceValue{}, true, false
 	}
 	if requirements.hasMin && result.Len() < requirements.minLength {
 		candidate := requirements
@@ -2670,6 +2783,24 @@ func solveIntegerSequenceConjunctiveAssertions(
 	return checkOutcome{status: checkSat, integerSequences: sequences}, true
 }
 
+func supportsConjunctiveNegatedIntegerSequenceAtom(
+	term Term[BoolSort],
+) bool {
+	switch atom := term.(type) {
+	case Equal:
+		_, leftSymbol := integerSequenceSymbolID(atom.Left)
+		_, rightSymbol := integerSequenceSymbolID(atom.Right)
+		return leftSymbol != rightSymbol
+	case Less:
+		return containsIntegerSequenceLength(atom.Left) ||
+			containsIntegerSequenceLength(atom.Right)
+	case LessEqual:
+		return containsIntegerSequenceLength(atom.Left) ||
+			containsIntegerSequenceLength(atom.Right)
+	}
+	return false
+}
+
 func requiresIntegerSequenceBooleanNormalization(term Term[BoolSort]) bool {
 	switch value := term.(type) {
 	case Or:
@@ -2685,23 +2816,15 @@ func requiresIntegerSequenceBooleanNormalization(term Term[BoolSort]) bool {
 	case BooleanConjunction:
 		items, negated := value.values()
 		for index, item := range items {
-			if negated[index] && containsIntegerSequenceTheory(item) ||
+			if negated[index] && containsIntegerSequenceTheory(item) &&
+				!supportsConjunctiveNegatedIntegerSequenceAtom(item) ||
 				requiresIntegerSequenceBooleanNormalization(item) {
 				return true
 			}
 		}
 	case Not:
-		switch atom := value.Value.(type) {
-		case Less:
-			if containsIntegerSequenceLength(atom.Left) ||
-				containsIntegerSequenceLength(atom.Right) {
-				return false
-			}
-		case LessEqual:
-			if containsIntegerSequenceLength(atom.Left) ||
-				containsIntegerSequenceLength(atom.Right) {
-				return false
-			}
+		if supportsConjunctiveNegatedIntegerSequenceAtom(value.Value) {
+			return false
 		}
 		return containsIntegerSequenceTheory(value.Value)
 	case Implies:

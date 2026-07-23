@@ -1044,6 +1044,111 @@ func TestNegatedBooleanSymbolicIntegerSequenceLengths(t *testing.T) {
 	}
 }
 
+func TestSymbolicIntegerSequenceGroundDisequality(t *testing.T) {
+	unit := func(value int64) Term[SequenceSort[IntSort]] {
+		return SequenceUnit[IntSort](Integer{Value: value})
+	}
+	sequence := func(values ...int64) Term[SequenceSort[IntSort]] {
+		items := make([]Term[SequenceSort[IntSort]], len(values))
+		for index, value := range values {
+			items[index] = unit(value)
+		}
+		return SequenceConcat(items...)
+	}
+	x := SequenceConst[IntSort](53, "x")
+
+	nonempty := Not{Value: Equal{
+		Left: x, Right: SequenceEmpty[IntSort](),
+	}}
+	nonemptyResult, ok := Check(Assert(53, New(), nonempty)).(Satisfiable)
+	if !ok {
+		t.Fatal("empty exclusion must construct a nonempty witness")
+	}
+	if value, found := IntegerSequenceModelValue(
+		nonemptyResult.Value, x,
+	); !found || value.Len() != 1 {
+		t.Fatalf("nonempty model=(%d,%v)", value.Len(), found)
+	}
+
+	freePosition := And{Values: []Term[BoolSort]{
+		Equal{Left: SequenceLength(x), Right: Integer{Value: 2}},
+		SequenceHasPrefix(x, unit(1)),
+		Not{Value: Equal{Left: x, Right: sequence(1, 0)}},
+	}}
+	freeResult, ok := Check(Assert(54, New(), freePosition)).(Satisfiable)
+	if !ok {
+		t.Fatal("free position must discriminate an excluded value")
+	}
+	freeValue, found := IntegerSequenceModelValue(freeResult.Value, x)
+	last, lastFound := freeValue.At(1)
+	if !found || !lastFound {
+		t.Fatal("missing discriminated model")
+	}
+	if actual, fits := last.Int64(); !fits || actual != 1 {
+		t.Fatalf("last=(%d,%v)", actual, fits)
+	}
+
+	multiple := And{Values: []Term[BoolSort]{
+		Equal{Left: SequenceLength(x), Right: Integer{Value: 1}},
+		Not{Value: Equal{Left: x, Right: sequence(0)}},
+		Not{Value: Equal{Left: x, Right: sequence(1)}},
+	}}
+	multipleResult, ok := Check(Assert(55, New(), multiple)).(Satisfiable)
+	if !ok {
+		t.Fatal("finite exclusions must leave a fresh integer element")
+	}
+	multipleValue, _ := IntegerSequenceModelValue(multipleResult.Value, x)
+	element, _ := multipleValue.At(0)
+	if actual, fits := element.Int64(); !fits || actual != 2 {
+		t.Fatalf("multiple exclusion element=(%d,%v)", actual, fits)
+	}
+
+	alternatePlacement := And{Values: []Term[BoolSort]{
+		Equal{Left: SequenceLength(x), Right: Integer{Value: 2}},
+		SequenceContains(x, unit(1)),
+		SequenceContains(x, unit(2)),
+		Not{Value: Equal{Left: x, Right: sequence(1, 2)}},
+	}}
+	alternateResult, ok := Check(Assert(56, New(), alternatePlacement)).(Satisfiable)
+	if !ok {
+		t.Fatal("containment placement must backtrack around an exclusion")
+	}
+	alternateValue, _ := IntegerSequenceModelValue(alternateResult.Value, x)
+	first, _ := alternateValue.At(0)
+	second, _ := alternateValue.At(1)
+	firstValue, _ := first.Int64()
+	secondValue, _ := second.Int64()
+	if firstValue != 2 || secondValue != 1 {
+		t.Fatalf("alternate placement=[%d,%d]", firstValue, secondValue)
+	}
+
+	impossible := And{Values: []Term[BoolSort]{
+		Equal{Left: SequenceLength(x), Right: Integer{Value: 2}},
+		SequenceHasPrefix(x, sequence(1, 2)),
+		Not{Value: Equal{Left: x, Right: sequence(1, 2)}},
+	}}
+	if checked := Check(Assert(57, New(), impossible)); func() bool {
+		_, ok := checked.(Unsatisfiable)
+		return ok
+	}() == false {
+		t.Fatalf("fixed exclusion result=%T", checked)
+	}
+
+	allPlacementsExcluded := And{Values: []Term[BoolSort]{
+		Equal{Left: SequenceLength(x), Right: Integer{Value: 2}},
+		SequenceContains(x, unit(1)),
+		SequenceContains(x, unit(2)),
+		Not{Value: Equal{Left: x, Right: sequence(1, 2)}},
+		Not{Value: Equal{Left: x, Right: sequence(2, 1)}},
+	}}
+	if checked := Check(Assert(58, New(), allPlacementsExcluded)); func() bool {
+		_, ok := checked.(Unsatisfiable)
+		return ok
+	}() == false {
+		t.Fatalf("excluded placements result=%T", checked)
+	}
+}
+
 func TestSymbolicIntegerSequenceEqualityClasses(t *testing.T) {
 	unit := func(value int64) Term[SequenceSort[IntSort]] {
 		return SequenceUnit[IntSort](Integer{Value: value})
