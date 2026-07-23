@@ -924,6 +924,14 @@ type BitVectorValue struct {
 
 func (BitVectorValue) isValue() {}
 
+//goplus:variant (Value) StringValue(Expression SExpr, Value string)
+type StringValue struct {
+	Expression SExpr
+	Value      string
+}
+
+func (StringValue) isValue() {}
+
 //goplus:variant (Value) DatatypeValue(Expression SExpr, Value smt.DatatypeValue)
 type DatatypeValue struct {
 	Expression SExpr
@@ -947,6 +955,7 @@ type ValueCases[R any] struct {
 	ArbitraryIntegerValue func(Expression SExpr, Value smt.IntegerValue) R
 	RationalValue         func(Expression SExpr, Value smt.Rational) R
 	BitVectorValue        func(Expression SExpr, Value smt.BitVectorValue) R
+	StringValue           func(Expression SExpr, Value string) R
 	DatatypeValue         func(Expression SExpr, Value smt.DatatypeValue) R
 	UnavailableValue      func(Expression SExpr, Reason string) R
 }
@@ -964,6 +973,8 @@ func ValueFold[R any](v Value, cs ValueCases[R]) R {
 		return cs.RationalValue(m.Expression, m.Value)
 	case BitVectorValue:
 		return cs.BitVectorValue(m.Expression, m.Value)
+	case StringValue:
+		return cs.StringValue(m.Expression, m.Value)
 	case DatatypeValue:
 		return cs.DatatypeValue(m.Expression, m.Value)
 	case UnavailableValue:
@@ -981,6 +992,7 @@ type ValueEqOverrides struct {
 	ArbitraryIntegerValue func(x, y ArbitraryIntegerValue) (eq, handled bool)
 	RationalValue         func(x, y RationalValue) (eq, handled bool)
 	BitVectorValue        func(x, y BitVectorValue) (eq, handled bool)
+	StringValue           func(x, y StringValue) (eq, handled bool)
 	DatatypeValue         func(x, y DatatypeValue) (eq, handled bool)
 	UnavailableValue      func(x, y UnavailableValue) (eq, handled bool)
 }
@@ -1066,6 +1078,23 @@ func ValueEqualWith(a, b Value, ov ValueEqOverrides) bool {
 		}
 		if ov.BitVectorValue != nil {
 			if eq, handled := ov.BitVectorValue(x, y); handled {
+				return eq
+			}
+		}
+		if !SExprEqual(x.Expression, y.Expression) {
+			return false
+		}
+		if x.Value != y.Value {
+			return false
+		}
+		return true
+	case StringValue:
+		y, ok := any(b).(StringValue)
+		if !ok {
+			return false
+		}
+		if ov.StringValue != nil {
+			if eq, handled := ov.StringValue(x, y); handled {
 				return eq
 			}
 		}

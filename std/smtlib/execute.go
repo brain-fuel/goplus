@@ -13,6 +13,7 @@ const (
 	sortBitVector    = -3
 	sortArrayIntInt  = -4
 	sortArrayBitVec  = -5
+	sortString       = -6
 	sortReal         = -1
 	sortBool         = 0
 	sortInt          = 1
@@ -26,6 +27,7 @@ type dynamicTerm struct {
 	integer              smt.Term[smt.IntSort]
 	real                 smt.Term[smt.RealSort]
 	bitVector            smt.Term[smt.BitVecSort]
+	stringValue          smt.Term[smt.StringSort]
 	bitWidth             int
 	uninterpreted        smt.Term[smt.UninterpretedSort]
 	arrayIntInt          smt.Term[smt.ArraySort[smt.IntSort, smt.IntSort]]
@@ -138,6 +140,7 @@ type executor struct {
 	integers               map[string]smt.Term[smt.IntSort]
 	reals                  map[string]smt.Term[smt.RealSort]
 	bitVectors             map[string]dynamicTerm
+	strings                map[string]smt.Term[smt.StringSort]
 	arrays                 map[string]dynamicTerm
 	uninterpreted          map[string]dynamicTerm
 	sorts                  map[string]int
@@ -167,6 +170,7 @@ func executeCommands(commands []Command) ([]Response, []ExecutionError) {
 		integers:               make(map[string]smt.Term[smt.IntSort]),
 		reals:                  make(map[string]smt.Term[smt.RealSort]),
 		bitVectors:             make(map[string]dynamicTerm),
+		strings:                make(map[string]smt.Term[smt.StringSort]),
 		arrays:                 make(map[string]dynamicTerm),
 		uninterpreted:          make(map[string]dynamicTerm),
 		sorts:                  make(map[string]int),
@@ -345,6 +349,13 @@ func (executor *executor) command(index int, command Command) {
 				} else {
 					values[valueIndex] = UnavailableValue{Expression: expression, Reason: "model has no bit-vector value"}
 				}
+			} else if term.sort == sortString {
+				result, found := smt.StringModelValue(*executor.lastModel, term.stringValue)
+				if found {
+					values[valueIndex] = StringValue{Expression: expression, Value: result}
+				} else {
+					values[valueIndex] = UnavailableValue{Expression: expression, Reason: "model has no string value"}
+				}
 			} else if term.sort == sortReal || term.sort == sortNumber && term.real != nil && term.integer == nil {
 				result, found := smt.RealValue(*executor.lastModel, term.real)
 				if found {
@@ -354,6 +365,12 @@ func (executor *executor) command(index int, command Command) {
 				}
 			} else {
 				result, found := smt.IntegerModelValue(*executor.lastModel, term.integer)
+				if !found {
+					if stringResult, stringFound := smt.StringIntegerModelValue(*executor.lastModel, term.integer); stringFound {
+						values[valueIndex] = IntegerValue{Expression: expression, Value: stringResult}
+						continue
+					}
+				}
 				if found {
 					if small, fits := result.Int64(); fits {
 						values[valueIndex] = IntegerValue{Expression: expression, Value: small}
@@ -399,6 +416,10 @@ func (executor *executor) declare(index int, name string, sortExpression SExpr, 
 		return
 	}
 	if _, exists := executor.bitVectors[name]; exists {
+		executor.fail(index, at, "duplicate declaration "+name)
+		return
+	}
+	if _, exists := executor.strings[name]; exists {
 		executor.fail(index, at, "duplicate declaration "+name)
 		return
 	}
@@ -457,6 +478,8 @@ func (executor *executor) declare(index int, name string, sortExpression SExpr, 
 		executor.integers[name] = smt.IntSymbol{ID: executor.nextSymbol, Name: name}
 	case "Real":
 		executor.reals[name] = smt.RealSymbol{ID: executor.nextSymbol, Name: name}
+	case "String":
+		executor.strings[name] = smt.StringConst(executor.nextSymbol, name)
 	default:
 		if datatype, exists := executor.datatypes[sortName]; exists {
 			executor.datatypeTerms[name] = dynamicTerm{
@@ -1260,6 +1283,9 @@ func (executor *executor) declareBinary(index int, declaration DeclareFun) {
 
 func (executor *executor) term(expression SExpr) (dynamicTerm, error) {
 	if atom, ok := expression.(Atom); ok {
+		if _, literal := atom.Kind.(StringAtom); literal {
+			return dynamicTerm{sort: sortString, stringValue: smt.StringVal(atom.Text)}, nil
+		}
 		switch atom.Text {
 		case "true":
 			return dynamicTerm{sort: sortBool, boolean: smt.Bool{Value: true}}, nil
@@ -1283,6 +1309,9 @@ func (executor *executor) term(expression SExpr) (dynamicTerm, error) {
 		}
 		if value, found := executor.bitVectors[atom.Text]; found {
 			return value, nil
+		}
+		if value, found := executor.strings[atom.Text]; found {
+			return dynamicTerm{sort: sortString, stringValue: value}, nil
 		}
 		if value, found := executor.arrays[atom.Text]; found {
 			return value, nil
@@ -1954,6 +1983,16 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 		}
 		return values, true
 	}
+	stringTerms := func() ([]smt.Term[smt.StringSort], bool) {
+		values := make([]smt.Term[smt.StringSort], len(terms))
+		for index, term := range terms {
+			if term.sort != sortString {
+				return nil, false
+			}
+			values[index] = term.stringValue
+		}
+		return values, true
+	}
 	reals := func() ([]smt.Term[smt.RealSort], bool) {
 		values := make([]smt.Term[smt.RealSort], len(terms))
 		for index, term := range terms {
@@ -1973,6 +2012,26 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 		return false
 	}
 	switch operator {
+	case "str.++":
+		if values, ok := stringTerms(); ok {
+			return dynamicTerm{sort: sortString, stringValue: smt.StringConcat(values...)}, nil
+		}
+	case "str.len":
+		if values, ok := stringTerms(); ok && len(values) == 1 {
+			return dynamicTerm{sort: sortInt, integer: smt.StringLength(values[0])}, nil
+		}
+	case "str.contains":
+		if values, ok := stringTerms(); ok && len(values) == 2 {
+			return dynamicTerm{sort: sortBool, boolean: smt.StringContains(values[0], values[1])}, nil
+		}
+	case "str.prefixof":
+		if values, ok := stringTerms(); ok && len(values) == 2 {
+			return dynamicTerm{sort: sortBool, boolean: smt.StringHasPrefix(values[1], values[0])}, nil
+		}
+	case "str.suffixof":
+		if values, ok := stringTerms(); ok && len(values) == 2 {
+			return dynamicTerm{sort: sortBool, boolean: smt.StringHasSuffix(values[1], values[0])}, nil
+		}
 	case "ubv_to_int":
 		if len(terms) == 1 && terms[0].sort == sortBitVector {
 			return dynamicTerm{sort: sortInt, integer: smt.BitVecToNat(terms[0].bitVector)}, nil
@@ -1998,6 +2057,15 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 			return dynamicTerm{sort: sortBool, boolean: smt.Implies{Left: values[0], Right: values[1]}}, nil
 		}
 	case "distinct":
+		if values, ok := stringTerms(); ok && len(values) >= 2 {
+			disequalities := make([]smt.Term[smt.BoolSort], 0, len(values)*(len(values)-1)/2)
+			for left := 0; left < len(values); left++ {
+				for right := left + 1; right < len(values); right++ {
+					disequalities = append(disequalities, smt.Not{Value: smt.Equal{Left: values[left], Right: values[right]}})
+				}
+			}
+			return dynamicTerm{sort: sortBool, boolean: smt.And{Values: disequalities}}, nil
+		}
 		if len(terms) >= 2 && terms[0].datatype != nil {
 			disequalities := make([]smt.Term[smt.BoolSort], 0, len(terms)*(len(terms)-1)/2)
 			for left := 0; left < len(terms); left++ {
@@ -2029,6 +2097,16 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 			return dynamicTerm{sort: sortBool, boolean: smt.And{Values: disequalities}}, nil
 		}
 	case "=":
+		if values, ok := stringTerms(); ok && len(values) >= 2 {
+			equalities := make([]smt.Term[smt.BoolSort], len(values)-1)
+			for index := 1; index < len(values); index++ {
+				equalities[index-1] = smt.Equal{Left: values[index-1], Right: values[index]}
+			}
+			if len(equalities) == 1 {
+				return dynamicTerm{sort: sortBool, boolean: equalities[0]}, nil
+			}
+			return dynamicTerm{sort: sortBool, boolean: smt.And{Values: equalities}}, nil
+		}
 		if len(terms) >= 2 && terms[0].datatype != nil {
 			equalities := make([]smt.Term[smt.BoolSort], len(terms)-1)
 			for index := 1; index < len(terms); index++ {

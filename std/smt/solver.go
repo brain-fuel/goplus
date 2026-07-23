@@ -91,7 +91,7 @@ func runtimeCheckResult(context int, e *engine) CheckResult {
 		status, booleans, integers, reals, bitVectors, reason := e.check()
 		switch status {
 		case checkSat:
-			e.publicResult = Satisfiable{Value: modelValue{contextID: context, booleans: booleans, integers: integers, reals: reals, bitVectors: bitVectors, arrays: e.result.arrays, bitVectorArrays: e.result.bitVectorArrays, datatypes: e.result.datatypes}}
+			e.publicResult = Satisfiable{Value: modelValue{contextID: context, booleans: booleans, integers: integers, reals: reals, bitVectors: bitVectors, strings: e.result.strings, arrays: e.result.arrays, bitVectorArrays: e.result.bitVectorArrays, datatypes: e.result.datatypes}}
 		case checkUnsat:
 			e.publicResult = Unsatisfiable{Value: proofValue{contextID: context, assertions: len(e.assertions)}}
 		default:
@@ -110,6 +110,7 @@ type checkOutcome struct {
 	integers        integerModel
 	reals           rationalModel
 	bitVectors      bitVectorModel
+	strings         stringModel
 	arrays          *integerArrayModel
 	bitVectorArrays *bitVectorArrayModel
 	datatypes       *datatypeModel
@@ -294,8 +295,10 @@ func (e *engine) solveAdditional(assumptions []Term[BoolSort]) checkOutcome {
 	bitVectorTheory := false
 	arrayTheory := false
 	datatypeTheory := false
+	stringTheory := false
 	for _, assertion := range allAssertions {
 		datatypeTheory = datatypeTheory || containsDatatypeTheory(assertion)
+		stringTheory = stringTheory || containsStringTheory(assertion)
 		arrayTheory = arrayTheory || containsArrayTheory(assertion)
 		bitVectorTheory = bitVectorTheory || containsBitVectorTheory(assertion)
 		shared := containsSharedRealEUF(assertion)
@@ -303,6 +306,15 @@ func (e *engine) solveAdditional(assumptions []Term[BoolSort]) checkOutcome {
 		eufTheory = eufTheory || containsEUF(assertion) || shared
 		realTheory = realTheory || containsRealTheory(assertion)
 		sharedRealEUF = sharedRealEUF || shared
+	}
+	if stringTheory {
+		if datatypeTheory || arrayTheory || bitVectorTheory || eufTheory || realTheory {
+			return checkOutcome{status: checkUnknown, reason: UnsupportedTheory{Name: "string combination with another theory"}}
+		}
+		if outcome, recognized := solveStringAssertions(allAssertions); recognized {
+			return outcome
+		}
+		return checkOutcome{status: checkUnknown, reason: UnsupportedTheory{Name: "string expression outside the ground QF_S/QF_SLIA fragment"}}
 	}
 	if datatypeTheory {
 		mixedDatatypeTheory := false
@@ -435,10 +447,10 @@ func unsupportedReason(integerTheory, eufTheory, realTheory, sharedRealEUF bool)
 	return UnsupportedTheory{Name: "unsupported Boolean term"}
 }
 
-func (e *engine) checkAssuming(assumptions []Term[BoolSort]) (int, booleanModel, integerModel, rationalModel, bitVectorModel, []int, UnknownReason) {
+func (e *engine) checkAssuming(assumptions []Term[BoolSort]) (int, booleanModel, integerModel, rationalModel, bitVectorModel, stringModel, []int, UnknownReason) {
 	outcome := e.solveAdditional(assumptions)
 	if outcome.status != checkUnsat {
-		return outcome.status, outcome.booleans, outcome.integers, outcome.reals, outcome.bitVectors, nil, outcome.reason
+		return outcome.status, outcome.booleans, outcome.integers, outcome.reals, outcome.bitVectors, outcome.strings, nil, outcome.reason
 	}
 	coreTerms := append([]Term[BoolSort](nil), assumptions...)
 	coreIndices := make([]int, len(assumptions))
@@ -456,7 +468,7 @@ func (e *engine) checkAssuming(assumptions []Term[BoolSort]) (int, booleanModel,
 		}
 		index++
 	}
-	return checkUnsat, booleanModel{}, integerModel{}, rationalModel{}, bitVectorModel{}, coreIndices, nil
+	return checkUnsat, booleanModel{}, integerModel{}, rationalModel{}, bitVectorModel{}, stringModel{}, coreIndices, nil
 }
 
 func evaluateBool(term Term[BoolSort], booleans booleanModel, integers integerModel, reals rationalModel) (bool, bool) {

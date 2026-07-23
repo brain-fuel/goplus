@@ -8,6 +8,14 @@ import "goforge.dev/goplus/std/vec"
 type BoolSort struct{}
 type IntSort struct{}
 type RealSort struct{}
+// SequenceSort retains its element sort in Go+ so sequence operations cannot
+// mix incompatible alphabets. StringSort is the SMT-LIB Unicode-string
+// specialization with native UTF-8 source representation.
+//goplus:derive off
+type SequenceSort[E any] enum {
+	sequenceSort() SequenceSort[E]
+}
+type StringSort struct{}
 // DatatypeSort retains both the declaration identity and finite constructor
 // cardinality. Go+ therefore rejects terms from distinct datatype
 // declarations even when they happen to have the same number of constructors.
@@ -156,6 +164,17 @@ type Term[S any] enum {
 	RealScale(Coefficient Rational, Value Term[RealSort]) Term[RealSort]
 	RealLessEqual(Left Term[RealSort], Right Term[RealSort]) Term[BoolSort]
 	RealLess(Left Term[RealSort], Right Term[RealSort]) Term[BoolSort]
+	stringValue(Value string) Term[S]
+	stringSymbol(ID int, Name string) Term[S]
+	stringConcat(Values []Term[StringSort]) Term[S]
+	stringLength(Value Term[StringSort]) Term[IntSort]
+	stringContains(Value Term[StringSort], Substring Term[StringSort]) Term[BoolSort]
+	stringPrefix(Prefix Term[StringSort], Value Term[StringSort]) Term[BoolSort]
+	stringSuffix(Suffix Term[StringSort], Value Term[StringSort]) Term[BoolSort]
+	sequenceEmpty() Term[S]
+	sequenceUnit(Value any) Term[S]
+	sequenceConcat(Values any) Term[S]
+	sequenceLength(Value any) Term[IntSort]
 	uninterpretedValue(SortID int, ID int, Name string) Term[S]
 	unaryApplication(Function any, Argument any) Term[S]
 	binaryApplication(Function any, First any, Second any) Term[S]
@@ -245,7 +264,7 @@ type Solver[c nat, d nat] enum {
 //goplus:derive off
 //goplus:repr transparent
 type Model[c nat] enum {
-	modelValue(ContextID int, Booleans booleanModel, Integers integerModel, Reals rationalModel, BitVectors bitVectorModel, Arrays *integerArrayModel, BitVectorArrays *bitVectorArrayModel, Datatypes *datatypeModel) Model[c]
+	modelValue(ContextID int, Booleans booleanModel, Integers integerModel, Reals rationalModel, BitVectors bitVectorModel, Strings stringModel, Arrays *integerArrayModel, BitVectorArrays *bitVectorArrayModel, Datatypes *datatypeModel) Model[c]
 }
 
 //goplus:derive off
@@ -510,6 +529,18 @@ func IntegerVariableID(term Term[IntSort]) (int, bool) {
 		return 0, false
 	}
 }
+
+func StringVal(value string) Term[StringSort] { return Term[StringSort].stringValue(value) }
+func StringConst(id int, name string) Term[StringSort] { return Term[StringSort].stringSymbol(id, name) }
+func StringConcat(values ...Term[StringSort]) Term[StringSort] { return Term[StringSort].stringConcat(values) }
+func StringLength(value Term[StringSort]) Term[IntSort] { return stringLength(value) }
+func StringContains(value Term[StringSort], substring Term[StringSort]) Term[BoolSort] { return stringContains(value, substring) }
+func StringHasPrefix(value Term[StringSort], prefix Term[StringSort]) Term[BoolSort] { return stringPrefix(prefix, value) }
+func StringHasSuffix(value Term[StringSort], suffix Term[StringSort]) Term[BoolSort] { return stringSuffix(suffix, value) }
+func SequenceEmpty[E any]() Term[SequenceSort[E]] { return Term[SequenceSort[E]].sequenceEmpty() }
+func SequenceUnit[E any](value Term[E]) Term[SequenceSort[E]] { return Term[SequenceSort[E]].sequenceUnit(value) }
+func SequenceConcat[E any](values ...Term[SequenceSort[E]]) Term[SequenceSort[E]] { return Term[SequenceSort[E]].sequenceConcat(values) }
+func SequenceLength[E any](value Term[SequenceSort[E]]) Term[IntSort] { return sequenceLength(value) }
 
 func ArrayConst[I any, E any](id int, name string) Term[ArraySort[I, E]] {
 	return Term[ArraySort[I, E]].arraySymbol(id, name)
@@ -805,9 +836,9 @@ func CheckAssuming(0 c nat, 0 d nat, solver Solver[c, d], assumptions ...Term[Bo
 	match solver {
 	case solverValue(context, depth, state):
 		if depth < 0 { panic("smt: invalid depth") }
-		status, booleans, integers, reals, bitVectors, core, reason := state.checkAssuming(assumptions)
+		status, booleans, integers, reals, bitVectors, strings, core, reason := state.checkAssuming(assumptions)
 		switch status {
-		case checkSat: return AssumptionsSatisfiable(modelValue(context, booleans, integers, reals, bitVectors, nil, nil, nil))
+		case checkSat: return AssumptionsSatisfiable(modelValue(context, booleans, integers, reals, bitVectors, strings, nil, nil, nil))
 		case checkUnsat: return AssumptionsUnsatisfiable(proofValue(context, len(state.assertions)), core)
 		default: return AssumptionsUnknown(proofValue(context, len(state.assertions)), reason)
 		}
@@ -815,37 +846,45 @@ func CheckAssuming(0 c nat, 0 d nat, solver Solver[c, d], assumptions ...Term[Bo
 }
 
 func BoolValue(0 c nat, model Model[c], term Term[BoolSort]) (bool, bool) {
-	match model { case modelValue(_, booleans, integers, reals, _, _, _, datatypes): return evaluateBoolWithDatatypes(term, booleans, integers, reals, datatypes) }
+	match model { case modelValue(_, booleans, integers, reals, _, strings, _, _, datatypes): return evaluateBoolWithStringsAndDatatypes(term, booleans, integers, reals, strings, datatypes) }
 }
 
 func IntValue(0 c nat, model Model[c], term Term[IntSort]) (int64, bool) {
-	match model { case modelValue(_, booleans, integers, reals, _, _, _, _): return evaluateInt(term, booleans, integers, reals) }
+	match model { case modelValue(_, booleans, integers, reals, _, _, _, _, _): return evaluateInt(term, booleans, integers, reals) }
 }
 
 func ExactIntValue(0 c nat, model Model[c], term Term[IntSort]) (IntegerValue, bool) {
-	match model { case modelValue(_, booleans, integers, reals, bitVectors, _, _, _): return evaluateIntegerWithBitVectors(term, booleans, integers, reals, bitVectors) }
+	match model { case modelValue(_, booleans, integers, reals, bitVectors, _, _, _, _): return evaluateIntegerWithBitVectors(term, booleans, integers, reals, bitVectors) }
 }
 
 func IntegerModelValue(0 c nat, model Model[c], term Term[IntSort]) (IntegerValue, bool) {
-	match model { case modelValue(_, booleans, integers, reals, bitVectors, arrays, _, _): return evaluateIntegerModelTerm(term, booleans, integers, reals, bitVectors, arrays) }
+	match model { case modelValue(_, booleans, integers, reals, bitVectors, _, arrays, _, _): return evaluateIntegerModelTerm(term, booleans, integers, reals, bitVectors, arrays) }
 }
 
 func RealValue(0 c nat, model Model[c], term Term[RealSort]) (Rational, bool) {
-	match model { case modelValue(_, booleans, integers, reals, _, _, _, _): return evaluateReal(term, booleans, integers, reals) }
+	match model { case modelValue(_, booleans, integers, reals, _, _, _, _, _): return evaluateReal(term, booleans, integers, reals) }
 }
 
 func BitVecModelValue(0 c nat, 0 width nat, model Model[c], term Term[BitVecSort[width]]) (BitVectorValue, bool) {
-	match model { case modelValue(_, _, integers, _, bitVectors, _, arrays, _): return evaluateBitVectorModelTerm(term, bitVectors, integers, arrays) }
+	match model { case modelValue(_, _, integers, _, bitVectors, _, _, arrays, _): return evaluateBitVectorModelTerm(term, bitVectors, integers, arrays) }
+}
+
+func StringModelValue(0 c nat, model Model[c], term Term[StringSort]) (string, bool) {
+	match model { case modelValue(_, _, _, _, _, strings, _, _, _): return evaluateString(term, strings) }
+}
+
+func StringIntegerModelValue(0 c nat, model Model[c], term Term[IntSort]) (int64, bool) {
+	match model { case modelValue(_, _, _, _, _, strings, _, _, _): return evaluateStringInteger(term, strings) }
 }
 
 func IntegerArrayValue(0 c nat, model Model[c], array Term[ArraySort[IntSort, IntSort]], index IntegerValue) (IntegerValue, bool) {
-	match model { case modelValue(_, _, integers, _, _, arrays, _, _): return evaluateIntegerArray(array, index, integers, arrays) }
+	match model { case modelValue(_, _, integers, _, _, _, arrays, _, _): return evaluateIntegerArray(array, index, integers, arrays) }
 }
 
 func BitVectorArrayValue(0 c nat, 0 indexWidth nat, 0 elementWidth nat, model Model[c], array Term[ArraySort[BitVecSort[indexWidth], BitVecSort[elementWidth]]], index BitVectorValue) (BitVectorValue, bool) {
-	match model { case modelValue(_, _, _, _, _, _, arrays, _): return evaluateBitVectorArray(array, index, arrays) }
+	match model { case modelValue(_, _, _, _, _, _, _, arrays, _): return evaluateBitVectorArray(array, index, arrays) }
 }
 
 func DatatypeModelValue(datatype nat, constructors nat, 0 c nat, model Model[c], term Term[DatatypeSort[datatype, constructors]]) (DatatypeValue, bool) {
-	match model { case modelValue(_, _, _, _, _, _, _, datatypes): return evaluateDatatype(term, datatypes) }
+	match model { case modelValue(_, _, _, _, _, _, _, _, datatypes): return evaluateDatatype(term, datatypes) }
 }

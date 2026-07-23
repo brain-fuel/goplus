@@ -34,6 +34,48 @@ func TestExecuteBooleanModelAndValues(t *testing.T) {
 	}
 }
 
+func TestExecuteStringLogicAndModelValues(t *testing.T) {
+	script := `(set-logic QF_SLIA)
+(declare-const x String)
+(assert (= x (str.++ "go" "forge")))
+(assert (= (str.len x) 7))
+(assert (str.contains x "of"))
+(assert (str.prefixof "go" x))
+(assert (str.suffixof "forge" x))
+(check-sat)
+(get-value (x (str.++ x "!") (str.len x)))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[7].(Satisfiable); !ok {
+		t.Fatalf("check response=%T", result.Responses[7])
+	}
+	values := result.Responses[8].(ValuesAvailable).Values
+	if value, ok := values[0].(StringValue); !ok || value.Value != "goforge" {
+		t.Fatalf("x=%#v", values[0])
+	}
+	if value, ok := values[1].(StringValue); !ok || value.Value != "goforge!" {
+		t.Fatalf("concat=%#v", values[1])
+	}
+	if value, ok := values[2].(IntegerValue); !ok || value.Value != 7 {
+		t.Fatalf("length=%#v", values[2])
+	}
+}
+
+func TestExecuteUnicodeStringLength(t *testing.T) {
+	script := `(set-logic QF_SLIA)
+(assert (= (str.len "Go+🙂") 4))
+(check-sat)`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[2].(Satisfiable); !ok {
+		t.Fatalf("check response=%T", result.Responses[2])
+	}
+}
+
 func TestExecuteDifferenceLogicPushPop(t *testing.T) {
 	script := `(set-logic QF_IDL)
 (declare-const x Int)

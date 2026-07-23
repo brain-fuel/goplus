@@ -14,6 +14,21 @@ type BoolSort struct{}
 type IntSort struct{}
 type RealSort struct{}
 
+// SequenceSort retains its element sort in Go+ so sequence operations cannot
+// mix incompatible alphabets. StringSort is the SMT-LIB Unicode-string
+// specialization with native UTF-8 source representation.
+//
+//goplus:enum SequenceSort[E any]
+//goplus:derive off
+type SequenceSort[E any] interface{ isSequenceSort(E) }
+
+//goplus:variant (SequenceSort[E]) sequenceSort() SequenceSort[E]
+type sequenceSort[E any] struct{}
+
+func (sequenceSort[E]) isSequenceSort(E) {}
+
+type StringSort struct{}
+
 // DatatypeSort retains both the declaration identity and finite constructor
 // cardinality. Go+ therefore rejects terms from distinct datatype
 // declarations even when they happen to have the same number of constructors.
@@ -878,6 +893,85 @@ type RealLess struct {
 
 func (RealLess) isTerm(BoolSort) {}
 
+//goplus:variant (Term[S]) stringValue(Value string) Term[S]
+type stringValue[S any] struct {
+	value string
+}
+
+func (stringValue[S]) isTerm(S) {}
+
+//goplus:variant (Term[S]) stringSymbol(ID int, Name string) Term[S]
+type stringSymbol[S any] struct {
+	iD   int
+	name string
+}
+
+func (stringSymbol[S]) isTerm(S) {}
+
+//goplus:variant (Term[S]) stringConcat(Values []Term[StringSort]) Term[S]
+type stringConcat[S any] struct {
+	values []Term[StringSort]
+}
+
+func (stringConcat[S]) isTerm(S) {}
+
+//goplus:variant (Term[S]) stringLength(Value Term[StringSort]) Term[IntSort]
+type stringLength struct {
+	value Term[StringSort]
+}
+
+func (stringLength) isTerm(IntSort) {}
+
+//goplus:variant (Term[S]) stringContains(Value Term[StringSort], Substring Term[StringSort]) Term[BoolSort]
+type stringContains struct {
+	value     Term[StringSort]
+	substring Term[StringSort]
+}
+
+func (stringContains) isTerm(BoolSort) {}
+
+//goplus:variant (Term[S]) stringPrefix(Prefix Term[StringSort], Value Term[StringSort]) Term[BoolSort]
+type stringPrefix struct {
+	prefix Term[StringSort]
+	value  Term[StringSort]
+}
+
+func (stringPrefix) isTerm(BoolSort) {}
+
+//goplus:variant (Term[S]) stringSuffix(Suffix Term[StringSort], Value Term[StringSort]) Term[BoolSort]
+type stringSuffix struct {
+	suffix Term[StringSort]
+	value  Term[StringSort]
+}
+
+func (stringSuffix) isTerm(BoolSort) {}
+
+//goplus:variant (Term[S]) sequenceEmpty() Term[S]
+type sequenceEmpty[S any] struct{}
+
+func (sequenceEmpty[S]) isTerm(S) {}
+
+//goplus:variant (Term[S]) sequenceUnit(Value any) Term[S]
+type sequenceUnit[S any] struct {
+	value any
+}
+
+func (sequenceUnit[S]) isTerm(S) {}
+
+//goplus:variant (Term[S]) sequenceConcat(Values any) Term[S]
+type sequenceConcat[S any] struct {
+	values any
+}
+
+func (sequenceConcat[S]) isTerm(S) {}
+
+//goplus:variant (Term[S]) sequenceLength(Value any) Term[IntSort]
+type sequenceLength struct {
+	value any
+}
+
+func (sequenceLength) isTerm(IntSort) {}
+
 //goplus:variant (Term[S]) uninterpretedValue(SortID int, ID int, Name string) Term[S]
 type uninterpretedValue[S any] struct {
 	sortID int
@@ -1488,6 +1582,17 @@ type TermCases[S any, R any] struct {
 	RealScale                          func(Coefficient Rational, Value Term[RealSort]) R
 	RealLessEqual                      func(Left Term[RealSort], Right Term[RealSort]) R
 	RealLess                           func(Left Term[RealSort], Right Term[RealSort]) R
+	stringValue                        func(Value string) R
+	stringSymbol                       func(ID int, Name string) R
+	stringConcat                       func(Values []Term[StringSort]) R
+	stringLength                       func(Value Term[StringSort]) R
+	stringContains                     func(Value Term[StringSort], Substring Term[StringSort]) R
+	stringPrefix                       func(Prefix Term[StringSort], Value Term[StringSort]) R
+	stringSuffix                       func(Suffix Term[StringSort], Value Term[StringSort]) R
+	sequenceEmpty                      func() R
+	sequenceUnit                       func(Value any) R
+	sequenceConcat                     func(Values any) R
+	sequenceLength                     func(Value any) R
 	uninterpretedValue                 func(SortID int, ID int, Name string) R
 	unaryApplication                   func(Function any, Argument any) R
 	binaryApplication                  func(Function any, First any, Second any) R
@@ -1617,6 +1722,28 @@ func TermFold[S any, R any](t Term[S], cs TermCases[S, R]) R {
 		return cs.RealLessEqual(m.Left, m.Right)
 	case RealLess:
 		return cs.RealLess(m.Left, m.Right)
+	case stringValue[S]:
+		return cs.stringValue(m.value)
+	case stringSymbol[S]:
+		return cs.stringSymbol(m.iD, m.name)
+	case stringConcat[S]:
+		return cs.stringConcat(m.values)
+	case stringLength:
+		return cs.stringLength(m.value)
+	case stringContains:
+		return cs.stringContains(m.value, m.substring)
+	case stringPrefix:
+		return cs.stringPrefix(m.prefix, m.value)
+	case stringSuffix:
+		return cs.stringSuffix(m.suffix, m.value)
+	case sequenceEmpty[S]:
+		return cs.sequenceEmpty()
+	case sequenceUnit[S]:
+		return cs.sequenceUnit(m.value)
+	case sequenceConcat[S]:
+		return cs.sequenceConcat(m.values)
+	case sequenceLength:
+		return cs.sequenceLength(m.value)
 	case uninterpretedValue[S]:
 		return cs.uninterpretedValue(m.sortID, m.iD, m.name)
 	case unaryApplication[S]:
@@ -1987,13 +2114,14 @@ func (solverValue) isSolver() {}
 //goplus:repr transparent
 type Model = modelValue
 
-//goplus:variant (Model) modelValue(ContextID int, Booleans booleanModel, Integers integerModel, Reals rationalModel, BitVectors bitVectorModel, Arrays *integerArrayModel, BitVectorArrays *bitVectorArrayModel, Datatypes *datatypeModel) Model[c]
+//goplus:variant (Model) modelValue(ContextID int, Booleans booleanModel, Integers integerModel, Reals rationalModel, BitVectors bitVectorModel, Strings stringModel, Arrays *integerArrayModel, BitVectorArrays *bitVectorArrayModel, Datatypes *datatypeModel) Model[c]
 type modelValue struct {
 	contextID       int
 	booleans        booleanModel
 	integers        integerModel
 	reals           rationalModel
 	bitVectors      bitVectorModel
+	strings         stringModel
 	arrays          *integerArrayModel
 	bitVectorArrays *bitVectorArrayModel
 	datatypes       *datatypeModel
@@ -2752,6 +2880,34 @@ func IntegerVariableID(term Term[IntSort]) (int, bool) {
 	}
 }
 
+func StringVal(value string) Term[StringSort] { return stringValue[StringSort]{value: value} }
+func StringConst(id int, name string) Term[StringSort] {
+	return stringSymbol[StringSort]{iD: id, name: name}
+}
+func StringConcat(values ...Term[StringSort]) Term[StringSort] {
+	return stringConcat[StringSort]{values: values}
+}
+func StringLength(value Term[StringSort]) Term[IntSort] { return stringLength{value: value} }
+func StringContains(value Term[StringSort], substring Term[StringSort]) Term[BoolSort] {
+	return stringContains{value: value, substring: substring}
+}
+func StringHasPrefix(value Term[StringSort], prefix Term[StringSort]) Term[BoolSort] {
+	return stringPrefix{prefix: prefix, value: value}
+}
+func StringHasSuffix(value Term[StringSort], suffix Term[StringSort]) Term[BoolSort] {
+	return stringSuffix{suffix: suffix, value: value}
+}
+func SequenceEmpty[E any]() Term[SequenceSort[E]] { return sequenceEmpty[SequenceSort[E]]{} }
+func SequenceUnit[E any](value Term[E]) Term[SequenceSort[E]] {
+	return sequenceUnit[SequenceSort[E]]{value: value}
+}
+func SequenceConcat[E any](values ...Term[SequenceSort[E]]) Term[SequenceSort[E]] {
+	return sequenceConcat[SequenceSort[E]]{values: values}
+}
+func SequenceLength[E any](value Term[SequenceSort[E]]) Term[IntSort] {
+	return sequenceLength{value: value}
+}
+
 func ArrayConst[I any, E any](id int, name string) Term[ArraySort[I, E]] {
 	return arraySymbol[ArraySort[I, E]]{iD: id, name: name}
 }
@@ -3187,10 +3343,10 @@ func CheckAssuming(solver Solver, assumptions ...Term[BoolSort]) AssumptionCheck
 		if depth < 0 {
 			panic("smt: invalid depth")
 		}
-		status, booleans, integers, reals, bitVectors, core, reason := state.checkAssuming(assumptions)
+		status, booleans, integers, reals, bitVectors, strings, core, reason := state.checkAssuming(assumptions)
 		switch status {
 		case checkSat:
-			return AssumptionsSatisfiable{Value: modelValue{contextID: context, booleans: booleans, integers: integers, reals: reals, bitVectors: bitVectors, arrays: nil, bitVectorArrays: nil, datatypes: nil}}
+			return AssumptionsSatisfiable{Value: modelValue{contextID: context, booleans: booleans, integers: integers, reals: reals, bitVectors: bitVectors, strings: strings, arrays: nil, bitVectorArrays: nil, datatypes: nil}}
 		case checkUnsat:
 			return AssumptionsUnsatisfiable{Value: proofValue{contextID: context, assertions: len(state.assertions)}, Indices: core}
 		default:
@@ -3208,8 +3364,9 @@ func BoolValue(model Model, term Term[BoolSort]) (bool, bool) {
 		booleans := __gp_m42.booleans
 		integers := __gp_m42.integers
 		reals := __gp_m42.reals
+		strings := __gp_m42.strings
 		datatypes := __gp_m42.datatypes
-		return evaluateBoolWithDatatypes(term, booleans, integers, reals, datatypes)
+		return evaluateBoolWithStringsAndDatatypes(term, booleans, integers, reals, strings, datatypes)
 	default:
 		panic("goplus: impossible enum value in match")
 	}
@@ -3283,12 +3440,34 @@ func BitVecModelValue(model Model, term Term[BitVecSort]) (BitVectorValue, bool)
 	}
 }
 
-//goplus:dep IntegerArrayValue(0 c nat, model Model[c], array Term[ArraySort[IntSort, IntSort]], index IntegerValue) (IntegerValue, bool)
-func IntegerArrayValue(model Model, array Term[ArraySort[IntSort, IntSort]], index IntegerValue) (IntegerValue, bool) {
+//goplus:dep StringModelValue(0 c nat, model Model[c], term Term[StringSort]) (string, bool)
+func StringModelValue(model Model, term Term[StringSort]) (string, bool) {
 	switch __gp_m48 := any(model).(type) {
 	case modelValue:
-		integers := __gp_m48.integers
-		arrays := __gp_m48.arrays
+		strings := __gp_m48.strings
+		return evaluateString(term, strings)
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+}
+
+//goplus:dep StringIntegerModelValue(0 c nat, model Model[c], term Term[IntSort]) (int64, bool)
+func StringIntegerModelValue(model Model, term Term[IntSort]) (int64, bool) {
+	switch __gp_m49 := any(model).(type) {
+	case modelValue:
+		strings := __gp_m49.strings
+		return evaluateStringInteger(term, strings)
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+}
+
+//goplus:dep IntegerArrayValue(0 c nat, model Model[c], array Term[ArraySort[IntSort, IntSort]], index IntegerValue) (IntegerValue, bool)
+func IntegerArrayValue(model Model, array Term[ArraySort[IntSort, IntSort]], index IntegerValue) (IntegerValue, bool) {
+	switch __gp_m50 := any(model).(type) {
+	case modelValue:
+		integers := __gp_m50.integers
+		arrays := __gp_m50.arrays
 		return evaluateIntegerArray(array, index, integers, arrays)
 	default:
 		panic("goplus: impossible enum value in match")
@@ -3297,9 +3476,9 @@ func IntegerArrayValue(model Model, array Term[ArraySort[IntSort, IntSort]], ind
 
 //goplus:dep BitVectorArrayValue(0 c nat, 0 indexWidth nat, 0 elementWidth nat, model Model[c], array Term[ArraySort[BitVecSort[indexWidth], BitVecSort[elementWidth]]], index BitVectorValue) (BitVectorValue, bool)
 func BitVectorArrayValue(model Model, array Term[ArraySort[BitVecSort, BitVecSort]], index BitVectorValue) (BitVectorValue, bool) {
-	switch __gp_m49 := any(model).(type) {
+	switch __gp_m51 := any(model).(type) {
 	case modelValue:
-		arrays := __gp_m49.bitVectorArrays
+		arrays := __gp_m51.bitVectorArrays
 		return evaluateBitVectorArray(array, index, arrays)
 	default:
 		panic("goplus: impossible enum value in match")
@@ -3308,9 +3487,9 @@ func BitVectorArrayValue(model Model, array Term[ArraySort[BitVecSort, BitVecSor
 
 //goplus:dep DatatypeModelValue(datatype nat, constructors nat, 0 c nat, model Model[c], term Term[DatatypeSort[datatype, constructors]]) (DatatypeValue, bool)
 func DatatypeModelValue(datatype int, constructors int, model Model, term Term[DatatypeSort]) (DatatypeValue, bool) {
-	switch __gp_m50 := any(model).(type) {
+	switch __gp_m52 := any(model).(type) {
 	case modelValue:
-		datatypes := __gp_m50.datatypes
+		datatypes := __gp_m52.datatypes
 		return evaluateDatatype(term, datatypes)
 	default:
 		panic("goplus: impossible enum value in match")
