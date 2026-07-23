@@ -925,19 +925,46 @@ func TestFourSymbolAffineLengthIntegerSequenceSystems(t *testing.T) {
 		SequenceLength(w), SequenceLength(v), SequenceLength(a),
 		SequenceLength(b), SequenceLength(c), SequenceLength(d),
 	}
+	seventeenExpressions := []Term[SequenceSort[IntSort]]{
+		x, y, z, w, v, a, b, c, d,
+	}
 	for index := 0; index < 8; index++ {
 		expression := SequenceConst[IntSort](80+index, "overflow")
+		seventeenExpressions = append(seventeenExpressions, expression)
 		seventeenLengths = append(seventeenLengths, SequenceLength(expression))
 	}
 	seventeenSymbol := Equal{
 		Left:  Add{Values: seventeenLengths},
 		Right: Integer{Value: 17},
 	}
-	if checked := Check(Assert(40, New(), seventeenSymbol)); func() bool {
-		_, ok := checked.(Unknown)
-		return ok
-	}() == false {
-		t.Fatalf("seventeen-symbol result=%T", checked)
+	seventeenSystem := And{Values: []Term[BoolSort]{
+		seventeenSymbol,
+		LessEqual{
+			Left:  seventeenLengths[0],
+			Right: seventeenLengths[1],
+		},
+	}}
+	seventeenResult, ok := Check(
+		Assert(40, New(), seventeenSystem),
+	).(Satisfiable)
+	if !ok {
+		t.Fatalf(
+			"seventeen-symbol result=%T",
+			Check(Assert(40, New(), seventeenSystem)),
+		)
+	}
+	total = 0
+	for index, expression := range seventeenExpressions {
+		value, found := IntegerSequenceModelValue(
+			seventeenResult.Value, expression,
+		)
+		if !found {
+			t.Fatalf("missing seventeen-symbol model index=%d", index)
+		}
+		total += value.Len()
+	}
+	if total != 17 {
+		t.Fatalf("seventeen-symbol total=%d", total)
 	}
 }
 
