@@ -721,6 +721,69 @@ func TestMultiSymbolAffineLengthIntegerSequenceInequalities(t *testing.T) {
 	}() == false {
 		t.Fatalf("conflicting result=%T", checked)
 	}
+
+	system := And{Values: []Term[BoolSort]{
+		LessEqual{
+			Left: Integer{Value: 6},
+			Right: Add{Values: []Term[IntSort]{
+				SequenceLength(x),
+				SequenceLength(y),
+				SequenceLength(z),
+			}},
+		},
+		LessEqual{
+			Left: Add{Values: []Term[IntSort]{
+				IntegerScale{
+					Coefficient: NewIntegerValue(2),
+					Value:       SequenceLength(x),
+				},
+				SequenceLength(y),
+				SequenceLength(z),
+			}},
+			Right: Integer{Value: 8},
+		},
+		SequenceHasPrefix(x, unit(1)),
+		SequenceHasPrefix(y, unit(2)),
+		SequenceHasPrefix(z, unit(3)),
+	}}
+	systemResult, ok := Check(Assert(34, New(), system)).(Satisfiable)
+	if !ok {
+		t.Fatal("interacting affine inequalities must be satisfiable")
+	}
+	xValue, xFound = IntegerSequenceModelValue(systemResult.Value, x)
+	yValue, yFound = IntegerSequenceModelValue(systemResult.Value, y)
+	zValue, zFound = IntegerSequenceModelValue(systemResult.Value, z)
+	total := xValue.Len() + yValue.Len() + zValue.Len()
+	if !xFound || !yFound || !zFound || total < 6 ||
+		2*xValue.Len()+yValue.Len()+zValue.Len() > 8 {
+		t.Fatalf(
+			"system lengths=(%d,%v)/(%d,%v)/(%d,%v)",
+			xValue.Len(), xFound, yValue.Len(), yFound, zValue.Len(), zFound,
+		)
+	}
+
+	impossibleSystem := And{Values: []Term[BoolSort]{
+		LessEqual{
+			Left: Add{Values: []Term[IntSort]{
+				SequenceLength(x),
+				SequenceLength(y),
+			}},
+			Right: Integer{Value: 2},
+		},
+		LessEqual{
+			Left: Integer{Value: 3},
+			Right: Add{Values: []Term[IntSort]{
+				SequenceLength(x),
+				SequenceLength(y),
+			}},
+		},
+	}}
+	if checked := Check(Assert(35, New(), impossibleSystem)); func() bool {
+		_, ok := checked.(Unsatisfiable)
+		return ok
+	}() == false {
+		t.Fatalf("impossible system result=%T", checked)
+	}
 }
 
 func TestSymbolicIntegerSequenceEqualityClasses(t *testing.T) {

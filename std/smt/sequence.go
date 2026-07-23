@@ -2236,6 +2236,264 @@ func solveIntegerSequenceLengthRelation(
 	return true, true
 }
 
+type integerSequenceLengthSystemSearch struct {
+	relations    *integerSequenceRequirementSet
+	ids          [3]int
+	count        int
+	requirements [3]integerSequenceRequirements
+	assigned     [3]IntegerSequenceValue
+	hasAssigned  [3]bool
+	values       [3]IntegerSequenceValue
+	lengths      [3]int
+	states       int
+}
+
+func (search *integerSequenceLengthSystemSearch) addID(id int) bool {
+	for index := 0; index < search.count; index++ {
+		if search.ids[index] == id {
+			return true
+		}
+	}
+	if search.count == len(search.ids) {
+		return false
+	}
+	search.ids[search.count] = id
+	search.count++
+	return true
+}
+
+func integerSequenceLengthRelationCoefficient(
+	relation integerSequenceLengthRelation,
+	id int,
+) IntegerValue {
+	for index := 0; index < relation.count; index++ {
+		if relation.ids[index] == id {
+			return relation.coefficients[index]
+		}
+	}
+	return IntegerValue{}
+}
+
+func (search *integerSequenceLengthSystemSearch) relationBounds(
+	relation integerSequenceLengthRelation,
+	known int,
+) (IntegerValue, IntegerValue, bool) {
+	minimum, maximum := relation.constant, relation.constant
+	for index := 0; index < search.count; index++ {
+		coefficient := integerSequenceLengthRelationCoefficient(
+			relation, search.ids[index],
+		)
+		if CompareIntegerValue(coefficient, IntegerValue{}) == 0 {
+			continue
+		}
+		start, end := search.lengths[index], search.lengths[index]
+		if index >= known {
+			var admissible bool
+			start, end, admissible = integerSequenceLengthRange(
+				search.requirements[index],
+				search.assigned[index],
+				search.hasAssigned[index],
+			)
+			if !admissible {
+				return IntegerValue{}, IntegerValue{}, false
+			}
+		}
+		minimumLength, maximumLength := start, end
+		if CompareIntegerValue(coefficient, IntegerValue{}) < 0 {
+			minimumLength, maximumLength = end, start
+		}
+		minimum = AddIntegerValue(
+			minimum,
+			MultiplyIntegerValue(
+				coefficient, NewIntegerValue(int64(minimumLength)),
+			),
+		)
+		maximum = AddIntegerValue(
+			maximum,
+			MultiplyIntegerValue(
+				coefficient, NewIntegerValue(int64(maximumLength)),
+			),
+		)
+	}
+	return minimum, maximum, true
+}
+
+func (search *integerSequenceLengthSystemSearch) canStillHold(known int) bool {
+	for index := 0; index < search.relations.relationCount; index++ {
+		relation := search.relations.relationAt(index)
+		minimum, maximum, admissible := search.relationBounds(relation, known)
+		if !admissible {
+			return false
+		}
+		if relation.equality {
+			if CompareIntegerValue(minimum, IntegerValue{}) > 0 ||
+				CompareIntegerValue(maximum, IntegerValue{}) < 0 {
+				return false
+			}
+		} else if CompareIntegerValue(minimum, IntegerValue{}) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (search *integerSequenceLengthSystemSearch) buildCandidate() (bool, bool) {
+	for index := 0; index < search.count; index++ {
+		if search.hasAssigned[index] {
+			search.values[index] = search.assigned[index]
+			continue
+		}
+		value, consistent, supported := buildIntegerSequenceAtLength(
+			search.requirements[index], search.lengths[index],
+		)
+		if !supported {
+			return false, false
+		}
+		if !consistent {
+			return false, true
+		}
+		search.values[index] = value
+	}
+	return true, true
+}
+
+func (search *integerSequenceLengthSystemSearch) solveFinal(
+	index int,
+) (bool, bool) {
+	search.states++
+	if search.states > maximumConstructedIntegerSequenceLength {
+		return false, false
+	}
+	start, end, admissible := integerSequenceLengthRange(
+		search.requirements[index],
+		search.assigned[index],
+		search.hasAssigned[index],
+	)
+	if !admissible {
+		return false, true
+	}
+	for relationIndex := 0; relationIndex < search.relations.relationCount; relationIndex++ {
+		relation := search.relations.relationAt(relationIndex)
+		sum := relation.constant
+		for known := 0; known < index; known++ {
+			sum = AddIntegerValue(
+				sum,
+				MultiplyIntegerValue(
+					integerSequenceLengthRelationCoefficient(
+						relation, search.ids[known],
+					),
+					NewIntegerValue(int64(search.lengths[known])),
+				),
+			)
+		}
+		coefficient := integerSequenceLengthRelationCoefficient(
+			relation, search.ids[index],
+		)
+		coefficientSign := CompareIntegerValue(coefficient, IntegerValue{})
+		if coefficientSign == 0 {
+			comparison := CompareIntegerValue(sum, IntegerValue{})
+			if relation.equality && comparison != 0 ||
+				!relation.equality && comparison > 0 {
+				return false, true
+			}
+			continue
+		}
+		quotient, remainder, _ := DivModIntegerValue(
+			NegateIntegerValue(sum), coefficient,
+		)
+		if relation.equality {
+			if CompareIntegerValue(remainder, IntegerValue{}) != 0 {
+				return false, true
+			}
+			length, fits := quotient.Int64()
+			if !fits || length < int64(start) || length > int64(end) {
+				return false, true
+			}
+			start, end = int(length), int(length)
+			continue
+		}
+		length, fits := quotient.Int64()
+		if coefficientSign > 0 {
+			if fits && int64(end) > length {
+				end = int(length)
+			} else if !fits && CompareIntegerValue(quotient, IntegerValue{}) < 0 {
+				return false, true
+			}
+		} else {
+			if fits && int64(start) < length {
+				start = int(length)
+			} else if !fits && CompareIntegerValue(quotient, IntegerValue{}) > 0 {
+				return false, true
+			}
+		}
+		if start > end {
+			return false, true
+		}
+	}
+	search.lengths[index] = start
+	return search.buildCandidate()
+}
+
+func (search *integerSequenceLengthSystemSearch) solve(
+	index int,
+) (bool, bool) {
+	if index == search.count-1 {
+		return search.solveFinal(index)
+	}
+	start, end, admissible := integerSequenceLengthRange(
+		search.requirements[index],
+		search.assigned[index],
+		search.hasAssigned[index],
+	)
+	if !admissible {
+		return false, true
+	}
+	for length := start; length <= end; length++ {
+		search.lengths[index] = length
+		if !search.canStillHold(index + 1) {
+			continue
+		}
+		found, complete := search.solve(index + 1)
+		if found || !complete {
+			return found, complete
+		}
+	}
+	return false, true
+}
+
+func solveIntegerSequenceLengthSystem(
+	requirements *integerSequenceRequirementSet,
+	model *integerSequenceModel,
+) (bool, bool) {
+	search := integerSequenceLengthSystemSearch{relations: requirements}
+	for relationIndex := 0; relationIndex < requirements.relationCount; relationIndex++ {
+		relation := requirements.relationAt(relationIndex)
+		for index := 0; index < relation.count; index++ {
+			if !search.addID(relation.ids[index]) {
+				return true, false
+			}
+		}
+	}
+	for index := 0; index < search.count; index++ {
+		search.requirements[index] = *requirements.forSymbol(search.ids[index])
+		search.assigned[index], search.hasAssigned[index] =
+			model.lookup(search.ids[index])
+	}
+	found, complete := search.solve(0)
+	if !complete {
+		return true, false
+	}
+	if !found {
+		return false, true
+	}
+	for index := 0; index < search.count; index++ {
+		if !model.set(search.ids[index], search.values[index]) {
+			return false, true
+		}
+	}
+	return true, true
+}
+
 func bindPositiveIntegerSequenceWitnesses(
 	assertions []Term[BoolSort],
 	model *integerSequenceModel,
@@ -2250,28 +2508,19 @@ func bindPositiveIntegerSequenceWitnesses(
 			return consistent, supported
 		}
 	}
-	for equalityPass := true; ; equalityPass = false {
-		inequalities := 0
-		for index := 0; index < requirements.relationCount; index++ {
-			relation := requirements.relationAt(index)
-			if !relation.equality {
-				inequalities++
-			}
-			if relation.equality != equalityPass {
-				continue
-			}
-			if !equalityPass && inequalities > 1 {
-				return true, false
-			}
-			consistent, supported := solveIntegerSequenceLengthRelation(
-				relation, &requirements, model,
-			)
-			if !consistent || !supported {
-				return consistent, supported
-			}
+	if requirements.relationCount == 1 {
+		consistent, supported := solveIntegerSequenceLengthRelation(
+			requirements.relationAt(0), &requirements, model,
+		)
+		if !consistent || !supported {
+			return consistent, supported
 		}
-		if !equalityPass {
-			break
+	} else if requirements.relationCount > 1 {
+		consistent, supported := solveIntegerSequenceLengthSystem(
+			&requirements, model,
+		)
+		if !consistent || !supported {
+			return consistent, supported
 		}
 	}
 	for index := 0; index < requirements.count && index < len(requirements.inline); index++ {
