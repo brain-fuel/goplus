@@ -34,6 +34,10 @@ variants without weakening GADT reachability checks.
 Together these features support `std/smt`'s sorted terms, context-indexed
 immutable solvers, models, proofs, assumptions, unsat cores, adaptive Boolean
 solving, exact integer difference logic, and ground congruence closure.
+Built-in-sort-indexed unary and binary uninterpreted functions now include
+`Int -> Int` and `Int × Int -> Int`; wrong-sort applications are
+unrepresentable in Go+, while `std/smtlib` decides ground `QF_UFLIA`
+congruence over symbols and exact integer constants.
 
 ## v0.27.0 — Grammar-Indexed Parser Foundations
 

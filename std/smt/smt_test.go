@@ -1436,6 +1436,35 @@ func TestRealSortedUnaryFunctionCongruence(t *testing.T) {
 	}
 }
 
+func TestIntegerSortedFunctionCongruence(t *testing.T) {
+	x := IntegerVariable(1)
+	y := IntegerVariable(2)
+	unary := DeclareIntUnaryFunction(3, "f")
+	binary := DeclareIntBinaryFunction(4, "combine")
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: y},
+		Not{Value: Equal{Left: ApplySortedUnary(unary, x), Right: ApplySortedUnary(unary, y)}},
+	}}
+	if result := Check(Assert(1, New(), formula)); func() bool { _, ok := result.(Unsatisfiable); return ok }() == false {
+		t.Fatalf("unary result=%T", result)
+	}
+	formula = And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: y},
+		Not{Value: Equal{Left: ApplySortedBinary(binary, x, y), Right: ApplySortedBinary(binary, y, x)}},
+	}}
+	if result := Check(Assert(2, New(), formula)); func() bool { _, ok := result.(Unsatisfiable); return ok }() == false {
+		t.Fatalf("binary result=%T", result)
+	}
+	constant := Integer{Value: 7}
+	constantFormula := Not{Value: Equal{
+		Left:  ApplySortedUnary(unary, constant),
+		Right: ApplySortedUnary(unary, constant),
+	}}
+	if result := Check(Assert(3, New(), constantFormula)); func() bool { _, ok := result.(Unsatisfiable); return ok }() == false {
+		t.Fatalf("constant result=%T", result)
+	}
+}
+
 func TestSharedRealEUFExchangesLRAImpliedEquality(t *testing.T) {
 	x := RealSymbol{ID: 1, Name: "x"}
 	y := RealSymbol{ID: 2, Name: "y"}

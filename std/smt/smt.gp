@@ -642,12 +642,20 @@ func DeclareRealUnaryFunction(id int, name string) SortedUnaryFunction[RealSort,
 	return SortedUnaryFunction[RealSort, RealSort].sortedUnaryFunctionValue(-1, -1, id, name)
 }
 
+func DeclareIntUnaryFunction(id int, name string) SortedUnaryFunction[IntSort, IntSort] {
+	return SortedUnaryFunction[IntSort, IntSort].sortedUnaryFunctionValue(-2, -2, id, name)
+}
+
 func ApplySortedUnary[D any, R any](function SortedUnaryFunction[D, R], argument Term[D]) Term[R] {
 	return Term[R].sortedUnaryApplication(function, argument, -1)
 }
 
 func DeclareRealBinaryFunction(id int, name string) SortedBinaryFunction[RealSort, RealSort, RealSort] {
 	return SortedBinaryFunction[RealSort, RealSort, RealSort].sortedBinaryFunctionValue(-1, -1, -1, id, name)
+}
+
+func DeclareIntBinaryFunction(id int, name string) SortedBinaryFunction[IntSort, IntSort, IntSort] {
+	return SortedBinaryFunction[IntSort, IntSort, IntSort].sortedBinaryFunctionValue(-2, -2, -2, id, name)
 }
 
 func ApplySortedBinary[A any, B any, R any](function SortedBinaryFunction[A, B, R], first Term[A], second Term[B]) Term[R] {

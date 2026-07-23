@@ -1785,6 +1785,33 @@ func TestExecuteRealSortedFunctionCongruenceAndSharedBoundary(t *testing.T) {
 	}
 }
 
+func TestExecuteIntegerSortedFunctionCongruence(t *testing.T) {
+	for _, source := range []string{
+		`(set-logic QF_UFLIA)
+(declare-const x Int)
+(declare-const y Int)
+(declare-fun f (Int) Int)
+(assert (= x y))
+(assert (not (= (f x) (f y))))
+(check-sat)`,
+		`(set-logic QF_UFLIA)
+(declare-const x Int)
+(declare-const y Int)
+(declare-fun combine (Int Int) Int)
+(assert (= x y))
+(assert (not (= (combine x y) (combine y x))))
+(check-sat)`,
+	} {
+		result, ok := Execute(source).(Executed)
+		if !ok {
+			t.Fatalf("result=%#v", Execute(source))
+		}
+		if _, ok := result.Responses[len(result.Responses)-1].(Unsatisfiable); !ok {
+			t.Fatalf("last response=%T", result.Responses[len(result.Responses)-1])
+		}
+	}
+}
+
 func TestExecutePurifiedRealFunctionArithmetic(t *testing.T) {
 	source := `(set-logic QF_UFLRA)
 (declare-const x Real)
