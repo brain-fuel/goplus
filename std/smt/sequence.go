@@ -49,6 +49,78 @@ type integerSequenceModel struct {
 	overflow map[int]IntegerSequenceValue
 }
 
+type integerSequenceAliasEntry struct {
+	id     int
+	parent int
+}
+
+type integerSequenceAliases struct {
+	count    int
+	inline   [8]integerSequenceAliasEntry
+	overflow map[int]int
+}
+
+func (aliases *integerSequenceAliases) parent(id int) (int, bool) {
+	for index := 0; index < aliases.count && index < len(aliases.inline); index++ {
+		if aliases.inline[index].id == id {
+			return aliases.inline[index].parent, true
+		}
+	}
+	parent, ok := aliases.overflow[id]
+	return parent, ok
+}
+
+func (aliases *integerSequenceAliases) ensure(id int) {
+	if _, ok := aliases.parent(id); ok {
+		return
+	}
+	if aliases.count < len(aliases.inline) {
+		aliases.inline[aliases.count] = integerSequenceAliasEntry{id: id, parent: id}
+		aliases.count++
+		return
+	}
+	if aliases.overflow == nil {
+		aliases.overflow = make(map[int]int)
+	}
+	aliases.overflow[id] = id
+	aliases.count++
+}
+
+func (aliases *integerSequenceAliases) setParent(id, parent int) {
+	for index := 0; index < aliases.count && index < len(aliases.inline); index++ {
+		if aliases.inline[index].id == id {
+			aliases.inline[index].parent = parent
+			return
+		}
+	}
+	aliases.overflow[id] = parent
+}
+
+func (aliases *integerSequenceAliases) root(id int) int {
+	parent, ok := aliases.parent(id)
+	if !ok {
+		return id
+	}
+	for parent != id {
+		id = parent
+		parent, _ = aliases.parent(id)
+	}
+	return id
+}
+
+func (aliases *integerSequenceAliases) union(left, right int) {
+	aliases.ensure(left)
+	aliases.ensure(right)
+	left, right = aliases.root(left), aliases.root(right)
+	if left == right {
+		return
+	}
+	if right < left {
+		left, right = right, left
+	}
+	aliases.setParent(right, left)
+}
+
 type integerSequenceRequirements struct {
 	prefix      IntegerSequenceValue
 	suffix      IntegerSequenceValue
@@ -748,11 +820,18 @@ func evaluateBoolWithIntegerSequences(
 func bindGroundIntegerSequenceAssignments(
 	term Term[BoolSort],
 	model *integerSequenceModel,
+	aliases *integerSequenceAliases,
 ) (bool, bool) {
 	switch value := term.(type) {
 	case Equal:
 		left, leftSymbol := integerSequenceSymbolID(value.Left)
 		right, rightSymbol := integerSequenceSymbolID(value.Right)
+		if leftSymbol {
+			left = aliases.root(left)
+		}
+		if rightSymbol {
+			right = aliases.root(right)
+		}
 		if leftSymbol {
 			sequence, ok := value.Right.(Term[SequenceSort[IntSort]])
 			if !ok || rightSymbol {
@@ -781,7 +860,7 @@ func bindGroundIntegerSequenceAssignments(
 		}
 	case And:
 		for _, item := range value.Values {
-			consistent, bound := bindGroundIntegerSequenceAssignments(item, model)
+			consistent, bound := bindGroundIntegerSequenceAssignments(item, model, aliases)
 			if bound && !consistent {
 				return false, true
 			}
@@ -792,13 +871,56 @@ func bindGroundIntegerSequenceAssignments(
 			if negated[index] {
 				continue
 			}
-			consistent, bound := bindGroundIntegerSequenceAssignments(item, model)
+			consistent, bound := bindGroundIntegerSequenceAssignments(item, model, aliases)
 			if bound && !consistent {
 				return false, true
 			}
 		}
 	}
 	return true, false
+}
+
+func collectIntegerSequenceAliases(
+	term Term[BoolSort],
+	aliases *integerSequenceAliases,
+) {
+	switch value := term.(type) {
+	case Equal:
+		left, leftOK := integerSequenceSymbolID(value.Left)
+		right, rightOK := integerSequenceSymbolID(value.Right)
+		if leftOK && rightOK {
+			aliases.union(left, right)
+		}
+	case And:
+		for _, item := range value.Values {
+			collectIntegerSequenceAliases(item, aliases)
+		}
+	case BooleanConjunction:
+		items, negated := value.values()
+		for index, item := range items {
+			if !negated[index] {
+				collectIntegerSequenceAliases(item, aliases)
+			}
+		}
+	}
+}
+
+func expandIntegerSequenceAliases(
+	aliases *integerSequenceAliases,
+	model *integerSequenceModel,
+) bool {
+	for index := 0; index < aliases.count && index < len(aliases.inline); index++ {
+		id := aliases.inline[index].id
+		if value, ok := model.lookup(aliases.root(id)); ok && !model.set(id, value) {
+			return false
+		}
+	}
+	for id := range aliases.overflow {
+		if value, ok := model.lookup(aliases.root(id)); ok && !model.set(id, value) {
+			return false
+		}
+	}
+	return true
 }
 
 func integerSequenceSymbolID(term any) (int, bool) {
@@ -1050,6 +1172,7 @@ func collectAffineIntegerSequenceLengthEquality(
 	value Equal,
 	model integerSequenceModel,
 	requirements *integerSequenceRequirementSet,
+	aliases *integerSequenceAliases,
 ) (bool, bool, bool) {
 	left, leftOK := value.Left.(Term[IntSort])
 	right, rightOK := value.Right.(Term[IntSort])
@@ -1068,6 +1191,7 @@ func collectAffineIntegerSequenceLengthEquality(
 		)
 		return result, ok, true
 	}
+	form.id = aliases.root(form.id)
 	if _, assigned := model.lookup(form.id); assigned {
 		result, ok := evaluateBoolWithIntegerSequences(
 			value, booleanModel{}, integerModel{}, rationalModel{}, model,
@@ -1105,6 +1229,7 @@ func collectAffineIntegerSequenceLengthBound(
 	strict bool,
 	model integerSequenceModel,
 	requirements *integerSequenceRequirementSet,
+	aliases *integerSequenceAliases,
 ) (bool, bool, bool) {
 	if !containsIntegerSequenceAffineLength(left) &&
 		!containsIntegerSequenceAffineLength(right) {
@@ -1124,6 +1249,7 @@ func collectAffineIntegerSequenceLengthBound(
 		)
 		return result, ok, true
 	}
+	form.id = aliases.root(form.id)
 	if _, assigned := model.lookup(form.id); assigned {
 		var term Term[BoolSort] = LessEqual{Left: left, Right: right}
 		if strict {
@@ -1163,12 +1289,13 @@ func collectPositiveIntegerSequenceRequirements(
 	term Term[BoolSort],
 	model integerSequenceModel,
 	requirements *integerSequenceRequirementSet,
+	aliases *integerSequenceAliases,
 ) (bool, bool) {
 	switch value := term.(type) {
 	case And:
 		for _, item := range value.Values {
 			consistent, supported := collectPositiveIntegerSequenceRequirements(
-				item, model, requirements,
+				item, model, requirements, aliases,
 			)
 			if !consistent || !supported {
 				return consistent, supported
@@ -1190,7 +1317,7 @@ func collectPositiveIntegerSequenceRequirements(
 				continue
 			}
 			consistent, supported := collectPositiveIntegerSequenceRequirements(
-				item, model, requirements,
+				item, model, requirements, aliases,
 			)
 			if !consistent || !supported {
 				return consistent, supported
@@ -1199,7 +1326,7 @@ func collectPositiveIntegerSequenceRequirements(
 		return true, true
 	case Equal:
 		consistent, supported, recognized := collectAffineIntegerSequenceLengthEquality(
-			value, model, requirements,
+			value, model, requirements, aliases,
 		)
 		if recognized {
 			return consistent, supported
@@ -1211,6 +1338,7 @@ func collectPositiveIntegerSequenceRequirements(
 			lengthTerm = value.Left
 		}
 		if leftLength {
+			lengthID = aliases.root(lengthID)
 			if assigned, ok := model.lookup(lengthID); ok {
 				ground, ok := lengthTerm.(Term[IntSort])
 				if !ok {
@@ -1246,8 +1374,15 @@ func collectPositiveIntegerSequenceRequirements(
 				requirements.forSymbol(lengthID), int(length),
 			), true
 		}
-		_, leftSymbol := integerSequenceSymbolID(value.Left)
+		leftID, leftSymbol := integerSequenceSymbolID(value.Left)
 		_, rightSymbol := integerSequenceSymbolID(value.Right)
+		if leftSymbol && rightSymbol {
+			root := aliases.root(leftID)
+			if _, assigned := model.lookup(root); !assigned {
+				requirements.forSymbol(root)
+			}
+			return true, true
+		}
 		if leftSymbol || rightSymbol {
 			return true, true
 		}
@@ -1264,7 +1399,7 @@ func collectPositiveIntegerSequenceRequirements(
 		consistent, supported, recognized := true, true, false
 		if leftOK && rightOK {
 			consistent, supported, recognized = collectAffineIntegerSequenceLengthBound(
-				left, right, true, model, requirements,
+				left, right, true, model, requirements, aliases,
 			)
 		}
 		if recognized {
@@ -1283,7 +1418,7 @@ func collectPositiveIntegerSequenceRequirements(
 		consistent, supported, recognized := true, true, false
 		if leftOK && rightOK {
 			consistent, supported, recognized = collectAffineIntegerSequenceLengthBound(
-				left, right, false, model, requirements,
+				left, right, false, model, requirements, aliases,
 			)
 		}
 		if recognized {
@@ -1303,6 +1438,7 @@ func collectPositiveIntegerSequenceRequirements(
 			return true, false
 		}
 		id, symbolic := integerSequenceSymbolID(sequence)
+		id = aliases.root(id)
 		if !symbolic {
 			_, ok := evaluateBoolWithIntegerSequences(
 				term, booleanModel{}, integerModel{}, rationalModel{}, model,
@@ -1327,6 +1463,7 @@ func collectPositiveIntegerSequenceRequirements(
 			return true, false
 		}
 		id, symbolic := integerSequenceSymbolID(sequence)
+		id = aliases.root(id)
 		if !symbolic {
 			_, ok := evaluateBoolWithIntegerSequences(
 				term, booleanModel{}, integerModel{}, rationalModel{}, model,
@@ -1350,6 +1487,7 @@ func collectPositiveIntegerSequenceRequirements(
 			return true, false
 		}
 		id, symbolic := integerSequenceSymbolID(sequence)
+		id = aliases.root(id)
 		if !symbolic {
 			_, ok := evaluateBoolWithIntegerSequences(
 				term, booleanModel{}, integerModel{}, rationalModel{}, model,
@@ -1620,11 +1758,12 @@ func buildIntegerSequenceWitness(
 func bindPositiveIntegerSequenceWitnesses(
 	assertions []Term[BoolSort],
 	model *integerSequenceModel,
+	aliases *integerSequenceAliases,
 ) (bool, bool) {
 	var requirements integerSequenceRequirementSet
 	for _, assertion := range assertions {
 		consistent, supported := collectPositiveIntegerSequenceRequirements(
-			assertion, *model, &requirements,
+			assertion, *model, &requirements, aliases,
 		)
 		if !consistent || !supported {
 			return consistent, supported
@@ -1661,13 +1800,24 @@ func solveIntegerSequenceAssertions(assertions []Term[BoolSort]) (checkOutcome, 
 		return checkOutcome{}, false
 	}
 	var sequences integerSequenceModel
+	var aliases integerSequenceAliases
 	for _, assertion := range assertions {
-		consistent, bound := bindGroundIntegerSequenceAssignments(assertion, &sequences)
+		collectIntegerSequenceAliases(assertion, &aliases)
+	}
+	for _, assertion := range assertions {
+		consistent, bound := bindGroundIntegerSequenceAssignments(
+			assertion, &sequences, &aliases,
+		)
 		if bound && !consistent {
 			return checkOutcome{status: checkUnsat}, true
 		}
 	}
-	consistent, supported := bindPositiveIntegerSequenceWitnesses(assertions, &sequences)
+	if !expandIntegerSequenceAliases(&aliases, &sequences) {
+		return checkOutcome{status: checkUnsat}, true
+	}
+	consistent, supported := bindPositiveIntegerSequenceWitnesses(
+		assertions, &sequences, &aliases,
+	)
 	if !consistent {
 		return checkOutcome{status: checkUnsat}, true
 	}
@@ -1676,6 +1826,9 @@ func solveIntegerSequenceAssertions(assertions []Term[BoolSort]) (checkOutcome, 
 			status: checkUnknown,
 			reason: UnsupportedTheory{Name: "integer sequence expression outside the positive symbolic fragment"},
 		}, true
+	}
+	if !expandIntegerSequenceAliases(&aliases, &sequences) {
+		return checkOutcome{status: checkUnsat}, true
 	}
 	for _, assertion := range assertions {
 		value, ok := evaluateBoolWithIntegerSequences(

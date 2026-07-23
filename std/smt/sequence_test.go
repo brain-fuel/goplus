@@ -489,3 +489,72 @@ func TestAffineLengthSymbolicIntegerSequenceWitness(t *testing.T) {
 		t.Fatalf("multiple-symbol result=%T", checked)
 	}
 }
+
+func TestSymbolicIntegerSequenceEqualityClasses(t *testing.T) {
+	unit := func(value int64) Term[SequenceSort[IntSort]] {
+		return SequenceUnit[IntSort](Integer{Value: value})
+	}
+	x := SequenceConst[IntSort](50, "x")
+	y := SequenceConst[IntSort](51, "y")
+	z := SequenceConst[IntSort](52, "z")
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: y},
+		Equal{Left: y, Right: z},
+		SequenceHasPrefix(x, unit(1)),
+		SequenceContains(y, unit(2)),
+		SequenceHasSuffix(z, unit(3)),
+		Equal{Left: SequenceLength(y), Right: Integer{Value: 3}},
+	}}
+	checked := Check(Assert(26, New(), formula))
+	result, ok := checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("result=%T", checked)
+	}
+	for name, expression := range map[string]Term[SequenceSort[IntSort]]{
+		"x": x,
+		"y": y,
+		"z": z,
+	} {
+		value, found := IntegerSequenceModelValue(result.Value, expression)
+		if !found || value.Len() != 3 {
+			t.Fatalf("%s len=(%d,%v)", name, value.Len(), found)
+		}
+	}
+	if valid, found := BoolValue(result.Value, formula); !found || !valid {
+		t.Fatalf("formula=(%v,%v)", valid, found)
+	}
+
+	ground := SequenceConcat(unit(4), unit(5))
+	assigned := And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: y},
+		Equal{Left: y, Right: ground},
+	}}
+	assignedResult, ok := Check(Assert(27, New(), assigned)).(Satisfiable)
+	if !ok {
+		t.Fatalf("aliased assignment result=%T", Check(Assert(27, New(), assigned)))
+	}
+	if value, found := IntegerSequenceModelValue(assignedResult.Value, x); !found || value.Len() != 2 {
+		t.Fatalf("assigned x len=(%d,%v)", value.Len(), found)
+	}
+
+	conflicting := And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: y},
+		Equal{Left: x, Right: unit(1)},
+		Equal{Left: y, Right: unit(2)},
+	}}
+	if checked := Check(Assert(28, New(), conflicting)); func() bool {
+		_, ok := checked.(Unsatisfiable)
+		return ok
+	}() == false {
+		t.Fatalf("conflicting result=%T", checked)
+	}
+
+	aliasOnly := Equal{Left: x, Right: y}
+	aliasResult, ok := Check(Assert(29, New(), aliasOnly)).(Satisfiable)
+	if !ok {
+		t.Fatal("bare alias must construct a shared model")
+	}
+	if left, leftOK := IntegerSequenceModelValue(aliasResult.Value, x); !leftOK || left.Len() != 0 {
+		t.Fatalf("alias-only x len=(%d,%v)", left.Len(), leftOK)
+	}
+}
