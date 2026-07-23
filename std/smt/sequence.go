@@ -1563,12 +1563,39 @@ func collectPositiveIntegerSequenceRequirements(
 		items, negated := value.values()
 		for index, item := range items {
 			if negated[index] && containsIntegerSequenceTheory(item) {
-				_, ok := evaluateBoolWithIntegerSequences(
-					item, booleanModel{}, integerModel{}, rationalModel{}, model,
-				)
-				if !ok {
-					return true, false
+				switch atom := item.(type) {
+				case Less:
+					left, leftOK := atom.Left.(Term[IntSort])
+					right, rightOK := atom.Right.(Term[IntSort])
+					if leftOK && rightOK {
+						consistent, supported, recognized :=
+							collectAffineIntegerSequenceLengthBound(
+								right, left, false, model, requirements, aliases,
+							)
+						if recognized && (!consistent || !supported) {
+							return consistent, supported
+						}
+						if recognized {
+							continue
+						}
+					}
+				case LessEqual:
+					left, leftOK := atom.Left.(Term[IntSort])
+					right, rightOK := atom.Right.(Term[IntSort])
+					if leftOK && rightOK {
+						consistent, supported, recognized :=
+							collectAffineIntegerSequenceLengthBound(
+								right, left, true, model, requirements, aliases,
+							)
+						if recognized && (!consistent || !supported) {
+							return consistent, supported
+						}
+						if recognized {
+							continue
+						}
+					}
 				}
+				return true, false
 			}
 			if negated[index] {
 				continue
@@ -1579,6 +1606,40 @@ func collectPositiveIntegerSequenceRequirements(
 			if !consistent || !supported {
 				return consistent, supported
 			}
+		}
+		return true, true
+	case Not:
+		switch atom := value.Value.(type) {
+		case Less:
+			left, leftOK := atom.Left.(Term[IntSort])
+			right, rightOK := atom.Right.(Term[IntSort])
+			if leftOK && rightOK {
+				consistent, supported, recognized :=
+					collectAffineIntegerSequenceLengthBound(
+						right, left, false, model, requirements, aliases,
+					)
+				if recognized {
+					return consistent, supported
+				}
+			}
+		case LessEqual:
+			left, leftOK := atom.Left.(Term[IntSort])
+			right, rightOK := atom.Right.(Term[IntSort])
+			if leftOK && rightOK {
+				consistent, supported, recognized :=
+					collectAffineIntegerSequenceLengthBound(
+						right, left, true, model, requirements, aliases,
+					)
+				if recognized {
+					return consistent, supported
+				}
+			}
+		}
+		if containsIntegerSequenceTheory(term) {
+			_, ok := evaluateBoolWithIntegerSequences(
+				term, booleanModel{}, integerModel{}, rationalModel{}, model,
+			)
+			return true, ok
 		}
 		return true, true
 	case Equal:
@@ -2609,7 +2670,7 @@ func solveIntegerSequenceConjunctiveAssertions(
 	return checkOutcome{status: checkSat, integerSequences: sequences}, true
 }
 
-func containsIntegerSequenceDisjunction(term Term[BoolSort]) bool {
+func requiresIntegerSequenceBooleanNormalization(term Term[BoolSort]) bool {
 	switch value := term.(type) {
 	case Or:
 		if containsIntegerSequenceTheory(term) {
@@ -2617,29 +2678,42 @@ func containsIntegerSequenceDisjunction(term Term[BoolSort]) bool {
 		}
 	case And:
 		for _, item := range value.Values {
-			if containsIntegerSequenceDisjunction(item) {
+			if requiresIntegerSequenceBooleanNormalization(item) {
 				return true
 			}
 		}
 	case BooleanConjunction:
 		items, negated := value.values()
 		for index, item := range items {
-			if !negated[index] && containsIntegerSequenceDisjunction(item) {
+			if negated[index] && containsIntegerSequenceTheory(item) ||
+				requiresIntegerSequenceBooleanNormalization(item) {
 				return true
 			}
 		}
 	case Not:
-		return containsIntegerSequenceDisjunction(value.Value)
+		switch atom := value.Value.(type) {
+		case Less:
+			if containsIntegerSequenceLength(atom.Left) ||
+				containsIntegerSequenceLength(atom.Right) {
+				return false
+			}
+		case LessEqual:
+			if containsIntegerSequenceLength(atom.Left) ||
+				containsIntegerSequenceLength(atom.Right) {
+				return false
+			}
+		}
+		return containsIntegerSequenceTheory(value.Value)
 	case Implies:
-		return containsIntegerSequenceDisjunction(value.Left) ||
-			containsIntegerSequenceDisjunction(value.Right)
+		return containsIntegerSequenceTheory(value.Left) ||
+			containsIntegerSequenceTheory(value.Right)
 	case Iff:
-		return containsIntegerSequenceDisjunction(value.Left) ||
-			containsIntegerSequenceDisjunction(value.Right)
+		return containsIntegerSequenceTheory(value.Left) ||
+			containsIntegerSequenceTheory(value.Right)
 	case If[BoolSort]:
-		return containsIntegerSequenceDisjunction(value.Condition) ||
-			containsIntegerSequenceDisjunction(value.Then) ||
-			containsIntegerSequenceDisjunction(value.Else)
+		return containsIntegerSequenceTheory(value.Condition) ||
+			containsIntegerSequenceTheory(value.Then) ||
+			containsIntegerSequenceTheory(value.Else)
 	}
 	return false
 }
@@ -2648,80 +2722,363 @@ func integerSequenceDisjunctiveNormalForm(
 	term Term[BoolSort],
 	states *int,
 ) ([][]Term[BoolSort], bool) {
+	return integerSequenceBooleanNormalForm(term, false, states)
+}
+
+func combineIntegerSequenceBooleanBranches(
+	left,
+	right [][]Term[BoolSort],
+	conjunction bool,
+	states *int,
+) ([][]Term[BoolSort], bool) {
+	if !conjunction {
+		if len(left)+len(right) > maximumConstructedIntegerSequenceLength {
+			return nil, false
+		}
+		result := make([][]Term[BoolSort], 0, len(left)+len(right))
+		result = append(result, left...)
+		result = append(result, right...)
+		*states += len(result)
+		return result, *states <= maximumConstructedIntegerSequenceLength
+	}
+	if len(left) != 0 &&
+		len(right) > maximumConstructedIntegerSequenceLength/len(left) {
+		return nil, false
+	}
+	result := make([][]Term[BoolSort], 0, len(left)*len(right))
+	for _, prefix := range left {
+		for _, suffix := range right {
+			branch := make(
+				[]Term[BoolSort], 0, len(prefix)+len(suffix),
+			)
+			branch = append(branch, prefix...)
+			branch = append(branch, suffix...)
+			result = append(result, branch)
+		}
+	}
+	*states += len(result)
+	return result, *states <= maximumConstructedIntegerSequenceLength
+}
+
+func integerSequenceBooleanAtomNormalForm(
+	term Term[BoolSort],
+	negated bool,
+	states *int,
+) ([][]Term[BoolSort], bool) {
+	if !negated {
+		return [][]Term[BoolSort]{{term}}, true
+	}
+	switch value := term.(type) {
+	case Equal:
+		if containsIntegerSequenceLength(value.Left) ||
+			containsIntegerSequenceLength(value.Right) {
+			left, leftOK := value.Left.(Term[IntSort])
+			right, rightOK := value.Right.(Term[IntSort])
+			if leftOK && rightOK {
+				first := [][]Term[BoolSort]{{Less{Left: left, Right: right}}}
+				second := [][]Term[BoolSort]{{Less{Left: right, Right: left}}}
+				return combineIntegerSequenceBooleanBranches(
+					first, second, false, states,
+				)
+			}
+		}
+	case Less:
+		if containsIntegerSequenceLength(value.Left) ||
+			containsIntegerSequenceLength(value.Right) {
+			return [][]Term[BoolSort]{{LessEqual{
+				Left: value.Right, Right: value.Left,
+			}}}, true
+		}
+	case LessEqual:
+		if containsIntegerSequenceLength(value.Left) ||
+			containsIntegerSequenceLength(value.Right) {
+			return [][]Term[BoolSort]{{Less{
+				Left: value.Right, Right: value.Left,
+			}}}, true
+		}
+	}
+	return [][]Term[BoolSort]{{Not{Value: term}}}, true
+}
+
+func appendIntegerSequenceSingleBooleanBranch(
+	term Term[BoolSort],
+	negated bool,
+	branch *[16]Term[BoolSort],
+	count *int,
+) bool {
+	appendTerm := func(value Term[BoolSort]) bool {
+		if *count == len(branch) {
+			return false
+		}
+		branch[*count] = value
+		(*count)++
+		return true
+	}
+	switch value := term.(type) {
+	case And:
+		if negated {
+			return false
+		}
+		for _, item := range value.Values {
+			if !appendIntegerSequenceSingleBooleanBranch(
+				item, false, branch, count,
+			) {
+				return false
+			}
+		}
+		return true
+	case BooleanConjunction:
+		if negated {
+			return false
+		}
+		items, itemNegated := value.values()
+		for index, item := range items {
+			if !appendIntegerSequenceSingleBooleanBranch(
+				item, itemNegated[index], branch, count,
+			) {
+				return false
+			}
+		}
+		return true
+	case Not:
+		return appendIntegerSequenceSingleBooleanBranch(
+			value.Value, !negated, branch, count,
+		)
+	case Or, Implies, Iff, If[BoolSort]:
+		return false
+	case Less:
+		if negated && (containsIntegerSequenceLength(value.Left) ||
+			containsIntegerSequenceLength(value.Right)) {
+			return appendTerm(LessEqual{
+				Left: value.Right, Right: value.Left,
+			})
+		}
+	case LessEqual:
+		if negated && (containsIntegerSequenceLength(value.Left) ||
+			containsIntegerSequenceLength(value.Right)) {
+			return appendTerm(Less{
+				Left: value.Right, Right: value.Left,
+			})
+		}
+	}
+	if negated {
+		return false
+	}
+	return appendTerm(term)
+}
+
+func integerSequenceBooleanNormalForm(
+	term Term[BoolSort],
+	negated bool,
+	states *int,
+) ([][]Term[BoolSort], bool) {
 	switch value := term.(type) {
 	case Or:
-		var result [][]Term[BoolSort]
+		result := [][]Term[BoolSort]{}
 		for _, item := range value.Values {
-			branches, complete := integerSequenceDisjunctiveNormalForm(item, states)
+			branches, complete := integerSequenceBooleanNormalForm(
+				item, negated, states,
+			)
 			if !complete {
 				return nil, false
 			}
-			result = append(result, branches...)
-			*states += len(branches)
-			if *states > maximumConstructedIntegerSequenceLength {
+			if len(result) == 0 {
+				result = branches
+				continue
+			}
+			result, complete = combineIntegerSequenceBooleanBranches(
+				result, branches, negated, states,
+			)
+			if !complete {
 				return nil, false
 			}
 		}
 		return result, true
 	case And:
-		result := [][]Term[BoolSort]{{}}
+		result := [][]Term[BoolSort]{}
 		for _, item := range value.Values {
-			branches, complete := integerSequenceDisjunctiveNormalForm(item, states)
+			branches, complete := integerSequenceBooleanNormalForm(
+				item, negated, states,
+			)
 			if !complete {
 				return nil, false
 			}
-			if len(result) != 0 && len(branches) >
-				maximumConstructedIntegerSequenceLength/len(result) {
-				return nil, false
+			if len(result) == 0 {
+				result = branches
+				continue
 			}
-			combined := make([][]Term[BoolSort], 0, len(result)*len(branches))
-			for _, prefix := range result {
-				for _, branch := range branches {
-					candidate := make(
-						[]Term[BoolSort], 0, len(prefix)+len(branch),
-					)
-					candidate = append(candidate, prefix...)
-					candidate = append(candidate, branch...)
-					combined = append(combined, candidate)
-				}
-			}
-			result = combined
-			*states += len(result)
-			if *states > maximumConstructedIntegerSequenceLength {
+			result, complete = combineIntegerSequenceBooleanBranches(
+				result, branches, !negated, states,
+			)
+			if !complete {
 				return nil, false
 			}
 		}
 		return result, true
 	case BooleanConjunction:
-		items, negated := value.values()
-		positive := make([]Term[BoolSort], 0, len(items))
+		items, itemNegated := value.values()
+		result := [][]Term[BoolSort]{}
 		for index, item := range items {
-			if negated[index] {
-				return [][]Term[BoolSort]{{term}}, true
+			branches, complete := integerSequenceBooleanNormalForm(
+				item, negated != itemNegated[index], states,
+			)
+			if !complete {
+				return nil, false
 			}
-			positive = append(positive, item)
+			if len(result) == 0 {
+				result = branches
+				continue
+			}
+			result, complete = combineIntegerSequenceBooleanBranches(
+				result, branches, !negated, states,
+			)
+			if !complete {
+				return nil, false
+			}
 		}
-		return integerSequenceDisjunctiveNormalForm(
-			And{Values: positive}, states,
+		return result, true
+	case Not:
+		return integerSequenceBooleanNormalForm(value.Value, !negated, states)
+	case Implies:
+		left, complete := integerSequenceBooleanNormalForm(
+			value.Left, !negated, states,
+		)
+		if !complete {
+			return nil, false
+		}
+		right, complete := integerSequenceBooleanNormalForm(
+			value.Right, negated, states,
+		)
+		if !complete {
+			return nil, false
+		}
+		return combineIntegerSequenceBooleanBranches(
+			left, right, negated, states,
+		)
+	case Iff:
+		leftPositive, complete := integerSequenceBooleanNormalForm(
+			value.Left, false, states,
+		)
+		if !complete {
+			return nil, false
+		}
+		leftNegative, complete := integerSequenceBooleanNormalForm(
+			value.Left, true, states,
+		)
+		if !complete {
+			return nil, false
+		}
+		rightPositive, complete := integerSequenceBooleanNormalForm(
+			value.Right, negated, states,
+		)
+		if !complete {
+			return nil, false
+		}
+		rightNegative, complete := integerSequenceBooleanNormalForm(
+			value.Right, !negated, states,
+		)
+		if !complete {
+			return nil, false
+		}
+		first, complete := combineIntegerSequenceBooleanBranches(
+			leftPositive, rightPositive, true, states,
+		)
+		if !complete {
+			return nil, false
+		}
+		second, complete := combineIntegerSequenceBooleanBranches(
+			leftNegative, rightNegative, true, states,
+		)
+		if !complete {
+			return nil, false
+		}
+		return combineIntegerSequenceBooleanBranches(
+			first, second, false, states,
+		)
+	case If[BoolSort]:
+		conditionPositive, complete := integerSequenceBooleanNormalForm(
+			value.Condition, false, states,
+		)
+		if !complete {
+			return nil, false
+		}
+		conditionNegative, complete := integerSequenceBooleanNormalForm(
+			value.Condition, true, states,
+		)
+		if !complete {
+			return nil, false
+		}
+		thenBranch, complete := integerSequenceBooleanNormalForm(
+			value.Then, negated, states,
+		)
+		if !complete {
+			return nil, false
+		}
+		elseBranch, complete := integerSequenceBooleanNormalForm(
+			value.Else, negated, states,
+		)
+		if !complete {
+			return nil, false
+		}
+		first, complete := combineIntegerSequenceBooleanBranches(
+			conditionPositive, thenBranch, true, states,
+		)
+		if !complete {
+			return nil, false
+		}
+		second, complete := combineIntegerSequenceBooleanBranches(
+			conditionNegative, elseBranch, true, states,
+		)
+		if !complete {
+			return nil, false
+		}
+		return combineIntegerSequenceBooleanBranches(
+			first, second, false, states,
 		)
 	default:
-		return [][]Term[BoolSort]{{term}}, true
+		return integerSequenceBooleanAtomNormalForm(term, negated, states)
 	}
 }
 
 func solveIntegerSequenceAssertions(assertions []Term[BoolSort]) (checkOutcome, bool) {
-	hasDisjunction := false
+	requiresNormalization := false
 	for _, assertion := range assertions {
-		if containsIntegerSequenceDisjunction(assertion) {
-			hasDisjunction = true
+		if requiresIntegerSequenceBooleanNormalization(assertion) {
+			requiresNormalization = true
 			break
 		}
 	}
-	if !hasDisjunction {
+	if !requiresNormalization {
 		return solveIntegerSequenceConjunctiveAssertions(assertions)
+	}
+	var singleBranch [16]Term[BoolSort]
+	singleCount := 0
+	single := true
+	for _, assertion := range assertions {
+		if !appendIntegerSequenceSingleBooleanBranch(
+			assertion, false, &singleBranch, &singleCount,
+		) {
+			single = false
+			break
+		}
+	}
+	if single {
+		return solveIntegerSequenceConjunctiveAssertions(
+			singleBranch[:singleCount],
+		)
 	}
 	if len(assertions) == 1 {
 		if disjunction, ok := assertions[0].(Or); ok {
+			direct := true
+			for _, branch := range disjunction.Values {
+				if requiresIntegerSequenceBooleanNormalization(branch) {
+					direct = false
+					break
+				}
+			}
+			if !direct {
+				goto normalized
+			}
 			var unknown checkOutcome
 			foundUnknown := false
 			for _, branch := range disjunction.Values {
@@ -2748,6 +3105,7 @@ func solveIntegerSequenceAssertions(assertions []Term[BoolSort]) (checkOutcome, 
 			return checkOutcome{status: checkUnsat}, true
 		}
 	}
+normalized:
 	branches := [][]Term[BoolSort]{{}}
 	states := 0
 	for _, assertion := range assertions {

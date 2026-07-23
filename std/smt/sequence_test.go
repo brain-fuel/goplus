@@ -980,6 +980,70 @@ func TestDisjunctiveSymbolicIntegerSequenceWitnesses(t *testing.T) {
 	}
 }
 
+func TestNegatedBooleanSymbolicIntegerSequenceLengths(t *testing.T) {
+	unit := func(value int64) Term[SequenceSort[IntSort]] {
+		return SequenceUnit[IntSort](Integer{Value: value})
+	}
+	x := SequenceConst[IntSort](43, "x")
+	lengthOne := Equal{
+		Left: SequenceLength(x), Right: Integer{Value: 1},
+	}
+	prefix := SequenceHasPrefix(x, unit(7))
+
+	formulas := []Term[BoolSort]{
+		And{Values: []Term[BoolSort]{
+			Not{Value: Equal{
+				Left: SequenceLength(x), Right: Integer{Value: 0},
+			}},
+			LessEqual{Left: SequenceLength(x), Right: Integer{Value: 1}},
+		}},
+		And{Values: []Term[BoolSort]{
+			lengthOne,
+			Implies{Left: lengthOne, Right: prefix},
+		}},
+		And{Values: []Term[BoolSort]{
+			lengthOne,
+			Iff{Left: lengthOne, Right: prefix},
+		}},
+		And{Values: []Term[BoolSort]{
+			lengthOne,
+			If[BoolSort]{
+				Condition: lengthOne,
+				Then:      prefix,
+				Else:      SequenceHasSuffix(x, unit(8)),
+			},
+		}},
+		Not{Value: LessEqual{
+			Left: SequenceLength(x), Right: Integer{Value: 0},
+		}},
+	}
+	for index, formula := range formulas {
+		checked := Check(Assert(43+index, New(), formula))
+		result, ok := checked.(Satisfiable)
+		if !ok {
+			t.Fatalf("case %d result=%T", index, checked)
+		}
+		value, found := IntegerSequenceModelValue(result.Value, x)
+		if !found || value.Len() != 1 {
+			t.Fatalf("case %d model=(%d,%v)", index, value.Len(), found)
+		}
+		if valid, found := BoolValue(result.Value, formula); !found || !valid {
+			t.Fatalf("case %d formula=(%v,%v)", index, valid, found)
+		}
+	}
+
+	impossible := And{Values: []Term[BoolSort]{
+		lengthOne,
+		Not{Value: lengthOne},
+	}}
+	if checked := Check(Assert(49, New(), impossible)); func() bool {
+		_, ok := checked.(Unsatisfiable)
+		return ok
+	}() == false {
+		t.Fatalf("impossible result=%T", checked)
+	}
+}
+
 func TestSymbolicIntegerSequenceEqualityClasses(t *testing.T) {
 	unit := func(value int64) Term[SequenceSort[IntSort]] {
 		return SequenceUnit[IntSort](Integer{Value: value})
