@@ -162,6 +162,14 @@ type integerSequenceRequirementSet struct {
 	relations        [4]integerSequenceLengthRelation
 	relationOverflow []integerSequenceLengthRelation
 	relationCount    int
+	disequalities    [4]integerSequenceDisequality
+	disequalityMore  []integerSequenceDisequality
+	disequalityCount int
+}
+
+type integerSequenceDisequality struct {
+	left  int
+	right int
 }
 
 type integerSequenceLengthRelation struct {
@@ -190,6 +198,70 @@ func (set *integerSequenceRequirementSet) relationAt(
 		return set.relations[index]
 	}
 	return set.relationOverflow[index-len(set.relations)]
+}
+
+func (set *integerSequenceRequirementSet) addDisequality(
+	left,
+	right int,
+) (bool, bool) {
+	if left == right {
+		return false, true
+	}
+	if right < left {
+		left, right = right, left
+	}
+	for index := 0; index < set.disequalityCount; index++ {
+		existing := set.disequalityAt(index)
+		if existing.left == left && existing.right == right {
+			return true, true
+		}
+	}
+	if set.disequalityCount == maximumConstructedIntegerSequenceLength {
+		return true, false
+	}
+	item := integerSequenceDisequality{left: left, right: right}
+	if set.disequalityCount < len(set.disequalities) {
+		set.disequalities[set.disequalityCount] = item
+	} else {
+		set.disequalityMore = append(set.disequalityMore, item)
+	}
+	set.disequalityCount++
+	set.forSymbol(left)
+	set.forSymbol(right)
+	return true, true
+}
+
+func (set *integerSequenceRequirementSet) disequalityAt(
+	index int,
+) integerSequenceDisequality {
+	if index < len(set.disequalities) {
+		return set.disequalities[index]
+	}
+	return set.disequalityMore[index-len(set.disequalities)]
+}
+
+func (set *integerSequenceRequirementSet) excludesDisequalModels(
+	id int,
+	requirements *integerSequenceRequirements,
+	model integerSequenceModel,
+) bool {
+	for index := 0; index < set.disequalityCount; index++ {
+		item := set.disequalityAt(index)
+		other := 0
+		switch id {
+		case item.left:
+			other = item.right
+		case item.right:
+			other = item.left
+		default:
+			continue
+		}
+		if value, ok := model.lookup(other); ok &&
+			!requirements.addExclusion(value) {
+			return false
+		}
+	}
+	return true
 }
 
 func (model integerSequenceModel) lookup(id int) (IntegerSequenceValue, bool) {
@@ -1759,6 +1831,12 @@ func collectNegatedIntegerSequenceRequirement(
 	case Equal:
 		leftID, leftSymbol := integerSequenceSymbolID(value.Left)
 		rightID, rightSymbol := integerSequenceSymbolID(value.Right)
+		if leftSymbol && rightSymbol {
+			consistent, supported := requirements.addDisequality(
+				aliases.root(leftID), aliases.root(rightID),
+			)
+			return consistent, supported, true
+		}
 		if leftSymbol != rightSymbol {
 			id, groundTerm := leftID, value.Right
 			if rightSymbol {
@@ -2371,12 +2449,42 @@ func buildIntegerSequenceAtLength(
 
 type integerSequenceLengthSearch struct {
 	relation     integerSequenceLengthRelation
+	relations    *integerSequenceRequirementSet
 	requirements [8]integerSequenceRequirements
 	assigned     [8]IntegerSequenceValue
 	hasAssigned  [8]bool
 	values       [8]IntegerSequenceValue
 	lengths      [8]int
 	states       int
+}
+
+func addEarlierIntegerSequenceDisequalityExclusions(
+	set *integerSequenceRequirementSet,
+	id int,
+	position int,
+	ids *[8]int,
+	values *[8]IntegerSequenceValue,
+	requirements *integerSequenceRequirements,
+) bool {
+	for disequalityIndex := 0; disequalityIndex < set.disequalityCount; disequalityIndex++ {
+		item := set.disequalityAt(disequalityIndex)
+		other := 0
+		switch id {
+		case item.left:
+			other = item.right
+		case item.right:
+			other = item.left
+		default:
+			continue
+		}
+		for index := 0; index < position; index++ {
+			if ids[index] == other &&
+				!requirements.addExclusion(values[index]) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func integerSequenceLengthRange(
@@ -2420,13 +2528,29 @@ func integerSequenceLengthRange(
 }
 
 func (search *integerSequenceLengthSearch) buildCandidate() (bool, bool) {
+	var ids [8]int
+	copy(ids[:], search.relation.ids[:search.relation.count])
 	for index := 0; index < search.relation.count; index++ {
+		requirements := search.requirements[index]
+		if !addEarlierIntegerSequenceDisequalityExclusions(
+			search.relations,
+			search.relation.ids[index],
+			index,
+			&ids,
+			&search.values,
+			&requirements,
+		) {
+			return false, false
+		}
 		if search.hasAssigned[index] {
 			search.values[index] = search.assigned[index]
+			if requirements.excludes(search.values[index]) {
+				return false, true
+			}
 			continue
 		}
 		value, consistent, supported := buildIntegerSequenceAtLength(
-			search.requirements[index], search.lengths[index],
+			requirements, search.lengths[index],
 		)
 		if !supported {
 			return false, false
@@ -2562,7 +2686,9 @@ func solveIntegerSequenceLengthRelation(
 	requirements *integerSequenceRequirementSet,
 	model *integerSequenceModel,
 ) (bool, bool) {
-	search := integerSequenceLengthSearch{relation: relation}
+	search := integerSequenceLengthSearch{
+		relation: relation, relations: requirements,
+	}
 	for index := 0; index < relation.count; index++ {
 		search.requirements[index] = *requirements.forSymbol(relation.ids[index])
 		search.assigned[index], search.hasAssigned[index] =
@@ -2686,12 +2812,26 @@ func (search *integerSequenceLengthSystemSearch) canStillHold(known int) bool {
 
 func (search *integerSequenceLengthSystemSearch) buildCandidate() (bool, bool) {
 	for index := 0; index < search.count; index++ {
+		requirements := search.requirements[index]
+		if !addEarlierIntegerSequenceDisequalityExclusions(
+			search.relations,
+			search.ids[index],
+			index,
+			&search.ids,
+			&search.values,
+			&requirements,
+		) {
+			return false, false
+		}
 		if search.hasAssigned[index] {
 			search.values[index] = search.assigned[index]
+			if requirements.excludes(search.values[index]) {
+				return false, true
+			}
 			continue
 		}
 		value, consistent, supported := buildIntegerSequenceAtLength(
-			search.requirements[index], search.lengths[index],
+			requirements, search.lengths[index],
 		)
 		if !supported {
 			return false, false
@@ -2855,6 +2995,26 @@ func bindPositiveIntegerSequenceWitnesses(
 			return consistent, supported
 		}
 	}
+	for index := 0; index < requirements.disequalityCount; index++ {
+		item := requirements.disequalityAt(index)
+		left, leftAssigned := model.lookup(item.left)
+		right, rightAssigned := model.lookup(item.right)
+		if leftAssigned && rightAssigned {
+			if equalIntegerSequences(left, right) {
+				return false, true
+			}
+			continue
+		}
+		if leftAssigned {
+			if !requirements.forSymbol(item.right).addExclusion(left) {
+				return true, false
+			}
+		} else if rightAssigned {
+			if !requirements.forSymbol(item.left).addExclusion(right) {
+				return true, false
+			}
+		}
+	}
 	if requirements.relationCount == 1 {
 		consistent, supported := solveIntegerSequenceLengthRelation(
 			requirements.relationAt(0), &requirements, model,
@@ -2875,7 +3035,13 @@ func bindPositiveIntegerSequenceWitnesses(
 		if _, assigned := model.lookup(entry.id); assigned {
 			continue
 		}
-		witness, consistent, supported := buildIntegerSequenceWitness(entry.requirements)
+		local := entry.requirements
+		if !requirements.excludesDisequalModels(
+			entry.id, &local, *model,
+		) {
+			return true, false
+		}
+		witness, consistent, supported := buildIntegerSequenceWitness(local)
 		if !consistent || !supported {
 			return consistent, supported
 		}
@@ -2887,11 +3053,26 @@ func bindPositiveIntegerSequenceWitnesses(
 		if _, assigned := model.lookup(id); assigned {
 			continue
 		}
-		witness, consistent, supported := buildIntegerSequenceWitness(*entry)
+		local := *entry
+		if !requirements.excludesDisequalModels(id, &local, *model) {
+			return true, false
+		}
+		witness, consistent, supported := buildIntegerSequenceWitness(local)
 		if !consistent || !supported {
 			return consistent, supported
 		}
 		if !model.set(id, witness) {
+			return false, true
+		}
+	}
+	for index := 0; index < requirements.disequalityCount; index++ {
+		item := requirements.disequalityAt(index)
+		left, leftOK := model.lookup(item.left)
+		right, rightOK := model.lookup(item.right)
+		if !leftOK || !rightOK {
+			return true, false
+		}
+		if equalIntegerSequences(left, right) {
 			return false, true
 		}
 	}
@@ -2972,7 +3153,7 @@ func supportsConjunctiveNegatedIntegerSequenceAtom(
 	case Equal:
 		_, leftSymbol := integerSequenceSymbolID(atom.Left)
 		_, rightSymbol := integerSequenceSymbolID(atom.Right)
-		return leftSymbol != rightSymbol
+		return leftSymbol || rightSymbol
 	case Less:
 		return containsIntegerSequenceLength(atom.Left) ||
 			containsIntegerSequenceLength(atom.Right)

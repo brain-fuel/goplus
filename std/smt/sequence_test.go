@@ -1152,6 +1152,67 @@ func TestSymbolicIntegerSequenceGroundDisequality(t *testing.T) {
 	}
 }
 
+func TestSymbolicIntegerSequencePairDisequality(t *testing.T) {
+	unit := func(value int64) Term[SequenceSort[IntSort]] {
+		return SequenceUnit[IntSort](Integer{Value: value})
+	}
+	x := SequenceConst[IntSort](68, "x")
+	y := SequenceConst[IntSort](69, "y")
+	disequal := Not{Value: Equal{Left: x, Right: y}}
+
+	bareResult, ok := Check(Assert(68, New(), disequal)).(Satisfiable)
+	if !ok {
+		t.Fatal("two free symbols must construct distinct models")
+	}
+	xValue, xFound := IntegerSequenceModelValue(bareResult.Value, x)
+	yValue, yFound := IntegerSequenceModelValue(bareResult.Value, y)
+	if !xFound || !yFound || equalIntegerSequences(xValue, yValue) {
+		t.Fatalf("bare models=(%v,%v,%v)", xFound, yFound, equalIntegerSequences(xValue, yValue))
+	}
+
+	equalLengths := And{Values: []Term[BoolSort]{
+		Equal{Left: SequenceLength(x), Right: SequenceLength(y)},
+		SequenceHasPrefix(x, unit(1)),
+		SequenceHasPrefix(y, unit(1)),
+		disequal,
+	}}
+	lengthResult, ok := Check(Assert(69, New(), equalLengths)).(Satisfiable)
+	if !ok {
+		t.Fatal("coupled length search must backtrack to distinct models")
+	}
+	xValue, _ = IntegerSequenceModelValue(lengthResult.Value, x)
+	yValue, _ = IntegerSequenceModelValue(lengthResult.Value, y)
+	if xValue.Len() != yValue.Len() || xValue.Len() != 2 ||
+		equalIntegerSequences(xValue, yValue) {
+		t.Fatalf("coupled lengths/models=(%d,%d,%v)", xValue.Len(), yValue.Len(), equalIntegerSequences(xValue, yValue))
+	}
+
+	fixed := And{Values: []Term[BoolSort]{
+		Equal{Left: SequenceLength(x), Right: Integer{Value: 1}},
+		Equal{Left: SequenceLength(y), Right: Integer{Value: 1}},
+		SequenceHasPrefix(x, unit(2)),
+		SequenceHasPrefix(y, unit(2)),
+		disequal,
+	}}
+	if checked := Check(Assert(70, New(), fixed)); func() bool {
+		_, ok := checked.(Unsatisfiable)
+		return ok
+	}() == false {
+		t.Fatalf("fixed pair result=%T", checked)
+	}
+
+	alias := And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: y},
+		disequal,
+	}}
+	if checked := Check(Assert(71, New(), alias)); func() bool {
+		_, ok := checked.(Unsatisfiable)
+		return ok
+	}() == false {
+		t.Fatalf("alias disequality result=%T", checked)
+	}
+}
+
 func TestNegatedGroundSymbolicIntegerSequencePredicates(t *testing.T) {
 	unit := func(value int64) Term[SequenceSort[IntSort]] {
 		return SequenceUnit[IntSort](Integer{Value: value})
