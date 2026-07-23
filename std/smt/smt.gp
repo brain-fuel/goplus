@@ -3,6 +3,8 @@
 // any one solver's compatibility API.
 package smt
 
+import "goforge.dev/goplus/std/vec"
+
 type BoolSort struct{}
 type IntSort struct{}
 type RealSort struct{}
@@ -24,6 +26,14 @@ type RecursiveDatatypeConstructor[d nat, n nat, c nat] enum {
 //goplus:derive off
 type BinaryRecursiveDatatypeConstructor[d nat, n nat, c nat] enum {
 	binaryRecursiveDatatypeConstructorValue(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, FirstSelectorName string, SecondSelectorName string) BinaryRecursiveDatatypeConstructor[d, n, c]
+}
+// NaryRecursiveDatatypeConstructor witnesses an arbitrary nonempty vector of
+// fields, all recursively carrying the enclosing datatype sort. Its arity is
+// a dependent index shared by declaration, application, and selector proof.
+//goplus:derive off
+//goplus:repr transparent
+type NaryRecursiveDatatypeConstructor[d nat, n nat, c nat, a nat] enum {
+	naryRecursiveDatatypeConstructorValue(DatatypeID int, ConstructorCount int, ConstructorID int, Arity int, Name string, SelectorNames NaryDatatypeSelectors) NaryRecursiveDatatypeConstructor[d, n, c, a]
 }
 type BinaryDatatypeField enum {
 	FirstDatatypeField() BinaryDatatypeField
@@ -158,6 +168,9 @@ type Term[S any] enum {
 	datatypeBinaryRecursiveApplication(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, FirstSelectorName string, SecondSelectorName string, First any, Second any) Term[S]
 	datatypeBinaryRecursiveSelector(DatatypeID int, ConstructorCount int, ConstructorID int, Field int, SelectorName string, Value any) Term[S]
 	datatypeBinaryRecursiveRecognizer(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, Value any) Term[BoolSort]
+	datatypeNaryRecursiveApplication(DatatypeID int, ConstructorCount int, ConstructorID int, Arity int, Name string, SelectorNames NaryDatatypeSelectors, Values NaryDatatypeTerms) Term[S]
+	datatypeNaryRecursiveSelector(DatatypeID int, ConstructorCount int, ConstructorID int, Arity int, Field int, SelectorName string, Value any) Term[S]
+	datatypeNaryRecursiveRecognizer(DatatypeID int, ConstructorCount int, ConstructorID int, Arity int, Name string, Value any) Term[BoolSort]
 }
 
 type AnyTerm enum {
@@ -304,6 +317,40 @@ func SelectBinaryRecursiveDatatypeConstructor(field BinaryDatatypeField, 0 datat
 func IsBinaryRecursiveDatatypeConstructor(0 datatype nat, 0 constructors nat, 0 constructor nat, declaration BinaryRecursiveDatatypeConstructor[datatype, constructors, constructor], value Term[DatatypeSort[datatype, constructors]]) Term[BoolSort] {
 	match declaration { case binaryRecursiveDatatypeConstructorValue(datatypeID, constructorCount, constructorID, name, _, _):
 		return datatypeBinaryRecursiveRecognizer(datatypeID, constructorCount, constructorID, name, value)
+	}
+}
+
+func DeclareNaryRecursiveDatatypeConstructor(datatype nat, constructors nat, constructor nat, arity nat, name string, selectorNames vec.Vec[string, arity]) NaryRecursiveDatatypeConstructor[datatype, constructors, constructor, arity] {
+	if constructors < 2 || constructor >= constructors { panic("smt: n-ary recursive constructor requires a possible base constructor inside datatype cardinality") }
+	if arity == 0 { panic("smt: n-ary recursive constructor requires at least one field") }
+	names := compactNaryDatatypeSelectors(selectorNames)
+	for left := 0; left < names.Len(); left++ { for right := left+1; right < names.Len(); right++ { if names.At(left) == names.At(right) { panic("smt: n-ary recursive constructor selectors must be distinct") } } }
+	return naryRecursiveDatatypeConstructorValue(int(datatype), int(constructors), int(constructor), int(arity), name, names)
+}
+
+func ApplyNaryRecursiveDatatypeConstructor(0 datatype nat, 0 constructors nat, 0 constructor nat, 0 arity nat, declaration NaryRecursiveDatatypeConstructor[datatype, constructors, constructor, arity], values vec.Vec[Term[DatatypeSort[datatype, constructors]], arity]) Term[DatatypeSort[datatype, constructors]] {
+	match declaration { case naryRecursiveDatatypeConstructorValue(datatypeID, constructorCount, constructorID, runtimeArity, name, selectorNames):
+		return Term[DatatypeSort[datatype, constructors]].datatypeNaryRecursiveApplication(datatypeID, constructorCount, constructorID, runtimeArity, name, selectorNames, compactNaryDatatypeTerms(values))
+	}
+}
+
+func SelectNaryRecursiveDatatypeConstructor(0 datatype nat, 0 constructors nat, 0 constructor nat, 0 arity nat, field vec.Fin[arity], declaration NaryRecursiveDatatypeConstructor[datatype, constructors, constructor, arity], value Term[DatatypeSort[datatype, constructors]]) Term[DatatypeSort[datatype, constructors]] {
+	match declaration { case naryRecursiveDatatypeConstructorValue(datatypeID, constructorCount, constructorID, runtimeArity, _, selectorNames):
+		fieldIndex := datatypeFieldIndex(field)
+		return Term[DatatypeSort[datatype, constructors]].datatypeNaryRecursiveSelector(datatypeID, constructorCount, constructorID, runtimeArity, fieldIndex, selectorNames.At(fieldIndex), value)
+	}
+}
+
+func IsNaryRecursiveDatatypeConstructor(0 datatype nat, 0 constructors nat, 0 constructor nat, 0 arity nat, declaration NaryRecursiveDatatypeConstructor[datatype, constructors, constructor, arity], value Term[DatatypeSort[datatype, constructors]]) Term[BoolSort] {
+	match declaration { case naryRecursiveDatatypeConstructorValue(datatypeID, constructorCount, constructorID, runtimeArity, name, _):
+		return datatypeNaryRecursiveRecognizer(datatypeID, constructorCount, constructorID, runtimeArity, name, value)
+	}
+}
+
+func datatypeFieldIndex(0 n nat, field vec.Fin[n]) int {
+	match field {
+	case vec.Zero(): return 0
+	case vec.Succ(previous): return 1 + datatypeFieldIndex(previous)
 	}
 }
 

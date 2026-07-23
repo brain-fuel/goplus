@@ -1,12 +1,21 @@
 package smt
 
 import (
+	"goforge.dev/goplus/std/vec"
 	"math/big"
 	"math/rand"
 	"sync"
 	"sync/atomic"
 	"testing"
 )
+
+func ternaryDatatypeNames() vec.Vec[string] {
+	return vec.Cons[string]{Head: "first", Tail: vec.Cons[string]{Head: "second", Tail: vec.Cons[string]{Head: "third", Tail: vec.Nil[string]{}}}}
+}
+
+func ternaryDatatypeValues(first, second, third Term[DatatypeSort]) vec.Vec[Term[DatatypeSort]] {
+	return vec.Cons[Term[DatatypeSort]]{Head: first, Tail: vec.Cons[Term[DatatypeSort]]{Head: second, Tail: vec.Cons[Term[DatatypeSort]]{Head: third, Tail: vec.Nil[Term[DatatypeSort]]{}}}}
+}
 
 func TestBooleanSatModel(t *testing.T) {
 	a := BoolSymbol{ID: 1, Name: "a"}
@@ -932,6 +941,66 @@ func TestBinaryRecursiveDatatypeRecognizerBuildsWellFoundedModel(t *testing.T) {
 	value, found := DatatypeModelValue(87, 2, result.Value, x)
 	if !found || value.ConstructorID != 1 || value.Child == nil || value.SecondChild == nil || value.Child.ConstructorID != 0 || value.SecondChild.ConstructorID != 0 {
 		t.Fatalf("binary recognizer model=%#v/%v", value, found)
+	}
+}
+
+func TestNaryRecursiveDatatypeSelectorsAndModels(t *testing.T) {
+	leaf := DatatypeConstructor(88, 2, 0, "leaf")
+	branch := DeclareNaryRecursiveDatatypeConstructor(88, 2, 1, 3, "branch", ternaryDatatypeNames())
+	nested := ApplyNaryRecursiveDatatypeConstructor(branch, ternaryDatatypeValues(leaf, leaf, leaf))
+	tree := ApplyNaryRecursiveDatatypeConstructor(branch, ternaryDatatypeValues(leaf, nested, leaf))
+	x := DatatypeConst(88, 2, 1, "x")
+	third := vec.Succ{Prev: vec.Succ{Prev: vec.Zero{}}}
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: tree},
+		Equal{Left: SelectNaryRecursiveDatatypeConstructor(vec.Zero{}, branch, x), Right: leaf},
+		Equal{Left: SelectNaryRecursiveDatatypeConstructor(vec.Succ{Prev: vec.Zero{}}, branch, x), Right: nested},
+		Equal{Left: SelectNaryRecursiveDatatypeConstructor(third, branch, x), Right: leaf},
+		IsNaryRecursiveDatatypeConstructor(branch, x),
+	}}
+	result, ok := Check(Assert(1, New(), formula)).(Satisfiable)
+	if !ok {
+		t.Fatalf("n-ary recursive result=%#v", Check(Assert(1, New(), formula)))
+	}
+	value, found := DatatypeModelValue(88, 2, result.Value, x)
+	first, firstOK := value.Children.At(0)
+	second, secondOK := value.Children.At(1)
+	thirdValue, thirdOK := value.Children.At(2)
+	if !found || value.ConstructorID != 1 || value.Children.Len() != 3 || !firstOK || first.ConstructorID != 0 || !secondOK || second.ConstructorID != 1 || second.Children.Len() != 3 || !thirdOK || thirdValue.ConstructorID != 0 {
+		t.Fatalf("n-ary recursive model=%#v/%v", value, found)
+	}
+}
+
+func TestNaryRecursiveDatatypeInjectivityAndAcyclicity(t *testing.T) {
+	leaf := DatatypeConstructor(89, 2, 0, "leaf")
+	branch := DeclareNaryRecursiveDatatypeConstructor(89, 2, 1, 3, "branch", ternaryDatatypeNames())
+	x := DatatypeConst(89, 2, 1, "x")
+	y := DatatypeConst(89, 2, 2, "y")
+	left := ApplyNaryRecursiveDatatypeConstructor(branch, ternaryDatatypeValues(leaf, leaf, x))
+	right := ApplyNaryRecursiveDatatypeConstructor(branch, ternaryDatatypeValues(leaf, leaf, y))
+	injective := And{Values: []Term[BoolSort]{Equal{Left: left, Right: right}, Not{Value: Equal{Left: x, Right: y}}}}
+	if _, ok := Check(Assert(1, New(), injective)).(Unsatisfiable); !ok {
+		t.Fatal("n-ary constructor must be injective in every field")
+	}
+	cycle := Equal{Left: x, Right: ApplyNaryRecursiveDatatypeConstructor(branch, ternaryDatatypeValues(leaf, leaf, x))}
+	if _, ok := Check(Assert(2, New(), cycle)).(Unsatisfiable); !ok {
+		t.Fatal("cycles through any n-ary field must be rejected")
+	}
+}
+
+func TestNaryRecursiveDatatypeRecognizerBuildsWellFoundedModel(t *testing.T) {
+	branch := DeclareNaryRecursiveDatatypeConstructor(90, 2, 1, 3, "branch", ternaryDatatypeNames())
+	x := DatatypeConst(90, 2, 1, "x")
+	result, ok := Check(Assert(1, New(), IsNaryRecursiveDatatypeConstructor(branch, x))).(Satisfiable)
+	if !ok {
+		t.Fatalf("n-ary recognizer result=%#v", Check(Assert(1, New(), IsNaryRecursiveDatatypeConstructor(branch, x))))
+	}
+	value, found := DatatypeModelValue(90, 2, result.Value, x)
+	first, firstOK := value.Children.At(0)
+	second, secondOK := value.Children.At(1)
+	third, thirdOK := value.Children.At(2)
+	if !found || value.ConstructorID != 1 || value.Children.Len() != 3 || !firstOK || first.ConstructorID != 0 || !secondOK || second.ConstructorID != 0 || !thirdOK || third.ConstructorID != 0 {
+		t.Fatalf("n-ary recognizer model=%#v/%v", value, found)
 	}
 }
 

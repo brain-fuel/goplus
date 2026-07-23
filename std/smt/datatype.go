@@ -1,5 +1,167 @@
 package smt
 
+import "goforge.dev/goplus/std/vec"
+
+// NaryDatatypeSelectors is the compact erased representation of an indexed
+// selector-name vector. Arity at most four requires no backing allocation.
+type NaryDatatypeSelectors struct {
+	Count    int
+	Inline   [4]string
+	Overflow []string
+}
+
+func compactNaryDatatypeSelectors(values vec.Vec[string]) NaryDatatypeSelectors {
+	var result NaryDatatypeSelectors
+	for {
+		switch current := values.(type) {
+		case vec.Nil[string]:
+			return result
+		case vec.Cons[string]:
+			result.Append(current.Head)
+			values = current.Tail
+		default:
+			panic("smt: invalid erased n-ary selector vector")
+		}
+	}
+}
+
+func (values *NaryDatatypeSelectors) Append(value string) {
+	if values.Count < len(values.Inline) && values.Overflow == nil {
+		values.Inline[values.Count] = value
+		values.Count++
+		return
+	}
+	if values.Overflow == nil {
+		values.Overflow = append(make([]string, 0, values.Count+4), values.Inline[:]...)
+	}
+	values.Overflow = append(values.Overflow, value)
+	values.Count++
+}
+
+func (values NaryDatatypeSelectors) Len() int { return values.Count }
+
+func (values NaryDatatypeSelectors) At(index int) string {
+	if index < 0 || index >= values.Count {
+		panic("smt: n-ary selector outside arity")
+	}
+	if values.Overflow != nil {
+		return values.Overflow[index]
+	}
+	return values.Inline[index]
+}
+
+// NaryDatatypeTerms is the compact erased representation of an indexed term
+// vector. Arity at most four remains entirely inline.
+type NaryDatatypeTerms struct {
+	Count    int
+	Inline   [4]Term[DatatypeSort]
+	Overflow []Term[DatatypeSort]
+}
+
+func compactNaryDatatypeTerms[D any](values vec.Vec[Term[D]]) NaryDatatypeTerms {
+	var result NaryDatatypeTerms
+	for {
+		switch current := values.(type) {
+		case vec.Nil[Term[D]]:
+			return result
+		case vec.Cons[Term[D]]:
+			term, ok := any(current.Head).(Term[DatatypeSort])
+			if !ok {
+				panic("smt: erased n-ary datatype term sort mismatch")
+			}
+			result.Append(term)
+			values = current.Tail
+		default:
+			panic("smt: invalid erased n-ary datatype term vector")
+		}
+	}
+}
+
+func (values *NaryDatatypeTerms) Append(value Term[DatatypeSort]) {
+	if values.Count < len(values.Inline) && values.Overflow == nil {
+		values.Inline[values.Count] = value
+		values.Count++
+		return
+	}
+	if values.Overflow == nil {
+		values.Overflow = append(make([]Term[DatatypeSort], 0, values.Count+4), values.Inline[:]...)
+	}
+	values.Overflow = append(values.Overflow, value)
+	values.Count++
+}
+
+func (values NaryDatatypeTerms) Len() int { return values.Count }
+
+func (values NaryDatatypeTerms) At(index int) Term[DatatypeSort] {
+	if index < 0 || index >= values.Count {
+		panic("smt: n-ary datatype term outside arity")
+	}
+	if values.Overflow != nil {
+		return values.Overflow[index]
+	}
+	return values.Inline[index]
+}
+
+// DeclareNaryRecursiveDatatypeConstructorDynamic is the runtime-checked
+// compatibility boundary for parsers and generated-Go façades that have
+// already erased the arity index. Go+ callers should prefer the Vec-indexed
+// DeclareNaryRecursiveDatatypeConstructor API.
+func DeclareNaryRecursiveDatatypeConstructorDynamic(datatype, constructors, constructor int, name string, selectorNames []string) NaryRecursiveDatatypeConstructor {
+	var names NaryDatatypeSelectors
+	for _, selectorName := range selectorNames {
+		names.Append(selectorName)
+	}
+	return DeclareNaryRecursiveDatatypeConstructorCompact(datatype, constructors, constructor, name, names)
+}
+
+// DeclareNaryRecursiveDatatypeConstructorCompact is the allocation-free
+// erased boundary used by generated façades and SMT-LIB execution.
+func DeclareNaryRecursiveDatatypeConstructorCompact(datatype, constructors, constructor int, name string, names NaryDatatypeSelectors) NaryRecursiveDatatypeConstructor {
+	if constructors < 2 || constructor < 0 || constructor >= constructors {
+		panic("smt: n-ary recursive constructor requires a possible base constructor inside datatype cardinality")
+	}
+	if names.Len() == 0 {
+		panic("smt: n-ary recursive constructor requires at least one field")
+	}
+	for left := 0; left < names.Len(); left++ {
+		for right := left + 1; right < names.Len(); right++ {
+			if names.At(left) == names.At(right) {
+				panic("smt: n-ary recursive constructor selectors must be distinct")
+			}
+		}
+	}
+	return naryRecursiveDatatypeConstructorValue{datatypeID: datatype, constructorCount: constructors, constructorID: constructor, arity: names.Len(), name: name, selectorNames: names}
+}
+
+// ApplyNaryRecursiveDatatypeConstructorDynamic checks erased arity and sort
+// witnesses before retaining a normalized compact argument vector.
+func ApplyNaryRecursiveDatatypeConstructorDynamic(declaration NaryRecursiveDatatypeConstructor, values []Term[DatatypeSort]) Term[DatatypeSort] {
+	var terms NaryDatatypeTerms
+	for _, value := range values {
+		terms.Append(value)
+	}
+	return ApplyNaryRecursiveDatatypeConstructorCompact(declaration, terms)
+}
+
+// ApplyNaryRecursiveDatatypeConstructorCompact checks an erased compact term
+// vector without introducing a backing slice for the common small arities.
+func ApplyNaryRecursiveDatatypeConstructorCompact(declaration NaryRecursiveDatatypeConstructor, values NaryDatatypeTerms) Term[DatatypeSort] {
+	witness := declaration
+	if values.Len() != witness.arity {
+		panic("smt: erased n-ary recursive datatype arity mismatch")
+	}
+	return datatypeNaryRecursiveApplication[DatatypeSort]{datatypeID: witness.datatypeID, constructorCount: witness.constructorCount, constructorID: witness.constructorID, arity: witness.arity, name: witness.name, selectorNames: witness.selectorNames, values: values}
+}
+
+// SelectNaryRecursiveDatatypeConstructorDynamic checks an erased field index.
+func SelectNaryRecursiveDatatypeConstructorDynamic(field int, declaration NaryRecursiveDatatypeConstructor, value Term[DatatypeSort]) Term[DatatypeSort] {
+	witness := declaration
+	if field < 0 || field >= witness.arity {
+		panic("smt: erased n-ary recursive datatype selector outside arity")
+	}
+	return datatypeNaryRecursiveSelector[DatatypeSort]{datatypeID: witness.datatypeID, constructorCount: witness.constructorCount, constructorID: witness.constructorID, arity: witness.arity, field: field, selectorName: witness.selectorNames.At(field), value: value}
+}
+
 // DatatypeValue is the exact model value of a supported algebraic datatype.
 // IDs are declaration-local ordinals; ConstructorName is retained when the
 // corresponding constructor appeared in the authored formula.
@@ -10,6 +172,46 @@ type DatatypeValue struct {
 	ConstructorName  string
 	Child            *DatatypeValue
 	SecondChild      *DatatypeValue
+	// Children is populated for arbitrary-arity recursive constructors. Unary
+	// and binary values retain Child/SecondChild for source compatibility.
+	Children *DatatypeChildren
+}
+
+// DatatypeChildren keeps the common arity-at-most-four case in one retained
+// object while permitting arbitrary arity. DatatypeValue itself remains
+// comparable because it contains only this pointer, preserving generated
+// equality APIs in packages that embed model values.
+type DatatypeChildren struct {
+	Count    int
+	Inline   [4]DatatypeValue
+	Overflow []DatatypeValue
+}
+
+func newDatatypeChildren(values []DatatypeValue) *DatatypeChildren {
+	children := &DatatypeChildren{Count: len(values)}
+	if len(values) <= len(children.Inline) {
+		copy(children.Inline[:], values)
+	} else {
+		children.Overflow = append([]DatatypeValue(nil), values...)
+	}
+	return children
+}
+
+func (children *DatatypeChildren) Len() int {
+	if children == nil {
+		return 0
+	}
+	return children.Count
+}
+
+func (children *DatatypeChildren) At(index int) (DatatypeValue, bool) {
+	if children == nil || index < 0 || index >= children.Count {
+		return DatatypeValue{}, false
+	}
+	if children.Overflow != nil {
+		return children.Overflow[index], true
+	}
+	return children.Inline[index], true
 }
 
 type datatypeModelEntry struct {
@@ -19,11 +221,13 @@ type datatypeModelEntry struct {
 }
 
 type datatypeModel struct {
-	count      int
-	inline     [8]datatypeModelEntry
-	overflow   map[[2]int]DatatypeValue
-	childCount int
-	children   *[8]DatatypeValue
+	count                  int
+	inline                 [8]datatypeModelEntry
+	overflow               map[[2]int]DatatypeValue
+	childCount             int
+	children               *[8]DatatypeValue
+	datatypeChildrenCount  int
+	inlineDatatypeChildren [8]DatatypeChildren
 }
 
 func (model *datatypeModel) retainChild(value DatatypeValue) *DatatypeValue {
@@ -39,6 +243,28 @@ func (model *datatypeModel) retainChild(value DatatypeValue) *DatatypeValue {
 	child := new(DatatypeValue)
 	*child = value
 	return child
+}
+
+func (model *datatypeModel) retainDatatypeChildren(count int) *DatatypeChildren {
+	if model.datatypeChildrenCount < len(model.inlineDatatypeChildren) && count <= len(model.inlineDatatypeChildren[0].Inline) {
+		children := &model.inlineDatatypeChildren[model.datatypeChildrenCount]
+		model.datatypeChildrenCount++
+		children.Count = count
+		return children
+	}
+	children := &DatatypeChildren{Count: count}
+	if count > len(children.Inline) {
+		children.Overflow = make([]DatatypeValue, count)
+	}
+	return children
+}
+
+func (children *DatatypeChildren) set(index int, value DatatypeValue) {
+	if children.Overflow != nil {
+		children.Overflow[index] = value
+		return
+	}
+	children.Inline[index] = value
 }
 
 func (model *datatypeModel) set(datatypeID, symbolID int, value DatatypeValue) {
@@ -124,6 +350,32 @@ func evaluateDatatype(term Term[DatatypeSort], model *datatypeModel) (DatatypeVa
 			return *modelValue.Child, true
 		}
 		return *modelValue.SecondChild, true
+	case datatypeNaryRecursiveApplication[DatatypeSort]:
+		children := make([]DatatypeValue, value.values.Len())
+		for index := 0; index < value.values.Len(); index++ {
+			item := value.values.At(index)
+			child, ok := evaluateDatatype(item, model)
+			if !ok {
+				return DatatypeValue{}, false
+			}
+			children[index] = child
+		}
+		return DatatypeValue{DatatypeID: value.datatypeID, ConstructorCount: value.constructorCount, ConstructorID: value.constructorID, ConstructorName: value.name, Children: newDatatypeChildren(children)}, true
+	case datatypeNaryRecursiveSelector[DatatypeSort]:
+		target, ok := value.value.(Term[DatatypeSort])
+		if !ok || value.field < 0 || value.field >= value.arity {
+			return DatatypeValue{}, false
+		}
+		if application, direct := target.(datatypeNaryRecursiveApplication[DatatypeSort]); direct && application.datatypeID == value.datatypeID && application.constructorCount == value.constructorCount && application.constructorID == value.constructorID {
+			if value.field < application.values.Len() {
+				return evaluateDatatype(application.values.At(value.field), model)
+			}
+		}
+		modelValue, found := evaluateDatatype(target, model)
+		if !found || modelValue.ConstructorID != value.constructorID {
+			return DatatypeValue{}, false
+		}
+		return modelValue.Children.At(value.field)
 	default:
 		return DatatypeValue{}, false
 	}
@@ -152,6 +404,13 @@ func evaluateBoolWithDatatypes(term Term[BoolSort], booleans booleanModel, integ
 		}
 		actual, found := evaluateDatatype(candidate, datatypes)
 		return actual.ConstructorID == value.constructorID && actual.Child != nil && actual.SecondChild != nil, found && actual.DatatypeID == value.datatypeID && actual.ConstructorCount == value.constructorCount
+	case datatypeNaryRecursiveRecognizer:
+		candidate, ok := value.value.(Term[DatatypeSort])
+		if !ok {
+			return false, false
+		}
+		actual, found := evaluateDatatype(candidate, datatypes)
+		return actual.ConstructorID == value.constructorID && actual.Children.Len() == value.arity, found && actual.DatatypeID == value.datatypeID && actual.ConstructorCount == value.constructorCount
 	case Equal:
 		left, leftOK := value.Left.(Term[DatatypeSort])
 		right, rightOK := value.Right.(Term[DatatypeSort])
@@ -204,13 +463,23 @@ func evaluateBoolWithDatatypes(term Term[BoolSort], booleans booleanModel, integ
 }
 
 func equalDatatypeValue(left, right DatatypeValue) bool {
-	if left.DatatypeID != right.DatatypeID || left.ConstructorCount != right.ConstructorCount || left.ConstructorID != right.ConstructorID || (left.Child == nil) != (right.Child == nil) || (left.SecondChild == nil) != (right.SecondChild == nil) {
+	if left.DatatypeID != right.DatatypeID || left.ConstructorCount != right.ConstructorCount || left.ConstructorID != right.ConstructorID || (left.Child == nil) != (right.Child == nil) || (left.SecondChild == nil) != (right.SecondChild == nil) || left.Children.Len() != right.Children.Len() {
 		return false
 	}
 	if left.Child != nil && !equalDatatypeValue(*left.Child, *right.Child) {
 		return false
 	}
-	return left.SecondChild == nil || equalDatatypeValue(*left.SecondChild, *right.SecondChild)
+	if left.SecondChild != nil && !equalDatatypeValue(*left.SecondChild, *right.SecondChild) {
+		return false
+	}
+	for index := 0; index < left.Children.Len(); index++ {
+		leftChild, _ := left.Children.At(index)
+		rightChild, _ := right.Children.At(index)
+		if !equalDatatypeValue(leftChild, rightChild) {
+			return false
+		}
+	}
+	return true
 }
 
 type datatypeNode struct {
@@ -221,7 +490,36 @@ type datatypeNode struct {
 	name             string
 	child            int
 	second           int
-	field            uint8
+	field            int
+	children         datatypeNodeChildren
+}
+
+type datatypeNodeChildren struct {
+	count    int
+	inline   [4]int
+	overflow []int
+}
+
+func (children *datatypeNodeChildren) append(value int) {
+	if children.count < len(children.inline) && children.overflow == nil {
+		children.inline[children.count] = value
+		children.count++
+		return
+	}
+	if children.overflow == nil {
+		children.overflow = append(make([]int, 0, children.count+4), children.inline[:]...)
+	}
+	children.overflow = append(children.overflow, value)
+	children.count++
+}
+
+func (children datatypeNodeChildren) len() int { return children.count }
+
+func (children datatypeNodeChildren) at(index int) int {
+	if children.overflow != nil {
+		return children.overflow[index]
+	}
+	return children.inline[index]
 }
 
 type datatypePair struct{ left, right int }
@@ -230,7 +528,8 @@ type datatypeTagConstraint struct {
 	constructor int
 	negated     bool
 	recursive   bool
-	arity       uint8
+	nary        bool
+	arity       int
 	name        string
 }
 
@@ -246,13 +545,14 @@ type datatypeProblem struct {
 	inlineRanks         [8]uint8
 	inlineDisequalities [8]datatypePair
 	inlineTags          [8]datatypeTagConstraint
+	model               datatypeModel
 }
 
 func containsDatatypeTheory(term Term[BoolSort]) bool {
 	switch value := term.(type) {
 	case Equal:
 		return isDatatypeTerm(value.Left) || isDatatypeTerm(value.Right)
-	case datatypeRecognizer, datatypeRecursiveRecognizer, datatypeBinaryRecursiveRecognizer:
+	case datatypeRecognizer, datatypeRecursiveRecognizer, datatypeBinaryRecursiveRecognizer, datatypeNaryRecursiveRecognizer:
 		return true
 	case Not:
 		return containsDatatypeTheory(value.Value)
@@ -275,7 +575,7 @@ func containsDatatypeTheory(term Term[BoolSort]) bool {
 
 func isDatatypeTerm(term any) bool {
 	switch term.(type) {
-	case datatypeSymbol[DatatypeSort], datatypeConstructor[DatatypeSort], datatypeRecursiveApplication[DatatypeSort], datatypeRecursiveSelector[DatatypeSort], datatypeBinaryRecursiveApplication[DatatypeSort], datatypeBinaryRecursiveSelector[DatatypeSort]:
+	case datatypeSymbol[DatatypeSort], datatypeConstructor[DatatypeSort], datatypeRecursiveApplication[DatatypeSort], datatypeRecursiveSelector[DatatypeSort], datatypeBinaryRecursiveApplication[DatatypeSort], datatypeBinaryRecursiveSelector[DatatypeSort], datatypeNaryRecursiveApplication[DatatypeSort], datatypeNaryRecursiveSelector[DatatypeSort]:
 		return true
 	default:
 		return false
@@ -346,7 +646,7 @@ func (problem *datatypeProblem) boolean(term Term[BoolSort], negated bool) bool 
 			return false
 		}
 		candidateNode := problem.nodes[candidate]
-		if candidateNode.kind == 1 || candidateNode.kind == 2 || candidateNode.kind == 4 {
+		if isDatatypeConstructorNode(candidateNode) {
 			matches := candidateNode.id == value.constructorID
 			problem.unsat = problem.unsat || matches == negated
 			return true
@@ -359,7 +659,7 @@ func (problem *datatypeProblem) boolean(term Term[BoolSort], negated bool) bool 
 			return false
 		}
 		candidateNode := problem.nodes[candidate]
-		if candidateNode.kind == 1 || candidateNode.kind == 2 || candidateNode.kind == 4 {
+		if isDatatypeConstructorNode(candidateNode) {
 			matches := candidateNode.kind == 2 && candidateNode.id == value.constructorID
 			problem.unsat = problem.unsat || matches == negated
 			return true
@@ -372,12 +672,25 @@ func (problem *datatypeProblem) boolean(term Term[BoolSort], negated bool) bool 
 			return false
 		}
 		candidateNode := problem.nodes[candidate]
-		if candidateNode.kind == 1 || candidateNode.kind == 2 || candidateNode.kind == 4 {
+		if isDatatypeConstructorNode(candidateNode) {
 			matches := candidateNode.kind == 4 && candidateNode.id == value.constructorID
 			problem.unsat = problem.unsat || matches == negated
 			return true
 		}
 		problem.tags = append(problem.tags, datatypeTagConstraint{node: candidate, constructor: value.constructorID, negated: negated, recursive: true, arity: 2, name: value.name})
+		return true
+	case datatypeNaryRecursiveRecognizer:
+		candidate, ok := problem.term(value.value)
+		if !ok || problem.nodes[candidate].datatypeID != value.datatypeID || problem.nodes[candidate].constructorCount != value.constructorCount || value.constructorID < 0 || value.constructorID >= value.constructorCount || value.arity <= 0 {
+			return false
+		}
+		candidateNode := problem.nodes[candidate]
+		if isDatatypeConstructorNode(candidateNode) {
+			matches := candidateNode.kind == 6 && candidateNode.id == value.constructorID && candidateNode.children.len() == value.arity
+			problem.unsat = problem.unsat || matches == negated
+			return true
+		}
+		problem.tags = append(problem.tags, datatypeTagConstraint{node: candidate, constructor: value.constructorID, negated: negated, recursive: true, nary: true, arity: value.arity, name: value.name})
 		return true
 	default:
 		return false
@@ -420,7 +733,27 @@ func (problem *datatypeProblem) term(term any) (int, bool) {
 		if !ok || problem.nodes[target].datatypeID != value.datatypeID || problem.nodes[target].constructorCount != value.constructorCount || value.constructorID < 0 || value.constructorID >= value.constructorCount || value.field < 0 || value.field >= 2 {
 			return 0, false
 		}
-		return problem.ensure(datatypeNode{datatypeID: value.datatypeID, constructorCount: value.constructorCount, kind: 5, id: value.constructorID, name: value.selectorName, child: target, field: uint8(value.field)}), true
+		return problem.ensure(datatypeNode{datatypeID: value.datatypeID, constructorCount: value.constructorCount, kind: 5, id: value.constructorID, name: value.selectorName, child: target, field: value.field}), true
+	case datatypeNaryRecursiveApplication[DatatypeSort]:
+		if value.arity <= 0 || value.values.Len() != value.arity || value.selectorNames.Len() != value.arity || value.constructorID < 0 || value.constructorID >= value.constructorCount {
+			return 0, false
+		}
+		var children datatypeNodeChildren
+		for index := 0; index < value.values.Len(); index++ {
+			item := value.values.At(index)
+			child, ok := problem.term(item)
+			if !ok || problem.nodes[child].datatypeID != value.datatypeID || problem.nodes[child].constructorCount != value.constructorCount {
+				return 0, false
+			}
+			children.append(child)
+		}
+		return problem.ensure(datatypeNode{datatypeID: value.datatypeID, constructorCount: value.constructorCount, kind: 6, id: value.constructorID, name: value.name, children: children}), true
+	case datatypeNaryRecursiveSelector[DatatypeSort]:
+		target, ok := problem.term(value.value)
+		if !ok || problem.nodes[target].datatypeID != value.datatypeID || problem.nodes[target].constructorCount != value.constructorCount || value.constructorID < 0 || value.constructorID >= value.constructorCount || value.arity <= 0 || value.field < 0 || value.field >= value.arity {
+			return 0, false
+		}
+		return problem.ensure(datatypeNode{datatypeID: value.datatypeID, constructorCount: value.constructorCount, kind: 7, id: value.constructorID, name: value.selectorName, child: target, field: value.field}), true
 	default:
 		return 0, false
 	}
@@ -435,6 +768,18 @@ func (problem *datatypeProblem) ensure(node datatypeNode) int {
 		case 4:
 			samePayload = existing.child == node.child && existing.second == node.second
 		case 5:
+			samePayload = existing.child == node.child && existing.field == node.field
+		case 6:
+			samePayload = existing.children.len() == node.children.len()
+			if samePayload {
+				for field := 0; field < node.children.len(); field++ {
+					if existing.children.at(field) != node.children.at(field) {
+						samePayload = false
+						break
+					}
+				}
+			}
+		case 7:
 			samePayload = existing.child == node.child && existing.field == node.field
 		}
 		if existing.datatypeID == node.datatypeID && existing.constructorCount == node.constructorCount && existing.kind == node.kind && existing.id == node.id && samePayload {
@@ -495,6 +840,18 @@ func (problem *datatypeProblem) union(left, right int) {
 			return
 		}
 	}
+	if leftNode.kind == 6 && rightNode.kind == 6 {
+		if leftNode.children.len() != rightNode.children.len() {
+			problem.unsat = true
+			return
+		}
+		for field := 0; field < leftNode.children.len(); field++ {
+			problem.union(leftNode.children.at(field), rightNode.children.at(field))
+			if problem.unsat {
+				return
+			}
+		}
+	}
 	if problem.ranks[left] < problem.ranks[right] {
 		left, right = right, left
 	}
@@ -505,7 +862,7 @@ func (problem *datatypeProblem) union(left, right int) {
 }
 
 func isDatatypeConstructorNode(node datatypeNode) bool {
-	return node.kind == 1 || node.kind == 2 || node.kind == 4
+	return node.kind == 1 || node.kind == 2 || node.kind == 4 || node.kind == 6
 }
 
 func (problem *datatypeProblem) solve() (checkOutcome, bool) {
@@ -515,7 +872,7 @@ func (problem *datatypeProblem) solve() (checkOutcome, bool) {
 	for {
 		changed := false
 		for selector, selectorNode := range problem.nodes {
-			if selectorNode.kind != 3 && selectorNode.kind != 5 {
+			if selectorNode.kind != 3 && selectorNode.kind != 5 && selectorNode.kind != 7 {
 				continue
 			}
 			targetRoot := problem.find(selectorNode.child)
@@ -528,6 +885,8 @@ func (problem *datatypeProblem) solve() (checkOutcome, bool) {
 					if selectorNode.field == 1 {
 						selected = applicationNode.second
 					}
+				} else if selectorNode.kind == 7 && applicationNode.kind == 6 && selectorNode.field < applicationNode.children.len() {
+					selected = applicationNode.children.at(selectorNode.field)
 				}
 				if selected >= 0 && applicationNode.id == selectorNode.id && problem.find(application) == targetRoot && problem.find(selector) != problem.find(selected) {
 					problem.union(selector, selected)
@@ -537,13 +896,23 @@ func (problem *datatypeProblem) solve() (checkOutcome, bool) {
 			}
 		}
 		for left := 0; left < len(problem.nodes); left++ {
-			if problem.nodes[left].kind != 2 && problem.nodes[left].kind != 4 {
+			if problem.nodes[left].kind != 2 && problem.nodes[left].kind != 4 && problem.nodes[left].kind != 6 {
 				continue
 			}
 			for right := left + 1; right < len(problem.nodes); right++ {
 				sameChildren := problem.find(problem.nodes[left].child) == problem.find(problem.nodes[right].child)
 				if problem.nodes[left].kind == 4 {
 					sameChildren = sameChildren && problem.find(problem.nodes[left].second) == problem.find(problem.nodes[right].second)
+				} else if problem.nodes[left].kind == 6 {
+					sameChildren = problem.nodes[left].children.len() == problem.nodes[right].children.len()
+					if sameChildren {
+						for field := 0; field < problem.nodes[left].children.len(); field++ {
+							if problem.find(problem.nodes[left].children.at(field)) != problem.find(problem.nodes[right].children.at(field)) {
+								sameChildren = false
+								break
+							}
+						}
+					}
 				}
 				if problem.nodes[right].kind == problem.nodes[left].kind && problem.nodes[left].datatypeID == problem.nodes[right].datatypeID && problem.nodes[left].constructorCount == problem.nodes[right].constructorCount && problem.nodes[left].id == problem.nodes[right].id && sameChildren && problem.find(left) != problem.find(right) {
 					problem.union(left, right)
@@ -563,7 +932,13 @@ func (problem *datatypeProblem) solve() (checkOutcome, bool) {
 			return checkOutcome{status: checkUnsat}, true
 		}
 	}
-	assignment := make([]int, len(problem.nodes))
+	var inlineAssignment [8]int
+	var assignment []int
+	if len(problem.nodes) <= len(inlineAssignment) {
+		assignment = inlineAssignment[:len(problem.nodes)]
+	} else {
+		assignment = make([]int, len(problem.nodes))
+	}
 	for index := range assignment {
 		assignment[index] = -1
 	}
@@ -585,40 +960,63 @@ func (problem *datatypeProblem) solve() (checkOutcome, bool) {
 			assignment[root] = tag.constructor
 		}
 	}
-	roots := make([]int, 0, len(problem.nodes))
+	var inlineRoots [8]int
+	roots := inlineRoots[:0]
+	if len(problem.nodes) > cap(inlineRoots) {
+		roots = make([]int, 0, len(problem.nodes))
+	}
 	for index := range problem.nodes {
 		root := problem.find(index)
-		if root == index && (problem.nodes[index].kind == 0 || problem.nodes[index].kind == 3 || problem.nodes[index].kind == 5) {
+		if root == index && (problem.nodes[index].kind == 0 || problem.nodes[index].kind == 3 || problem.nodes[index].kind == 5 || problem.nodes[index].kind == 7) {
 			roots = append(roots, root)
 		}
 	}
 	if !problem.color(roots, 0, assignment) {
 		return checkOutcome{status: checkUnsat}, true
 	}
-	var model datatypeModel
+	model := &problem.model
 	for index, node := range problem.nodes {
 		if node.kind != 0 {
 			continue
 		}
-		value, ok := problem.valueForRoot(problem.find(index), assignment, map[int]bool{}, &model)
+		var inlineVisiting [8]bool
+		var visiting []bool
+		if len(problem.nodes) <= len(inlineVisiting) {
+			visiting = inlineVisiting[:len(problem.nodes)]
+		} else {
+			visiting = make([]bool, len(problem.nodes))
+		}
+		value, ok := problem.valueForRoot(problem.find(index), assignment, visiting, model)
 		if !ok {
 			return checkOutcome{status: checkUnknown, reason: UnsupportedTheory{Name: "recursive datatype model construction"}}, true
 		}
 		model.set(node.datatypeID, node.id, value)
 	}
-	return checkOutcome{status: checkSat, datatypes: &model}, true
+	return checkOutcome{status: checkSat, datatypes: model}, true
 }
 
-func (problem *datatypeProblem) valueForRoot(root int, assignment []int, visiting map[int]bool, model *datatypeModel) (DatatypeValue, bool) {
+func (problem *datatypeProblem) valueForRoot(root int, assignment []int, visiting []bool, model *datatypeModel) (DatatypeValue, bool) {
 	root = problem.find(root)
 	if visiting[root] {
 		return DatatypeValue{}, false
 	}
 	visiting[root] = true
-	defer delete(visiting, root)
+	defer func() { visiting[root] = false }()
 	for index, node := range problem.nodes {
-		if node.kind != 2 && node.kind != 4 || problem.find(index) != root {
+		if node.kind != 2 && node.kind != 4 && node.kind != 6 || problem.find(index) != root {
 			continue
+		}
+		if node.kind == 6 {
+			children := model.retainDatatypeChildren(node.children.len())
+			for field := 0; field < node.children.len(); field++ {
+				childNode := node.children.at(field)
+				child, ok := problem.valueForRoot(problem.find(childNode), assignment, visiting, model)
+				if !ok {
+					return DatatypeValue{}, false
+				}
+				children.set(field, child)
+			}
+			return DatatypeValue{DatatypeID: node.datatypeID, ConstructorCount: node.constructorCount, ConstructorID: node.id, ConstructorName: node.name, Children: children}, true
 		}
 		first, ok := problem.valueForRoot(problem.find(node.child), assignment, visiting, model)
 		if !ok {
@@ -646,8 +1044,16 @@ func (problem *datatypeProblem) valueForRoot(root int, assignment []int, visitin
 			return DatatypeValue{}, false
 		}
 		child := DatatypeValue{DatatypeID: node.datatypeID, ConstructorCount: node.constructorCount, ConstructorID: base, ConstructorName: problem.constructorName(node.datatypeID, node.constructorCount, base)}
-		value.Child = model.retainChild(child)
-		if arity == 2 {
+		if problem.naryRecursiveConstructor(root, constructorID) {
+			children := make([]DatatypeValue, arity)
+			for field := range children {
+				children[field] = child
+			}
+			value.Children = newDatatypeChildren(children)
+		} else if arity <= 2 {
+			value.Child = model.retainChild(child)
+		}
+		if !problem.naryRecursiveConstructor(root, constructorID) && arity == 2 {
 			value.SecondChild = model.retainChild(child)
 		}
 	}
@@ -655,7 +1061,13 @@ func (problem *datatypeProblem) valueForRoot(root int, assignment []int, visitin
 }
 
 func (problem *datatypeProblem) hasRecursiveCycle() bool {
-	state := make([]uint8, len(problem.nodes))
+	var inlineState [8]uint8
+	var state []uint8
+	if len(problem.nodes) <= len(inlineState) {
+		state = inlineState[:len(problem.nodes)]
+	} else {
+		state = make([]uint8, len(problem.nodes))
+	}
 	for index := range problem.nodes {
 		root := problem.find(index)
 		if state[root] == 0 && problem.recursiveCycleFrom(root, state) {
@@ -675,14 +1087,22 @@ func (problem *datatypeProblem) recursiveCycleFrom(root int, state []uint8) bool
 	}
 	state[root] = 1
 	for index, node := range problem.nodes {
-		if problem.find(index) != root || node.kind != 2 && node.kind != 4 {
+		if problem.find(index) != root || node.kind != 2 && node.kind != 4 && node.kind != 6 {
 			continue
 		}
-		if problem.recursiveCycleFrom(node.child, state) {
-			return true
-		}
-		if node.kind == 4 && problem.recursiveCycleFrom(node.second, state) {
-			return true
+		if node.kind == 2 || node.kind == 4 {
+			if problem.recursiveCycleFrom(node.child, state) {
+				return true
+			}
+			if node.kind == 4 && problem.recursiveCycleFrom(node.second, state) {
+				return true
+			}
+		} else if node.kind == 6 {
+			for field := 0; field < node.children.len(); field++ {
+				if problem.recursiveCycleFrom(node.children.at(field), state) {
+					return true
+				}
+			}
 		}
 	}
 	state[root] = 2
@@ -734,7 +1154,10 @@ func (problem *datatypeProblem) recursiveConstructor(root, constructor int) bool
 func (problem *datatypeProblem) recursiveConstructorArity(root, constructor int) int {
 	node := problem.nodes[root]
 	for _, candidate := range problem.nodes {
-		if (candidate.kind == 2 || candidate.kind == 4) && candidate.datatypeID == node.datatypeID && candidate.constructorCount == node.constructorCount && candidate.id == constructor {
+		if (candidate.kind == 2 || candidate.kind == 4 || candidate.kind == 6) && candidate.datatypeID == node.datatypeID && candidate.constructorCount == node.constructorCount && candidate.id == constructor {
+			if candidate.kind == 6 {
+				return candidate.children.len()
+			}
 			if candidate.kind == 4 {
 				return 2
 			}
@@ -747,6 +1170,21 @@ func (problem *datatypeProblem) recursiveConstructorArity(root, constructor int)
 		}
 	}
 	return 0
+}
+
+func (problem *datatypeProblem) naryRecursiveConstructor(root, constructor int) bool {
+	node := problem.nodes[root]
+	for _, candidate := range problem.nodes {
+		if candidate.kind == 6 && candidate.datatypeID == node.datatypeID && candidate.constructorCount == node.constructorCount && candidate.id == constructor {
+			return true
+		}
+	}
+	for _, tag := range problem.tags {
+		if tag.recursive && tag.nary && tag.constructor == constructor && problem.nodes[tag.node].datatypeID == node.datatypeID && problem.nodes[tag.node].constructorCount == node.constructorCount {
+			return true
+		}
+	}
+	return false
 }
 
 func (problem *datatypeProblem) baseConstructor(datatypeID, constructorCount int) int {
