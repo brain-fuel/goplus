@@ -631,7 +631,7 @@ type datatypeProblem struct {
 func containsDatatypeTheory(term Term[BoolSort]) bool {
 	switch value := term.(type) {
 	case Equal:
-		return isDatatypeTerm(value.Left) || isDatatypeTerm(value.Right) || isMixedDatatypeSelector(value.Left) || isMixedDatatypeSelector(value.Right)
+		return isDatatypeTerm(value.Left) || isDatatypeTerm(value.Right) || isMixedDatatypeSelector(value.Left) || isMixedDatatypeSelector(value.Right) || isMixedScalarDatatypeSelector(value.Left) || isMixedScalarDatatypeSelector(value.Right)
 	case datatypeRecognizer, datatypeRecursiveRecognizer, datatypeBinaryRecursiveRecognizer, datatypeNaryRecursiveRecognizer, datatypeMixedRecognizer:
 		return true
 	case Not:
@@ -672,9 +672,15 @@ func isMixedDatatypeSelector(term any) bool {
 }
 
 func isMixedScalarDatatypeSelector(term any) bool {
-	switch term.(type) {
+	switch value := term.(type) {
 	case datatypeMixedSelector[BoolSort], datatypeMixedSelector[IntSort], datatypeMixedSelector[RealSort], datatypeMixedSelector[BitVecSort]:
 		return true
+	case If[IntSort]:
+		return containsMixedDatatypeTheory(value.Condition) || isMixedScalarDatatypeSelector(value.Then) || isMixedScalarDatatypeSelector(value.Else)
+	case If[RealSort]:
+		return containsMixedDatatypeTheory(value.Condition) || isMixedScalarDatatypeSelector(value.Then) || isMixedScalarDatatypeSelector(value.Else)
+	case If[BoolSort]:
+		return containsMixedDatatypeTheory(value.Condition) || isMixedScalarDatatypeSelector(value.Then) || isMixedScalarDatatypeSelector(value.Else)
 	default:
 		return false
 	}
@@ -683,7 +689,7 @@ func isMixedScalarDatatypeSelector(term any) bool {
 func containsMixedDatatypeTheory(term Term[BoolSort]) bool {
 	switch value := term.(type) {
 	case Equal:
-		return isMixedDatatypeSelector(value.Left) || isMixedDatatypeSelector(value.Right) || isMixedDatatypeApplication(value.Left) || isMixedDatatypeApplication(value.Right)
+		return isMixedDatatypeSelector(value.Left) || isMixedDatatypeSelector(value.Right) || isMixedScalarDatatypeSelector(value.Left) || isMixedScalarDatatypeSelector(value.Right) || isMixedDatatypeApplication(value.Left) || isMixedDatatypeApplication(value.Right)
 	case datatypeMixedRecognizer:
 		return true
 	case And:
@@ -760,10 +766,14 @@ func (problem *datatypeProblem) boolean(term Term[BoolSort], negated bool) bool 
 		return problem.boolean(value.Value, !negated)
 	case Equal:
 		if isMixedScalarDatatypeSelector(value.Left) || isMixedScalarDatatypeSelector(value.Right) {
-			if negated {
+			if !problem.retainMixedScalarSelectorTarget(value.Left) || !problem.retainMixedScalarSelectorTarget(value.Right) {
 				return false
 			}
-			problem.mixedAssertions = append(problem.mixedAssertions, term)
+			assertion := term
+			if negated {
+				assertion = Not{Value: term}
+			}
+			problem.mixedAssertions = append(problem.mixedAssertions, assertion)
 			return true
 		}
 		left, leftOK := problem.term(value.Left)
@@ -844,6 +854,55 @@ func (problem *datatypeProblem) boolean(term Term[BoolSort], negated bool) bool 
 		return true
 	default:
 		return false
+	}
+}
+
+func (problem *datatypeProblem) retainMixedScalarSelectorTarget(term any) bool {
+	switch value := term.(type) {
+	case datatypeMixedSelector[BoolSort]:
+		_, ok := problem.term(value.value)
+		return ok
+	case datatypeMixedSelector[IntSort]:
+		_, ok := problem.term(value.value)
+		return ok
+	case datatypeMixedSelector[RealSort]:
+		_, ok := problem.term(value.value)
+		return ok
+	case datatypeMixedSelector[BitVecSort]:
+		_, ok := problem.term(value.value)
+		return ok
+	case If[IntSort]:
+		return problem.retainMixedBooleanTargets(value.Condition) && problem.retainMixedScalarSelectorTarget(value.Then) && problem.retainMixedScalarSelectorTarget(value.Else)
+	case If[RealSort]:
+		return problem.retainMixedBooleanTargets(value.Condition) && problem.retainMixedScalarSelectorTarget(value.Then) && problem.retainMixedScalarSelectorTarget(value.Else)
+	case If[BoolSort]:
+		return problem.retainMixedBooleanTargets(value.Condition) && problem.retainMixedScalarSelectorTarget(value.Then) && problem.retainMixedScalarSelectorTarget(value.Else)
+	default:
+		return true
+	}
+}
+
+func (problem *datatypeProblem) retainMixedBooleanTargets(term Term[BoolSort]) bool {
+	switch value := term.(type) {
+	case datatypeRecognizer:
+		_, ok := problem.term(value.value)
+		return ok
+	case datatypeRecursiveRecognizer:
+		_, ok := problem.term(value.value)
+		return ok
+	case datatypeBinaryRecursiveRecognizer:
+		_, ok := problem.term(value.value)
+		return ok
+	case datatypeNaryRecursiveRecognizer:
+		_, ok := problem.term(value.value)
+		return ok
+	case datatypeMixedRecognizer:
+		_, ok := problem.term(value.value)
+		return ok
+	case Not:
+		return problem.retainMixedBooleanTargets(value.Value)
+	default:
+		return true
 	}
 }
 
@@ -1383,6 +1442,12 @@ func (problem *datatypeProblem) rewriteMixedScalarAssertion(assertion Term[BoolS
 			return nil, false
 		}
 		return Equal{Left: left, Right: right}, true
+	case Not:
+		inner, ok := problem.rewriteMixedScalarAssertion(value.Value)
+		if !ok {
+			return nil, false
+		}
+		return Not{Value: inner}, true
 	default:
 		return nil, false
 	}
@@ -1398,9 +1463,82 @@ func (problem *datatypeProblem) rewriteMixedScalarTerm(term any) (any, bool) {
 		return problem.mixedSelectedScalar(value.datatypeID, value.constructorCount, value.constructorID, value.field, value.fieldKind, value.width, value.value)
 	case datatypeMixedSelector[BitVecSort]:
 		return problem.mixedSelectedScalar(value.datatypeID, value.constructorCount, value.constructorID, value.field, value.fieldKind, value.width, value.value)
+	case If[IntSort]:
+		condition, conditionOK := problem.rewriteDatatypeCondition(value.Condition)
+		then, thenOK := problem.rewriteMixedScalarTerm(value.Then)
+		otherwise, otherwiseOK := problem.rewriteMixedScalarTerm(value.Else)
+		if boolean, known := condition.(Bool); known {
+			if boolean.Value {
+				return then, conditionOK && thenOK
+			}
+			return otherwise, conditionOK && otherwiseOK
+		}
+		thenTerm, thenTypeOK := then.(Term[IntSort])
+		otherwiseTerm, otherwiseTypeOK := otherwise.(Term[IntSort])
+		return If[IntSort]{Condition: condition, Then: thenTerm, Else: otherwiseTerm}, conditionOK && thenOK && otherwiseOK && thenTypeOK && otherwiseTypeOK
+	case If[RealSort]:
+		condition, conditionOK := problem.rewriteDatatypeCondition(value.Condition)
+		then, thenOK := problem.rewriteMixedScalarTerm(value.Then)
+		otherwise, otherwiseOK := problem.rewriteMixedScalarTerm(value.Else)
+		if boolean, known := condition.(Bool); known {
+			if boolean.Value {
+				return then, conditionOK && thenOK
+			}
+			return otherwise, conditionOK && otherwiseOK
+		}
+		thenTerm, thenTypeOK := then.(Term[RealSort])
+		otherwiseTerm, otherwiseTypeOK := otherwise.(Term[RealSort])
+		return If[RealSort]{Condition: condition, Then: thenTerm, Else: otherwiseTerm}, conditionOK && thenOK && otherwiseOK && thenTypeOK && otherwiseTypeOK
+	case If[BoolSort]:
+		condition, conditionOK := problem.rewriteDatatypeCondition(value.Condition)
+		then, thenOK := problem.rewriteMixedScalarTerm(value.Then)
+		otherwise, otherwiseOK := problem.rewriteMixedScalarTerm(value.Else)
+		if boolean, known := condition.(Bool); known {
+			if boolean.Value {
+				return then, conditionOK && thenOK
+			}
+			return otherwise, conditionOK && otherwiseOK
+		}
+		thenTerm, thenTypeOK := then.(Term[BoolSort])
+		otherwiseTerm, otherwiseTypeOK := otherwise.(Term[BoolSort])
+		return If[BoolSort]{Condition: condition, Then: thenTerm, Else: otherwiseTerm}, conditionOK && thenOK && otherwiseOK && thenTypeOK && otherwiseTypeOK
 	default:
 		return term, true
 	}
+}
+
+func (problem *datatypeProblem) rewriteDatatypeCondition(term Term[BoolSort]) (Term[BoolSort], bool) {
+	switch value := term.(type) {
+	case datatypeRecognizer:
+		return problem.resolveDatatypeRecognizer(value.value, value.constructorID)
+	case datatypeRecursiveRecognizer:
+		return problem.resolveDatatypeRecognizer(value.value, value.constructorID)
+	case datatypeBinaryRecursiveRecognizer:
+		return problem.resolveDatatypeRecognizer(value.value, value.constructorID)
+	case datatypeNaryRecursiveRecognizer:
+		return problem.resolveDatatypeRecognizer(value.value, value.constructorID)
+	case datatypeMixedRecognizer:
+		return problem.resolveDatatypeRecognizer(value.value, value.constructorID)
+	case Not:
+		inner, ok := problem.rewriteDatatypeCondition(value.Value)
+		return Not{Value: inner}, ok
+	default:
+		return term, true
+	}
+}
+
+func (problem *datatypeProblem) resolveDatatypeRecognizer(target any, constructorID int) (Term[BoolSort], bool) {
+	node, ok := problem.term(target)
+	if !ok {
+		return nil, false
+	}
+	root := problem.find(node)
+	for index, candidate := range problem.nodes {
+		if problem.find(index) == root && isDatatypeConstructorNode(candidate) {
+			return Bool{Value: candidate.id == constructorID}, true
+		}
+	}
+	return nil, false
 }
 
 func (problem *datatypeProblem) mixedSelectedScalar(datatypeID, constructorCount, constructorID, field, kind, width int, target any) (any, bool) {

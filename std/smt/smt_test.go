@@ -1038,6 +1038,43 @@ func TestMixedRecursiveDatatypeSelectorsAndExactModel(t *testing.T) {
 	}
 }
 
+func TestMixedRecursiveDatatypeNegatedScalarSelectorEquality(t *testing.T) {
+	leaf := DatatypeConstructor(91, 2, 0, "leaf")
+	node := DeclareMixedRecursiveDatatypeConstructor(91, 2, 1, "node", mixedIntSelfSignature())
+	x := DatatypeConst(91, 2, 1, "x")
+	fields := MixedDatatypeFields(node)
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: ApplyMixedRecursiveDatatypeConstructor(node, mixedIntSelfArguments(Integer{Value: 42}, leaf))},
+		Not{Value: Equal{Left: SelectMixedIntDatatypeField(fields, x), Right: Integer{Value: 42}}},
+	}}
+	if result := Check(Assert(1, New(), formula)); func() bool { _, ok := result.(Unsatisfiable); return ok }() == false {
+		t.Fatalf("negated selector equality contradiction result=%#v", result)
+	}
+}
+
+func TestMixedRecursiveDatatypeScalarConditional(t *testing.T) {
+	leaf := DatatypeConstructor(92, 2, 0, "nil")
+	cons := DeclareMixedRecursiveDatatypeConstructor(92, 2, 1, "cons", mixedIntSelfSignature())
+	x := DatatypeConst(92, 2, 1, "x")
+	fields := MixedDatatypeFields(cons)
+	application := ApplyMixedRecursiveDatatypeConstructor(cons, mixedIntSelfArguments(Integer{Value: 42}, leaf))
+	matched := If[IntSort]{
+		Condition: IsDatatypeConstructor(92, 2, 0, x),
+		Then:      Integer{Value: 0},
+		Else:      SelectMixedIntDatatypeField(fields, x),
+	}
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: application},
+		Equal{Left: matched, Right: Integer{Value: 42}},
+	}}
+	if !containsDatatypeTheory(formula) || !containsMixedDatatypeTheory(formula) {
+		t.Fatal("datatype scalar conditional must route through mixed QF_DT")
+	}
+	if result := Check(Assert(1, New(), formula)); func() bool { _, ok := result.(Satisfiable); return ok }() == false {
+		t.Fatalf("datatype scalar conditional result=%#v", result)
+	}
+}
+
 func TestMixedRecursiveDatatypeInjectivityAndAcyclicity(t *testing.T) {
 	leaf := DatatypeConstructor(91, 2, 0, "leaf")
 	node := DeclareMixedRecursiveDatatypeConstructor(91, 2, 1, "node", mixedIntSelfSignature())

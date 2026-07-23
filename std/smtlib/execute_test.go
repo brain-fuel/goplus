@@ -537,6 +537,161 @@ func TestExecuteMutuallyRecursiveDatatypeProductivity(t *testing.T) {
 	}
 }
 
+func TestExecuteUnaryParametricDatatype(t *testing.T) {
+	script := `(declare-datatypes ((PList 1))
+	  ((par (T) ((nil) (cons (head T) (tail (PList T)))))))
+	(declare-const xs (PList Int))
+	(assert (= xs (cons 1 (as nil (PList Int)))))
+	(assert (= (head xs) 1))
+	(assert ((_ is cons) xs))
+	(check-sat)
+	(get-value (xs (head xs) (tail xs)))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[5].(Satisfiable); !ok {
+		t.Fatalf("expected sat, got %#v", result.Responses[5])
+	}
+	values := result.Responses[6].(ValuesAvailable).Values
+	xValue, xOK := values[0].(DatatypeValue)
+	headValue, headOK := values[1].(IntegerValue)
+	tailValue, tailOK := values[2].(DatatypeValue)
+	if !xOK || !headOK || !tailOK {
+		t.Fatalf("unexpected parametric values: %#v", values)
+	}
+	x, head, tail := xValue.Value, headValue.Value, tailValue.Value
+	if x.ConstructorName != "cons" || head != 1 || tail.ConstructorName != "nil" {
+		t.Fatalf("unexpected parametric model: x=%#v head=%#v tail=%#v", x, head, tail)
+	}
+}
+
+func TestExecuteDistinctParametricDatatypeInstances(t *testing.T) {
+	script := `(declare-datatypes ((Box 1))
+	  ((par (T) ((box (value T))))))
+	(declare-const i (Box Int))
+	(declare-const b (Box Bool))
+	(assert (= i (box 7)))
+	(assert (= b (box true)))
+	(check-sat)
+	(get-value ((value i) (value b)))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[5].(Satisfiable); !ok {
+		t.Fatalf("expected sat, got %#v", result.Responses[5])
+	}
+	values := result.Responses[6].(ValuesAvailable).Values
+	if integer, ok := values[0].(IntegerValue); !ok || integer.Value != 7 {
+		t.Fatalf("unexpected integer box value: %#v", values[0])
+	}
+	if boolean, ok := values[1].(BooleanValue); !ok || !boolean.Value {
+		t.Fatalf("unexpected Boolean box value: %#v", values[1])
+	}
+}
+
+func TestExecuteParametricDatatypeAcrossSupportedSorts(t *testing.T) {
+	script := `(declare-datatype Color ((red) (blue)))
+	(declare-datatypes ((Box 1)) ((par (T) ((box (value T))))))
+	(declare-const r (Box Real))
+	(declare-const v (Box (_ BitVec 8)))
+	(declare-const c (Box Color))
+	(assert (= r (box (/ 3 2))))
+	(assert (= v (box #xa5)))
+	(assert (= c (box red)))
+	(check-sat)
+	(get-value ((value r) (value v) (value c)))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[8].(Satisfiable); !ok {
+		t.Fatalf("expected sat, got %#v", result.Responses[8])
+	}
+	values := result.Responses[9].(ValuesAvailable).Values
+	real, realOK := values[0].(RationalValue)
+	bits, bitsOK := values[1].(BitVectorValue)
+	color, colorOK := values[2].(DatatypeValue)
+	if !realOK || smt.CompareRational(real.Value, smt.NewRational(3, 2)) != 0 || !bitsOK || !smt.EqualBitVectorValue(bits.Value, smt.NewBitVectorUint64(8, 0xa5)) || !colorOK || color.Value.ConstructorName != "red" {
+		t.Fatalf("unexpected cross-sort parametric values: %#v", values)
+	}
+}
+
+func TestExecuteNestedParametricDatatypeInstantiation(t *testing.T) {
+	script := `(declare-datatypes ((PList 1))
+	  ((par (T) ((nil) (cons (head T) (tail (PList T)))))))
+	(declare-datatypes ((Box 1)) ((par (T) ((box (value T))))))
+	(declare-const nested (Box (PList Int)))
+	(assert (= nested (box (cons 9 (as nil (PList Int))))))
+	(assert (= (head (value nested)) 9))
+	(check-sat)
+	(get-value ((value nested) (head (value nested))))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[5].(Satisfiable); !ok {
+		t.Fatalf("expected sat, got %#v", result.Responses[5])
+	}
+	values := result.Responses[6].(ValuesAvailable).Values
+	list, listOK := values[0].(DatatypeValue)
+	head, headOK := values[1].(IntegerValue)
+	if !listOK || list.Value.ConstructorName != "cons" || !headOK || head.Value != 9 {
+		t.Fatalf("unexpected nested parametric values: %#v", values)
+	}
+}
+
+func TestExecuteRejectsInvalidParametricDatatypeInstances(t *testing.T) {
+	uninhabited := `(declare-datatypes ((Loop 1))
+	  ((par (T) ((loop (next (Loop T)))))))
+	(declare-const x (Loop Int))`
+	failed, ok := Execute(uninhabited).(ExecutionFailed)
+	if !ok || len(failed.Errors) != 1 || !strings.Contains(failed.Errors[0].Message, "uninhabited") {
+		t.Fatalf("uninhabited parametric datatype result=%#v", Execute(uninhabited))
+	}
+
+	duplicate := `(declare-datatypes ((Pair 1))
+	  ((par (T) ((pair (item T) (item T))))))
+	(declare-const x (Pair Int))`
+	failed, ok = Execute(duplicate).(ExecutionFailed)
+	if !ok || len(failed.Errors) != 1 || !strings.Contains(failed.Errors[0].Message, "duplicate datatype selector") {
+		t.Fatalf("duplicate parametric selector result=%#v", Execute(duplicate))
+	}
+}
+
+func TestExecuteParametricDatatypeMatch(t *testing.T) {
+	script := `(declare-datatypes ((PList 1))
+	  ((par (T) ((nil) (cons (head T) (tail (PList T)))))))
+	(declare-const xs (PList Int))
+	(assert (= xs (cons 42 (as nil (PList Int)))))
+	(assert (= (match xs (((nil) 0) ((cons h t) h))) 42))
+	(check-sat)
+	(get-value ((match xs (((nil) 0) ((cons h t) h)))))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[4].(Satisfiable); !ok {
+		t.Fatalf("expected sat, got %#v", result.Responses[4])
+	}
+	value, ok := result.Responses[5].(ValuesAvailable).Values[0].(IntegerValue)
+	if !ok || value.Value != 42 {
+		t.Fatalf("unexpected match value: %#v", result.Responses[5])
+	}
+}
+
+func TestExecuteRejectsNonExhaustiveParametricDatatypeMatch(t *testing.T) {
+	script := `(declare-datatypes ((PList 1))
+	  ((par (T) ((nil) (cons (head T) (tail (PList T)))))))
+	(declare-const xs (PList Int))
+	(assert (= (match xs (((nil) 0))) 0))`
+	failed, ok := Execute(script).(ExecutionFailed)
+	if !ok || len(failed.Errors) != 1 || !strings.Contains(failed.Errors[0].Message, "non-exhaustive") {
+		t.Fatalf("non-exhaustive match result=%#v", Execute(script))
+	}
+}
+
 func TestExecuteAssumptionCore(t *testing.T) {
 	script := `(declare-const a Bool)
 (declare-const b Bool)
