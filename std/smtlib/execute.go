@@ -110,33 +110,37 @@ type datatypeFieldSort struct {
 }
 
 type dynamicUnaryFunction struct {
-	domain         int
-	rangeSort      int
-	value          smt.UnaryFunction
-	real           bool
-	realValue      smt.SortedUnaryFunction[smt.RealSort, smt.RealSort]
-	integer        bool
-	integerValue   smt.SortedUnaryFunction[smt.IntSort, smt.IntSort]
-	bitVector      bool
-	domainWidth    int
-	rangeWidth     int
-	bitVectorValue smt.SortedUnaryFunction[smt.BitVecSort, smt.BitVecSort]
+	domain                int
+	rangeSort             int
+	value                 smt.UnaryFunction
+	real                  bool
+	realValue             smt.SortedUnaryFunction[smt.RealSort, smt.RealSort]
+	integer               bool
+	integerValue          smt.SortedUnaryFunction[smt.IntSort, smt.IntSort]
+	integerPredicate      bool
+	integerPredicateValue smt.SortedUnaryFunction[smt.IntSort, smt.BoolSort]
+	bitVector             bool
+	domainWidth           int
+	rangeWidth            int
+	bitVectorValue        smt.SortedUnaryFunction[smt.BitVecSort, smt.BitVecSort]
 }
 
 type dynamicBinaryFunction struct {
-	first          int
-	second         int
-	rangeSort      int
-	value          smt.BinaryFunction
-	real           bool
-	realValue      smt.SortedBinaryFunction[smt.RealSort, smt.RealSort, smt.RealSort]
-	integer        bool
-	integerValue   smt.SortedBinaryFunction[smt.IntSort, smt.IntSort, smt.IntSort]
-	bitVector      bool
-	firstWidth     int
-	secondWidth    int
-	rangeWidth     int
-	bitVectorValue smt.SortedBinaryFunction[smt.BitVecSort, smt.BitVecSort, smt.BitVecSort]
+	first                 int
+	second                int
+	rangeSort             int
+	value                 smt.BinaryFunction
+	real                  bool
+	realValue             smt.SortedBinaryFunction[smt.RealSort, smt.RealSort, smt.RealSort]
+	integer               bool
+	integerValue          smt.SortedBinaryFunction[smt.IntSort, smt.IntSort, smt.IntSort]
+	integerPredicate      bool
+	integerPredicateValue smt.SortedBinaryFunction[smt.IntSort, smt.IntSort, smt.BoolSort]
+	bitVector             bool
+	firstWidth            int
+	secondWidth           int
+	rangeWidth            int
+	bitVectorValue        smt.SortedBinaryFunction[smt.BitVecSort, smt.BitVecSort, smt.BitVecSort]
 }
 
 type dynamicTernaryFunction struct {
@@ -1250,6 +1254,17 @@ func (executor *executor) declareUnary(index int, declaration DeclareFun) {
 		executor.acknowledge(index)
 		return
 	}
+	if domainOK && rangeOK && domainName == "Int" && rangeName == "Bool" {
+		executor.nextSymbol++
+		executor.functions[declaration.Name] = dynamicUnaryFunction{
+			integerPredicate: true,
+			integerPredicateValue: smt.DeclareIntPredicate(
+				executor.nextSymbol, declaration.Name,
+			),
+		}
+		executor.acknowledge(index)
+		return
+	}
 	if domainWidth, domainBitVector := bitVectorSortWidth(declaration.Domain[0]); domainBitVector {
 		if rangeWidth, rangeBitVector := bitVectorSortWidth(declaration.Range); rangeBitVector {
 			executor.nextSymbol++
@@ -1297,6 +1312,18 @@ func (executor *executor) declareBinary(index int, declaration DeclareFun) {
 		executor.nextSymbol++
 		executor.binaryFunctions[declaration.Name] = dynamicBinaryFunction{
 			integer: true, integerValue: smt.DeclareIntBinaryFunction(executor.nextSymbol, declaration.Name),
+		}
+		executor.acknowledge(index)
+		return
+	}
+	if firstOK && secondOK && rangeOK &&
+		firstName == "Int" && secondName == "Int" && rangeName == "Bool" {
+		executor.nextSymbol++
+		executor.binaryFunctions[declaration.Name] = dynamicBinaryFunction{
+			integerPredicate: true,
+			integerPredicateValue: smt.DeclareIntBinaryPredicate(
+				executor.nextSymbol, declaration.Name,
+			),
 		}
 		executor.acknowledge(index)
 		return
@@ -1684,6 +1711,18 @@ func (executor *executor) term(expression SExpr) (dynamicTerm, error) {
 			}
 			return dynamicTerm{sort: sortInt, integer: smt.ApplySortedUnary(function.integerValue, terms[0].integer)}, nil
 		}
+		if function.integerPredicate {
+			if len(terms) != 1 || terms[0].integer == nil ||
+				terms[0].sort != sortInt && terms[0].sort != sortNumber {
+				return dynamicTerm{}, fmt.Errorf("ill-sorted application %s", operator)
+			}
+			return dynamicTerm{
+				sort: sortBool,
+				boolean: smt.ApplySortedUnary(
+					function.integerPredicateValue, terms[0].integer,
+				),
+			}, nil
+		}
 		if len(terms) != 1 || terms[0].sort != function.domain+2 {
 			return dynamicTerm{}, fmt.Errorf("ill-sorted application %s", operator)
 		}
@@ -1709,6 +1748,20 @@ func (executor *executor) term(expression SExpr) (dynamicTerm, error) {
 				return dynamicTerm{}, fmt.Errorf("ill-sorted application %s", operator)
 			}
 			return dynamicTerm{sort: sortInt, integer: smt.ApplySortedBinary(function.integerValue, terms[0].integer, terms[1].integer)}, nil
+		}
+		if function.integerPredicate {
+			if len(terms) != 2 ||
+				terms[0].integer == nil || terms[0].sort != sortInt && terms[0].sort != sortNumber ||
+				terms[1].integer == nil || terms[1].sort != sortInt && terms[1].sort != sortNumber {
+				return dynamicTerm{}, fmt.Errorf("ill-sorted application %s", operator)
+			}
+			return dynamicTerm{
+				sort: sortBool,
+				boolean: smt.ApplySortedBinary(
+					function.integerPredicateValue,
+					terms[0].integer, terms[1].integer,
+				),
+			}, nil
 		}
 		if len(terms) != 2 || terms[0].sort != function.first+2 || terms[1].sort != function.second+2 {
 			return dynamicTerm{}, fmt.Errorf("ill-sorted application %s", operator)

@@ -1567,6 +1567,45 @@ func TestIntegerSortedTernaryFunctionCongruence(t *testing.T) {
 	}
 }
 
+func TestSharedIntegerPredicateCongruence(t *testing.T) {
+	x := IntegerVariable(1)
+	y := IntegerVariable(2)
+	predicate := DeclareIntPredicate(3, "p")
+	formula := And{Values: []Term[BoolSort]{
+		LessEqual{Left: x, Right: y},
+		LessEqual{Left: y, Right: x},
+		ApplySortedUnary(predicate, x),
+		Not{Value: ApplySortedUnary(predicate, y)},
+	}}
+	if result := Check(Assert(1, New(), formula)); func() bool { _, ok := result.(Unsatisfiable); return ok }() == false {
+		t.Fatalf("result=%T", result)
+	}
+	one := Integer{Value: 1}
+	affine := And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: y},
+		ApplySortedUnary(predicate, Add{Values: []Term[IntSort]{x, one}}),
+		Not{Value: ApplySortedUnary(predicate, Add{Values: []Term[IntSort]{y, one}})},
+	}}
+	if result := Check(Assert(2, New(), affine)); func() bool { _, ok := result.(Unsatisfiable); return ok }() == false {
+		t.Fatalf("affine result=%T", result)
+	}
+}
+
+func TestSharedBinaryIntegerPredicateCongruence(t *testing.T) {
+	x := IntegerVariable(1)
+	y := IntegerVariable(2)
+	z := IntegerVariable(3)
+	predicate := DeclareIntBinaryPredicate(4, "p2")
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: y},
+		ApplySortedBinary(predicate, x, z),
+		Not{Value: ApplySortedBinary(predicate, y, z)},
+	}}
+	if result := Check(Assert(1, New(), formula)); func() bool { _, ok := result.(Unsatisfiable); return ok }() == false {
+		t.Fatalf("result=%T", result)
+	}
+}
+
 func TestSharedIntegerEUFPropagatesApplicationEqualityIntoLIA(t *testing.T) {
 	x := IntegerVariable(1)
 	y := IntegerVariable(2)

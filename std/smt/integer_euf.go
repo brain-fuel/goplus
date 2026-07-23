@@ -401,10 +401,12 @@ func containsCompactIntegerEUF(term Term[BoolSort]) bool {
 	case Not:
 		return containsCompactIntegerEUF(value.Value)
 	case UninterpretedEUFRelation:
-		return value.Left.SortID == -2 || value.Right.SortID == -2
+		return compactTermUsesInteger(value.Left) ||
+			compactTermUsesInteger(value.Right)
 	case UninterpretedEUFConjunction:
 		for _, relation := range value.values() {
-			if relation.Left.SortID == -2 || relation.Right.SortID == -2 {
+			if compactTermUsesInteger(relation.Left) ||
+				compactTermUsesInteger(relation.Right) {
 				return true
 			}
 		}
@@ -414,8 +416,22 @@ func containsCompactIntegerEUF(term Term[BoolSort]) bool {
 	return false
 }
 
+func compactTermUsesInteger(value UninterpretedEUFTerm) bool {
+	return value.SortID == -2 || value.FirstSortID == -2 ||
+		value.SecondSortID == -2
+}
+
 func containsSortedIntegerApplicationBool(term Term[BoolSort]) bool {
 	switch value := term.(type) {
+	case sortedUnaryApplication[BoolSort]:
+		_, ok := value.function.(sortedUnaryFunctionValue[IntSort, BoolSort])
+		_, argumentOK := value.argument.(Term[IntSort])
+		return ok && argumentOK
+	case sortedBinaryApplication[BoolSort]:
+		_, ok := value.function.(sortedBinaryFunctionValue[IntSort, IntSort, BoolSort])
+		_, firstOK := value.first.(Term[IntSort])
+		_, secondOK := value.second.(Term[IntSort])
+		return ok && firstOK && secondOK
 	case And:
 		for _, item := range value.Values {
 			if containsSortedIntegerApplicationBool(item) {
@@ -772,6 +788,36 @@ func (purifier *sharedIntegerPurifier) add(term Term[BoolSort], negated bool) bo
 		return true
 	case Not:
 		return purifier.add(value.Value, !negated)
+	case sortedUnaryApplication[BoolSort]:
+		function, functionOK := value.function.(sortedUnaryFunctionValue[IntSort, BoolSort])
+		argument, argumentOK := value.argument.(Term[IntSort])
+		if !functionOK || !argumentOK || value.rangeKind != -1 {
+			return false
+		}
+		argumentSymbol, ok := purifier.integerArgument(argument)
+		if !ok {
+			return false
+		}
+		predicate := ApplySortedUnary(function, Term[IntSort](argumentSymbol))
+		purifier.partition.euf.append(predicate, negated)
+		return true
+	case sortedBinaryApplication[BoolSort]:
+		function, functionOK := value.function.(sortedBinaryFunctionValue[IntSort, IntSort, BoolSort])
+		first, firstOK := value.first.(Term[IntSort])
+		second, secondOK := value.second.(Term[IntSort])
+		if !functionOK || !firstOK || !secondOK || value.rangeKind != -1 {
+			return false
+		}
+		firstSymbol, firstOK := purifier.integerArgument(first)
+		secondSymbol, secondOK := purifier.integerArgument(second)
+		if !firstOK || !secondOK {
+			return false
+		}
+		predicate := ApplySortedBinary(
+			function, Term[IntSort](firstSymbol), Term[IntSort](secondSymbol),
+		)
+		purifier.partition.euf.append(predicate, negated)
+		return true
 	case LessEqual:
 		if negated {
 			return false
@@ -1036,6 +1082,17 @@ func (purifier *sharedIntegerPurifier) collectBooleanSymbols(
 	term Term[BoolSort],
 ) {
 	switch value := term.(type) {
+	case sortedUnaryApplication[BoolSort]:
+		if argument, ok := value.argument.(Term[IntSort]); ok {
+			purifier.collectIntegerSymbols(argument)
+		}
+	case sortedBinaryApplication[BoolSort]:
+		if first, ok := value.first.(Term[IntSort]); ok {
+			purifier.collectIntegerSymbols(first)
+		}
+		if second, ok := value.second.(Term[IntSort]); ok {
+			purifier.collectIntegerSymbols(second)
+		}
 	case And:
 		for _, item := range value.Values {
 			purifier.collectBooleanSymbols(item)
@@ -1083,17 +1140,22 @@ func (purifier *sharedIntegerPurifier) collectBooleanSymbols(
 func (purifier *sharedIntegerPurifier) collectCompactIntegerEUFTerm(
 	value UninterpretedEUFTerm,
 ) {
-	if value.SortID != -2 {
-		return
-	}
 	switch value.Kind {
 	case 1:
-		purifier.markUsed(value.SymbolID)
+		if value.SortID == -2 {
+			purifier.markUsed(value.SymbolID)
+		}
 	case 2:
-		purifier.markUsed(value.FirstID)
+		if value.FirstSortID == -2 {
+			purifier.markUsed(value.FirstID)
+		}
 	case 3:
-		purifier.markUsed(value.FirstID)
-		purifier.markUsed(value.SecondID)
+		if value.FirstSortID == -2 {
+			purifier.markUsed(value.FirstID)
+		}
+		if value.SecondSortID == -2 {
+			purifier.markUsed(value.SecondID)
+		}
 	}
 }
 
