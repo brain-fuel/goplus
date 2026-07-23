@@ -1006,6 +1006,139 @@ func TestGroundStringReplaceEqualities(t *testing.T) {
 			t.Fatalf("result=%T", checked)
 		}
 	})
+
+	t.Run("no inverse", func(t *testing.T) {
+		formula := Equal{
+			Left:  StringReplaceAll(x, StringVal("a"), StringVal("z")),
+			Right: StringVal("a"),
+		}
+		checked := Check(Assert(74, New(), formula))
+		if _, ok := checked.(Unsatisfiable); !ok {
+			t.Fatalf("result=%T", checked)
+		}
+	})
+
+	t.Run("unbounded deletion inverse remains explicit", func(t *testing.T) {
+		formula := Equal{
+			Left:  StringReplaceAll(x, StringVal("a"), StringVal("")),
+			Right: StringVal("a"),
+		}
+		checked := Check(Assert(75, New(), formula))
+		if _, ok := checked.(Unknown); !ok {
+			t.Fatalf("result=%T", checked)
+		}
+	})
+}
+
+func TestGroundStringReplaceAllEqualities(t *testing.T) {
+	x := StringConst(1, "x")
+	t.Run("overlapping inverse parse", func(t *testing.T) {
+		formula := Equal{
+			Left:  StringReplaceAll(x, StringVal("a"), StringVal("aa")),
+			Right: StringVal("aa"),
+		}
+		checked := Check(Assert(69, New(), formula))
+		result, ok := checked.(Satisfiable)
+		if !ok {
+			t.Fatalf("result=%T", checked)
+		}
+		if actual, found := StringModelValue(result.Value, x); !found || actual != "a" {
+			t.Fatalf("x=(%q,%v)", actual, found)
+		}
+		if valid, found := BoolValue(result.Value, formula); !found || !valid {
+			t.Fatalf("formula=(%v,%v)", valid, found)
+		}
+	})
+
+	t.Run("multiple replacements", func(t *testing.T) {
+		formula := Equal{
+			Left:  StringReplaceAll(x, StringVal("a"), StringVal("za")),
+			Right: StringVal("zaza"),
+		}
+		checked := Check(Assert(70, New(), formula))
+		result, ok := checked.(Satisfiable)
+		if !ok {
+			t.Fatalf("result=%T", checked)
+		}
+		if actual, found := StringModelValue(result.Value, x); !found || actual != "aa" {
+			t.Fatalf("x=(%q,%v)", actual, found)
+		}
+	})
+
+	t.Run("empty source is identity", func(t *testing.T) {
+		formula := Equal{
+			Left:  StringReplaceAll(x, StringVal(""), StringVal("!")),
+			Right: StringVal("ab"),
+		}
+		checked := Check(Assert(71, New(), formula))
+		result, ok := checked.(Satisfiable)
+		if !ok {
+			t.Fatalf("result=%T", checked)
+		}
+		if actual, found := StringModelValue(result.Value, x); !found || actual != "ab" {
+			t.Fatalf("x=(%q,%v)", actual, found)
+		}
+	})
+
+	t.Run("predicate selects inverse", func(t *testing.T) {
+		formula := And{Values: []Term[BoolSort]{
+			Equal{
+				Left:  StringReplaceAll(x, StringVal("a"), StringVal("z")),
+				Right: StringVal("zz"),
+			},
+			StringContains(x, StringVal("a")),
+			Equal{Left: StringLength(x), Right: Integer{Value: 2}},
+		}}
+		checked := Check(Assert(72, New(), formula))
+		result, ok := checked.(Satisfiable)
+		if !ok {
+			t.Fatalf("result=%T", checked)
+		}
+		if actual, found := StringModelValue(result.Value, x); !found || actual != "aa" {
+			t.Fatalf("x=(%q,%v)", actual, found)
+		}
+	})
+
+	t.Run("incompatible targets", func(t *testing.T) {
+		formula := And{Values: []Term[BoolSort]{
+			Equal{
+				Left:  StringReplaceAll(x, StringVal("a"), StringVal("z")),
+				Right: StringVal("zz"),
+			},
+			Equal{
+				Left:  StringReplaceAll(x, StringVal("a"), StringVal("z")),
+				Right: StringVal("q"),
+			},
+		}}
+		checked := Check(Assert(73, New(), formula))
+		if _, ok := checked.(Unsatisfiable); !ok {
+			t.Fatalf("result=%T", checked)
+		}
+	})
+}
+
+func TestCompactStringReplaceAllStreamingEquality(t *testing.T) {
+	values := []string{"", "a", "b", "aa", "ab", "aba", "🙂", "a🙂a"}
+	for _, candidate := range values {
+		for _, source := range values {
+			for _, replacement := range values {
+				target := candidate
+				if source != "" {
+					target = strings.ReplaceAll(candidate, source, replacement)
+				}
+				equality := CompactStringReplaceEquality{
+					Source: source, Replacement: replacement, Target: target, All: true,
+				}
+				if !compactStringReplacementEquals(candidate, equality) {
+					t.Fatalf("rejected %q replace-all %q -> %q = %q", candidate, source, replacement, target)
+				}
+				equality.Target = target + "#"
+				if compactStringReplacementEquals(candidate, equality) {
+					t.Fatalf("accepted incorrect target for %q replace-all %q -> %q", candidate, source, replacement)
+				}
+			}
+		}
+	}
 }
 
 func TestGroundStringReplaceIndexedInteraction(t *testing.T) {

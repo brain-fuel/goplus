@@ -1239,7 +1239,7 @@ func evaluateStringBoolean(term Term[BoolSort], model stringModel, integers inte
 		if !found {
 			return false, false
 		}
-		return strings.Replace(symbol, value.Source, value.Replacement, 1) == value.Target, true
+		return compactStringReplacementEquals(symbol, value), true
 	case CompactStringIndexedEquality:
 		symbol, found := model.lookup(value.SymbolID)
 		if !found {

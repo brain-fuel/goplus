@@ -11,6 +11,7 @@ type CompactStringReplaceEquality struct {
 	Source      string
 	Replacement string
 	Target      string
+	All         bool
 }
 
 func (CompactStringReplaceEquality) isTerm(BoolSort) {}
@@ -223,8 +224,18 @@ func groundStringReplaceEquality(term Term[BoolSort]) (CompactStringReplaceEqual
 
 func groundStringReplaceEqualitySides(derived, target any) (CompactStringReplaceEquality, bool) {
 	replacement, ok := derived.(stringReplace[StringSort])
+	all := false
 	if !ok {
-		return CompactStringReplaceEquality{}, false
+		replacementAll, replaceAll := derived.(stringReplaceAll[StringSort])
+		if !replaceAll {
+			return CompactStringReplaceEquality{}, false
+		}
+		replacement = stringReplace[StringSort]{
+			value:       replacementAll.value,
+			source:      replacementAll.source,
+			replacement: replacementAll.replacement,
+		}
+		all = true
 	}
 	id, symbol := stringSymbolID(replacement.value)
 	source, sourceGround := evaluateString(replacement.source, stringModel{}, integerModel{})
@@ -242,6 +253,7 @@ func groundStringReplaceEqualitySides(derived, target any) (CompactStringReplace
 		Source:      source,
 		Replacement: newValue,
 		Target:      targetValue,
+		All:         all,
 	}, true
 }
 
@@ -261,7 +273,7 @@ func groundStringReplacePreimage(
 		// throwaway copy on the common single-constraint path.
 		for index := 1; index < constraint.equalityCount; index++ {
 			equality := constraint.equalityAt(index)
-			if strings.Replace(candidate, equality.Source, equality.Replacement, 1) != equality.Target {
+			if !compactStringReplacementEquals(candidate, equality) {
 				return "", false, true
 			}
 		}
@@ -288,6 +300,9 @@ func groundStringReplacePreimage(
 			}
 		}
 		return candidate, true, true
+	}
+	if anchor.All {
+		return groundStringReplaceAllPreimage(anchor, try)
 	}
 	if anchor.Source == "" {
 		if !strings.HasPrefix(anchor.Target, anchor.Replacement) {
@@ -332,4 +347,114 @@ func groundStringReplacePreimage(
 		search = offset + 1
 	}
 	return "", false, true
+}
+
+func compactStringReplacementEquals(
+	candidate string, equality CompactStringReplaceEquality,
+) bool {
+	if !equality.All {
+		return strings.Replace(
+			candidate, equality.Source, equality.Replacement, 1,
+		) == equality.Target
+	}
+	if equality.Source == "" {
+		return candidate == equality.Target
+	}
+	inputOffset := 0
+	targetOffset := 0
+	for {
+		relative := strings.Index(candidate[inputOffset:], equality.Source)
+		if relative < 0 {
+			return targetOffset <= len(equality.Target) &&
+				candidate[inputOffset:] == equality.Target[targetOffset:]
+		}
+		match := inputOffset + relative
+		literal := candidate[inputOffset:match]
+		if targetOffset > len(equality.Target) ||
+			!strings.HasPrefix(equality.Target[targetOffset:], literal) {
+			return false
+		}
+		targetOffset += len(literal)
+		if targetOffset > len(equality.Target) ||
+			!strings.HasPrefix(equality.Target[targetOffset:], equality.Replacement) {
+			return false
+		}
+		targetOffset += len(equality.Replacement)
+		inputOffset = match + len(equality.Source)
+	}
+}
+
+// groundStringReplaceAllPreimage enumerates the finite inverse parses induced
+// by a nonempty replacement. Every target boundary can either be copied
+// literally or consume one replacement and emit the source. Exact forward
+// evaluation rejects parses whose copied text accidentally contains source.
+//
+// An empty replacement can have an unbounded inverse language. The identity
+// candidate remains useful and exact; broader inversion is deliberately
+// reported incomplete until the deletion transducer is represented directly.
+func groundStringReplaceAllPreimage(
+	anchor CompactStringReplaceEquality,
+	try func(string) (string, bool, bool),
+) (string, bool, bool) {
+	accept := func(candidate string) (string, bool, bool) {
+		if !compactStringReplacementEquals(candidate, anchor) {
+			return "", false, true
+		}
+		return try(candidate)
+	}
+	if anchor.Source == "" {
+		return accept(anchor.Target)
+	}
+	if candidate, found, complete := accept(anchor.Target); found || !complete {
+		return candidate, found, complete
+	}
+	if anchor.Replacement == "" {
+		return "", false, false
+	}
+	// Replacing every visible output occurrence is the common inverse and
+	// avoids constructing the search tree when it is already exact.
+	direct := anchor.Source
+	if anchor.Target != anchor.Replacement {
+		direct = strings.ReplaceAll(anchor.Target, anchor.Replacement, anchor.Source)
+	}
+	if candidate, found, complete := accept(direct); found || !complete {
+		return candidate, found, complete
+	}
+	states := 0
+	return enumerateStringReplaceAllPreimages(anchor, accept, 0, "", &states)
+}
+
+func enumerateStringReplaceAllPreimages(
+	anchor CompactStringReplaceEquality,
+	try func(string) (string, bool, bool),
+	offset int,
+	prefix string,
+	states *int,
+) (string, bool, bool) {
+	*states = *states + 1
+	if *states > compactStringWordEquationSearchLimit {
+		return "", false, false
+	}
+	if offset == len(anchor.Target) {
+		return try(prefix)
+	}
+	if strings.HasPrefix(anchor.Target[offset:], anchor.Replacement) {
+		if candidate, found, complete := enumerateStringReplaceAllPreimages(
+			anchor,
+			try,
+			offset+len(anchor.Replacement),
+			prefix+anchor.Source,
+			states,
+		); found || !complete {
+			return candidate, found, complete
+		}
+	}
+	width := stringCodePointWidth(anchor.Target, offset)
+	return enumerateStringReplaceAllPreimages(
+		anchor,
+		try,
+		offset+width,
+		prefix+anchor.Target[offset:offset+width],
+		states,
+	)
 }
