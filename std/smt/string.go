@@ -706,15 +706,15 @@ func evaluateCompactStringRelation(relation CompactStringRelation, model stringM
 		result, complete = evaluateCompactStringEquality(relation.Left, relation.Right, model)
 	case CompactStringLengthEqual:
 		left, leftOK := evaluateCompactString(relation.Left, model)
-		result = int64(len(DecodeStringCodePoints(left))) == relation.Integer
+		result = int64(stringCodePointCount(left)) == relation.Integer
 		complete = leftOK
 	case CompactStringLengthLess:
 		left, leftOK := evaluateCompactString(relation.Left, model)
-		result = int64(len(DecodeStringCodePoints(left))) < relation.Integer
+		result = int64(stringCodePointCount(left)) < relation.Integer
 		complete = leftOK
 	case CompactStringLengthLessEqual:
 		left, leftOK := evaluateCompactString(relation.Left, model)
-		result = int64(len(DecodeStringCodePoints(left))) <= relation.Integer
+		result = int64(stringCodePointCount(left)) <= relation.Integer
 		complete = leftOK
 	case CompactStringContains:
 		left, leftOK := evaluateCompactString(relation.Left, model)
@@ -1291,7 +1291,7 @@ func evaluateStringIntegerExact(term any, model stringModel, integers integerMod
 	switch value := term.(type) {
 	case stringLength:
 		text, found := evaluateString(value.value, model, integers)
-		return NewIntegerValue(int64(len(DecodeStringCodePoints(text)))), found
+		return NewIntegerValue(int64(stringCodePointCount(text))), found
 	case stringIndexOf:
 		text, textOK := evaluateString(value.value, model, integers)
 		substring, substringOK := evaluateString(value.substring, model, integers)

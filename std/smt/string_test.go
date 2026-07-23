@@ -686,6 +686,60 @@ func TestOverflowWordEquationInteraction(t *testing.T) {
 	}
 }
 
+func TestOverflowWordEquationConstraintInteraction(t *testing.T) {
+	x := StringConst(1, "x")
+	y := StringConst(2, "y")
+	z := StringConst(3, "z")
+	w := StringConst(4, "w")
+	v := StringConst(5, "v")
+	a := StringToRegex(StringVal("a"))
+	notA := StringToRegex(StringVal("z"))
+	formula := And{Values: []Term[BoolSort]{
+		Equal{
+			Left:  StringConcat(x, StringVal("-"), y, StringVal("-"), z, StringVal("-"), w),
+			Right: StringVal("a-b-c-d"),
+		},
+		Equal{Left: StringConcat(v, StringVal("!")), Right: StringVal("e!")},
+		Equal{Left: StringLength(x), Right: Integer{Value: 1}},
+		Equal{Left: StringLength(y), Right: Integer{Value: 1}},
+		Equal{Left: StringLength(z), Right: Integer{Value: 1}},
+		Equal{Left: StringLength(w), Right: Integer{Value: 1}},
+		Equal{Left: StringLength(v), Right: Integer{Value: 1}},
+		StringInRegex(x, a),
+		StringInRegex(x, UnionRegex(a, notA)),
+		StringInRegex(x, IntersectRegex(FullRegex[StringSort](), a)),
+		StringInRegex(x, DifferenceRegex(a, notA)),
+		StringInRegex(x, ComplementRegex(notA)),
+		StringContains(x, StringVal("a")),
+		StringHasPrefix(x, StringVal("a")),
+		StringHasSuffix(x, StringVal("a")),
+		Not{Value: Equal{Left: x, Right: StringVal("z")}},
+		Not{Value: Equal{Left: x, Right: StringVal("")}},
+	}}
+	checked := Check(Assert(40, New(), formula))
+	result, ok := checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("result=%T", checked)
+	}
+	for _, item := range []struct {
+		expression Term[StringSort]
+		expected   string
+	}{
+		{x, "a"},
+		{y, "b"},
+		{z, "c"},
+		{w, "d"},
+		{v, "e"},
+	} {
+		if actual, found := StringModelValue(result.Value, item.expression); !found || actual != item.expected {
+			t.Fatalf("value=(%q,%v), want=%q", actual, found, item.expected)
+		}
+	}
+	if valid, found := BoolValue(result.Value, formula); !found || !valid {
+		t.Fatalf("formula=(%v,%v)", valid, found)
+	}
+}
+
 func TestWordEquationRegexInteraction(t *testing.T) {
 	x := StringConst(1, "x")
 	y := StringConst(2, "y")

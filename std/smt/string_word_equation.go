@@ -30,13 +30,109 @@ type boundedWordEquationLength struct {
 }
 
 type boundedWordEquationConstraints struct {
-	model          stringModel
-	lengthCount    int
-	lengths        [4]boundedWordEquationLength
-	regexCount     int
-	regexes        [4]symbolicRegexConstraint
-	predicateCount int
-	predicates     [4]Term[BoolSort]
+	model             stringModel
+	lengthCount       int
+	lengths           [4]boundedWordEquationLength
+	lengthOverflow    []boundedWordEquationLength
+	regexCount        int
+	regexes           [4]symbolicRegexConstraint
+	regexOverflow     []symbolicRegexConstraint
+	predicateCount    int
+	predicates        [4]Term[BoolSort]
+	predicateOverflow []Term[BoolSort]
+}
+
+func (constraints *boundedWordEquationConstraints) lengthAt(index int) boundedWordEquationLength {
+	if constraints.lengthOverflow != nil {
+		return constraints.lengthOverflow[index]
+	}
+	return constraints.lengths[index]
+}
+
+func (constraints *boundedWordEquationConstraints) setLengthAt(
+	index int,
+	constraint boundedWordEquationLength,
+) {
+	if constraints.lengthOverflow != nil {
+		constraints.lengthOverflow[index] = constraint
+		return
+	}
+	constraints.lengths[index] = constraint
+}
+
+func (constraints *boundedWordEquationConstraints) appendLength(
+	constraint boundedWordEquationLength,
+) {
+	if constraints.lengthOverflow != nil {
+		constraints.lengthOverflow = append(constraints.lengthOverflow, constraint)
+		constraints.lengthCount++
+		return
+	}
+	if constraints.lengthCount < len(constraints.lengths) {
+		constraints.lengths[constraints.lengthCount] = constraint
+		constraints.lengthCount++
+		return
+	}
+	constraints.lengthOverflow = make(
+		[]boundedWordEquationLength, constraints.lengthCount, constraints.lengthCount*2,
+	)
+	copy(constraints.lengthOverflow, constraints.lengths[:])
+	constraints.lengthOverflow = append(constraints.lengthOverflow, constraint)
+	constraints.lengthCount++
+}
+
+func (constraints *boundedWordEquationConstraints) regexAt(index int) symbolicRegexConstraint {
+	if constraints.regexOverflow != nil {
+		return constraints.regexOverflow[index]
+	}
+	return constraints.regexes[index]
+}
+
+func (constraints *boundedWordEquationConstraints) appendRegex(
+	constraint symbolicRegexConstraint,
+) {
+	if constraints.regexOverflow != nil {
+		constraints.regexOverflow = append(constraints.regexOverflow, constraint)
+		constraints.regexCount++
+		return
+	}
+	if constraints.regexCount < len(constraints.regexes) {
+		constraints.regexes[constraints.regexCount] = constraint
+		constraints.regexCount++
+		return
+	}
+	constraints.regexOverflow = make(
+		[]symbolicRegexConstraint, constraints.regexCount, constraints.regexCount*2,
+	)
+	copy(constraints.regexOverflow, constraints.regexes[:])
+	constraints.regexOverflow = append(constraints.regexOverflow, constraint)
+	constraints.regexCount++
+}
+
+func (constraints *boundedWordEquationConstraints) predicateAt(index int) Term[BoolSort] {
+	if constraints.predicateOverflow != nil {
+		return constraints.predicateOverflow[index]
+	}
+	return constraints.predicates[index]
+}
+
+func (constraints *boundedWordEquationConstraints) appendPredicate(predicate Term[BoolSort]) {
+	if constraints.predicateOverflow != nil {
+		constraints.predicateOverflow = append(constraints.predicateOverflow, predicate)
+		constraints.predicateCount++
+		return
+	}
+	if constraints.predicateCount < len(constraints.predicates) {
+		constraints.predicates[constraints.predicateCount] = predicate
+		constraints.predicateCount++
+		return
+	}
+	constraints.predicateOverflow = make(
+		[]Term[BoolSort], constraints.predicateCount, constraints.predicateCount*2,
+	)
+	copy(constraints.predicateOverflow, constraints.predicates[:])
+	constraints.predicateOverflow = append(constraints.predicateOverflow, predicate)
+	constraints.predicateCount++
 }
 
 const (
@@ -128,6 +224,7 @@ func solveBoundedWordEquationConjunction(assertions []Term[BoolSort]) (checkOutc
 		}
 	}
 	for index := 0; index < constraints.lengthCount; index++ {
+		length := constraints.lengthAt(index)
 		found := false
 		for equationIndex := 0; equationIndex < equationCount; equationIndex++ {
 			var equation CompactStringWordEquation
@@ -137,7 +234,7 @@ func solveBoundedWordEquationConjunction(assertions []Term[BoolSort]) (checkOutc
 				equation = equations[equationIndex]
 			}
 			found = found || compactStringPatternContainsID(
-				equation.Pattern, constraints.lengths[index].id,
+				equation.Pattern, length.id,
 			)
 		}
 		if !found {
@@ -189,14 +286,12 @@ func appendBoundedWordEquationConjunct(
 		}
 	case BooleanConjunction:
 		children, negated := value.values()
-		for _, childNegated := range negated {
-			if childNegated {
-				result.append(term)
-				return
+		for index, child := range children {
+			if negated[index] {
+				result.append(Not{Value: child})
+			} else {
+				appendBoundedWordEquationConjunct(child, result)
 			}
-		}
-		for _, child := range children {
-			appendBoundedWordEquationConjunct(child, result)
 		}
 	default:
 		result.append(term)
@@ -330,12 +425,10 @@ func appendBoundedWordEquationPredicate(
 	constraints *boundedWordEquationConstraints,
 	predicate Term[BoolSort],
 ) (bool, bool) {
-	if !isBoundedWordEquationPredicate(predicate) ||
-		constraints.predicateCount == len(constraints.predicates) {
+	if !isBoundedWordEquationPredicate(predicate) {
 		return false, false
 	}
-	constraints.predicates[constraints.predicateCount] = predicate
-	constraints.predicateCount++
+	constraints.appendPredicate(predicate)
 	return true, false
 }
 
@@ -398,7 +491,7 @@ func assignBoundedWordEquationRegex(
 	negated bool,
 ) (bool, bool) {
 	id, symbolic := stringSymbolID(membership.value)
-	if !symbolic || constraints.regexCount == len(constraints.regexes) {
+	if !symbolic {
 		return false, false
 	}
 	constraint := symbolicRegexConstraint{
@@ -411,8 +504,7 @@ func assignBoundedWordEquationRegex(
 		}
 		return true, accepted == negated
 	}
-	constraints.regexes[constraints.regexCount] = constraint
-	constraints.regexCount++
+	constraints.appendRegex(constraint)
 	return true, false
 }
 
@@ -518,12 +610,13 @@ func assignBoundedWordEquationLengthRange(
 			return true, true
 		}
 		for index := 0; index < constraints.lengthCount; index++ {
-			if constraints.lengths[index].id == id {
-				constraints.lengths[index] = boundedWordEquationLength{
+			if constraints.lengthAt(index).id == id {
+				updated := boundedWordEquationLength{
 					id: id, minimum: minimum, maximum: maximum, hasMaximum: hasMaximum,
 				}
+				constraints.setLengthAt(index, updated)
 				if value, bound := constraints.model.lookup(id); bound &&
-					!constraints.lengths[index].allows(int64(stringCodePointCount(value))) {
+					!updated.allows(int64(stringCodePointCount(value))) {
 					return true, true
 				}
 				return true, false
@@ -537,18 +630,14 @@ func assignBoundedWordEquationLengthRange(
 		!constraint.allows(int64(stringCodePointCount(value))) {
 		return true, true
 	}
-	if constraints.lengthCount == len(constraints.lengths) {
-		return false, false
-	}
-	constraints.lengths[constraints.lengthCount] = constraint
-	constraints.lengthCount++
+	constraints.appendLength(constraint)
 	return true, false
 }
 
 func (constraints boundedWordEquationConstraints) length(id int) (boundedWordEquationLength, bool) {
 	for index := 0; index < constraints.lengthCount; index++ {
-		if constraints.lengths[index].id == id {
-			return constraints.lengths[index], true
+		if constraint := constraints.lengthAt(index); constraint.id == id {
+			return constraint, true
 		}
 	}
 	return boundedWordEquationLength{}, false
@@ -712,7 +801,7 @@ func searchCompactStringWordEquationSystem(
 ) (stringModel, bool, bool) {
 	if equationIndex == equationCount {
 		for index := 0; index < constraints.regexCount; index++ {
-			constraint := constraints.regexes[index]
+			constraint := constraints.regexAt(index)
 			value, bound := constraints.model.lookup(constraint.id)
 			if !bound {
 				return stringModel{}, false, false
@@ -727,7 +816,7 @@ func searchCompactStringWordEquationSystem(
 		}
 		for index := 0; index < constraints.predicateCount; index++ {
 			value, known := evaluateStringBoolean(
-				constraints.predicates[index], constraints.model, integerModel{},
+				constraints.predicateAt(index), constraints.model, integerModel{},
 			)
 			if !known {
 				return stringModel{}, false, false
@@ -782,7 +871,7 @@ func searchCompactStringWordEquationSystem(
 		candidate.model.set(id, value)
 		rejected := false
 		for regexIndex := 0; regexIndex < candidate.regexCount; regexIndex++ {
-			regex := candidate.regexes[regexIndex]
+			regex := candidate.regexAt(regexIndex)
 			if regex.id != id {
 				continue
 			}
@@ -816,7 +905,7 @@ func searchCompactStringWordEquationOverflowSystem(
 ) (stringModel, bool, bool) {
 	if equationIndex == len(equations) {
 		for index := 0; index < constraints.regexCount; index++ {
-			constraint := constraints.regexes[index]
+			constraint := constraints.regexAt(index)
 			value, bound := constraints.model.lookup(constraint.id)
 			if !bound {
 				return stringModel{}, false, false
@@ -831,7 +920,7 @@ func searchCompactStringWordEquationOverflowSystem(
 		}
 		for index := 0; index < constraints.predicateCount; index++ {
 			value, known := evaluateStringBoolean(
-				constraints.predicates[index], constraints.model, integerModel{},
+				constraints.predicateAt(index), constraints.model, integerModel{},
 			)
 			if !known {
 				return stringModel{}, false, false
@@ -886,7 +975,7 @@ func searchCompactStringWordEquationOverflowSystem(
 		candidate.model.set(id, value)
 		rejected := false
 		for regexIndex := 0; regexIndex < candidate.regexCount; regexIndex++ {
-			regex := candidate.regexes[regexIndex]
+			regex := candidate.regexAt(regexIndex)
 			if regex.id != id {
 				continue
 			}
