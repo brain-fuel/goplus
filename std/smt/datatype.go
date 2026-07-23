@@ -401,7 +401,7 @@ func evaluateDatatype(term Term[DatatypeSort], model *datatypeModel) (DatatypeVa
 		return modelValue.Children.At(value.field)
 	case datatypeMixedSelector[DatatypeSort]:
 		target, ok := value.value.(Term[DatatypeSort])
-		if !ok || value.fieldKind != mixedDatatypeFieldSelf {
+		if !ok || value.fieldKind != mixedDatatypeFieldSelf && value.fieldKind != mixedDatatypeFieldReference {
 			return DatatypeValue{}, false
 		}
 		modelValue, found := evaluateDatatype(target, model)
@@ -409,7 +409,7 @@ func evaluateDatatype(term Term[DatatypeSort], model *datatypeModel) (DatatypeVa
 			return DatatypeValue{}, false
 		}
 		field, found := modelValue.Fields.At(value.field)
-		if !found || field.Kind != mixedDatatypeFieldSelf || field.Datatype == nil {
+		if !found || field.Kind != value.fieldKind || field.Datatype == nil {
 			return DatatypeValue{}, false
 		}
 		return *field.Datatype, true
@@ -546,7 +546,7 @@ func equalDatatypeFieldValue(left, right DatatypeFieldValue) bool {
 		return CompareRational(left.Real, right.Real) == 0
 	case mixedDatatypeFieldBitVec:
 		return EqualBitVectorValue(left.BitVector, right.BitVector)
-	case mixedDatatypeFieldSelf:
+	case mixedDatatypeFieldSelf, mixedDatatypeFieldReference:
 		return left.Datatype != nil && right.Datatype != nil && equalDatatypeValue(*left.Datatype, *right.Datatype)
 	default:
 		return false
@@ -911,28 +911,39 @@ func (problem *datatypeProblem) term(term any) (int, bool) {
 		var selfChildren datatypeNodeChildren
 		for field := 0; field < value.specs.Len(); field++ {
 			spec, argument := value.specs.At(field), value.values.At(field)
-			if spec.Kind != argument.Kind || spec.Width != argument.Width {
+			if spec.Kind != argument.Kind || spec.Width != argument.Width || spec.DatatypeID != argument.DatatypeID || spec.ConstructorCount != argument.ConstructorCount {
 				return 0, false
 			}
-			if spec.Kind != mixedDatatypeFieldSelf {
+			if spec.Kind != mixedDatatypeFieldSelf && spec.Kind != mixedDatatypeFieldReference {
 				continue
 			}
 			child, ok := problem.term(argument.Term)
-			if !ok || problem.nodes[child].datatypeID != value.datatypeID || problem.nodes[child].constructorCount != value.constructorCount {
+			expectedDatatype, expectedConstructors := value.datatypeID, value.constructorCount
+			if spec.Kind == mixedDatatypeFieldReference {
+				expectedDatatype, expectedConstructors = spec.DatatypeID, spec.ConstructorCount
+			}
+			if !ok || problem.nodes[child].datatypeID != expectedDatatype || problem.nodes[child].constructorCount != expectedConstructors {
 				return 0, false
 			}
 			selfChildren.append(child)
 		}
 		return problem.ensure(datatypeNode{datatypeID: value.datatypeID, constructorCount: value.constructorCount, kind: 8, id: value.constructorID, name: value.name, mixedSpecs: value.specs, mixedValues: value.values, mixedChildren: selfChildren}), true
 	case datatypeMixedSelector[DatatypeSort]:
-		if value.fieldKind != mixedDatatypeFieldSelf {
+		if value.fieldKind != mixedDatatypeFieldSelf && value.fieldKind != mixedDatatypeFieldReference {
 			return 0, false
 		}
 		target, ok := problem.term(value.value)
 		if !ok || problem.nodes[target].datatypeID != value.datatypeID || problem.nodes[target].constructorCount != value.constructorCount || value.constructorID < 0 || value.constructorID >= value.constructorCount || value.field < 0 {
 			return 0, false
 		}
-		return problem.ensure(datatypeNode{datatypeID: value.datatypeID, constructorCount: value.constructorCount, kind: 9, id: value.constructorID, name: value.selectorName, child: target, field: value.field}), true
+		resultDatatype, resultConstructors := value.datatypeID, value.constructorCount
+		if value.fieldKind == mixedDatatypeFieldReference {
+			if value.targetDatatypeID < 0 || value.targetConstructorCount <= 0 {
+				return 0, false
+			}
+			resultDatatype, resultConstructors = value.targetDatatypeID, value.targetConstructorCount
+		}
+		return problem.ensure(datatypeNode{datatypeID: resultDatatype, constructorCount: resultConstructors, kind: 9, id: value.constructorID, name: value.selectorName, child: target, field: value.field}), true
 	default:
 		return 0, false
 	}
@@ -1063,7 +1074,7 @@ func (problem *datatypeProblem) union(left, right int) {
 				problem.unsat = true
 				return
 			}
-			if leftSpec.Kind == mixedDatatypeFieldSelf {
+			if leftSpec.Kind == mixedDatatypeFieldSelf || leftSpec.Kind == mixedDatatypeFieldReference {
 				problem.union(leftNode.mixedChildren.at(self), rightNode.mixedChildren.at(self))
 				self++
 				if problem.unsat {
@@ -1110,7 +1121,7 @@ func (problem *datatypeProblem) solve() (checkOutcome, bool) {
 				} else if selectorNode.kind == 7 && applicationNode.kind == 6 && selectorNode.field < applicationNode.children.len() {
 					selected = applicationNode.children.at(selectorNode.field)
 				} else if selectorNode.kind == 9 && applicationNode.kind == 8 {
-					selected, _ = applicationNode.mixedSelfChild(selectorNode.field)
+					selected, _ = applicationNode.mixedRecursiveChild(selectorNode.field)
 				}
 				if selected >= 0 && applicationNode.id == selectorNode.id && problem.find(application) == targetRoot && problem.find(selector) != problem.find(selected) {
 					problem.union(selector, selected)
@@ -1257,7 +1268,7 @@ func (problem *datatypeProblem) propagateMixedConstructorFields() {
 					problem.unsat = true
 					return
 				}
-				if leftSpec.Kind == mixedDatatypeFieldSelf {
+				if leftSpec.Kind == mixedDatatypeFieldSelf || leftSpec.Kind == mixedDatatypeFieldReference {
 					problem.union(leftNode.mixedChildren.at(leftSelf), rightNode.mixedChildren.at(rightSelf))
 					leftSelf++
 					rightSelf++
@@ -1292,7 +1303,7 @@ func (problem *datatypeProblem) solveMixedScalarConstraints() (checkOutcome, boo
 			continue
 		}
 		for field := 0; field < node.mixedSpecs.Len(); field++ {
-			if node.mixedSpecs.At(field).Kind == mixedDatatypeFieldSelf {
+			if node.mixedSpecs.At(field).Kind == mixedDatatypeFieldSelf || node.mixedSpecs.At(field).Kind == mixedDatatypeFieldReference {
 				continue
 			}
 			term := node.mixedValues.At(field).Term
@@ -1438,13 +1449,13 @@ func mixedSyntheticScalar(root, field int, spec MixedDatatypeFieldSpec) any {
 	}
 }
 
-func (node datatypeNode) mixedSelfChild(field int) (int, bool) {
-	if field < 0 || field >= node.mixedSpecs.Len() || node.mixedSpecs.At(field).Kind != mixedDatatypeFieldSelf {
+func (node datatypeNode) mixedRecursiveChild(field int) (int, bool) {
+	if field < 0 || field >= node.mixedSpecs.Len() || node.mixedSpecs.At(field).Kind != mixedDatatypeFieldSelf && node.mixedSpecs.At(field).Kind != mixedDatatypeFieldReference {
 		return -1, false
 	}
 	self := 0
 	for index := 0; index < field; index++ {
-		if node.mixedSpecs.At(index).Kind == mixedDatatypeFieldSelf {
+		if node.mixedSpecs.At(index).Kind == mixedDatatypeFieldSelf || node.mixedSpecs.At(index).Kind == mixedDatatypeFieldReference {
 			self++
 		}
 	}
@@ -1493,7 +1504,7 @@ func (problem *datatypeProblem) valueForRoot(root int, assignment []int, visitin
 					modelField.Real, ok = evaluateReal(argument.Term.(Term[RealSort]), problem.scalarOutcome.booleans, problem.scalarOutcome.integers, problem.scalarOutcome.reals)
 				case mixedDatatypeFieldBitVec:
 					modelField.BitVector, ok = evaluateBitVector(argument.Term, problem.scalarOutcome.bitVectors, problem.scalarOutcome.integers)
-				case mixedDatatypeFieldSelf:
+				case mixedDatatypeFieldSelf, mixedDatatypeFieldReference:
 					child, childOK := problem.valueForRoot(problem.find(node.mixedChildren.at(self)), assignment, visiting, model)
 					self++
 					if childOK {
@@ -1529,14 +1540,6 @@ func (problem *datatypeProblem) valueForRoot(root int, assignment []int, visitin
 	}
 	value := DatatypeValue{DatatypeID: node.datatypeID, ConstructorCount: node.constructorCount, ConstructorID: constructorID, ConstructorName: problem.constructorName(node.datatypeID, node.constructorCount, constructorID)}
 	if specs, mixed := problem.mixedRecursiveConstructorSpecs(root, constructorID); mixed {
-		var child DatatypeValue
-		if problem.mixedSpecsHaveSelf(specs) {
-			base := problem.baseConstructor(node.datatypeID, node.constructorCount)
-			if base < 0 {
-				return DatatypeValue{}, false
-			}
-			child = DatatypeValue{DatatypeID: node.datatypeID, ConstructorCount: node.constructorCount, ConstructorID: base, ConstructorName: problem.constructorName(node.datatypeID, node.constructorCount, base)}
-		}
 		fields := model.retainDatatypeFields(specs.Len())
 		for field := 0; field < specs.Len(); field++ {
 			spec := specs.At(field)
@@ -1559,7 +1562,16 @@ func (problem *datatypeProblem) valueForRoot(root int, assignment []int, visitin
 				} else {
 					modelField.BitVector = NewBitVectorUint64(spec.Width, 0)
 				}
-			case mixedDatatypeFieldSelf:
+			case mixedDatatypeFieldSelf, mixedDatatypeFieldReference:
+				targetDatatype, targetConstructors := node.datatypeID, node.constructorCount
+				if spec.Kind == mixedDatatypeFieldReference {
+					targetDatatype, targetConstructors = spec.DatatypeID, spec.ConstructorCount
+				}
+				base := problem.baseConstructor(targetDatatype, targetConstructors)
+				if base < 0 {
+					return DatatypeValue{}, false
+				}
+				child := DatatypeValue{DatatypeID: targetDatatype, ConstructorCount: targetConstructors, ConstructorID: base, ConstructorName: problem.constructorName(targetDatatype, targetConstructors, base)}
 				modelField.Datatype = model.retainChild(child)
 			}
 			fields.set(field, modelField)
@@ -1587,15 +1599,6 @@ func (problem *datatypeProblem) valueForRoot(root int, assignment []int, visitin
 		}
 	}
 	return value, true
-}
-
-func (problem *datatypeProblem) mixedSpecsHaveSelf(specs MixedDatatypeFieldSpecs) bool {
-	for field := 0; field < specs.Len(); field++ {
-		if specs.At(field).Kind == mixedDatatypeFieldSelf {
-			return true
-		}
-	}
-	return false
 }
 
 func (problem *datatypeProblem) mixedRecursiveConstructorSpecs(root, constructor int) (MixedDatatypeFieldSpecs, bool) {

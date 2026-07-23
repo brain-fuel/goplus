@@ -108,4 +108,18 @@ func TestSortedTermsAcrossPackageBoundary(t *testing.T) {
 		t.Fatalf("unexpected datatype diagnostic: %s", out)
 	}
 
+	mutualPositive := "package main\nimport \"goforge.dev/goplus/std/smt\"\nfunc main() { signature := smt.DatatypeReferenceField(2, 2, \"children\", smt.EmptyMixedDatatypeSignature()); node := smt.DeclareMixedRecursiveDatatypeConstructor(1, 2, 1, \"node\", signature); forest := smt.DatatypeConstructor(2, 2, 0, \"nil\"); args := smt.DatatypeReferenceArgument(2, 2, forest, smt.EmptyMixedDatatypeArgumentsFor(1, 2)); tree := smt.ApplyMixedRecursiveDatatypeConstructor(node, args); _ = smt.SelectMixedDatatypeReferenceField(2, 2, smt.MixedDatatypeFields(node), tree) }\n"
+	if out, err := compile(t, mutualPositive); err != nil {
+		t.Fatalf("well-indexed mutual datatype reference failed: %v\n%s", err, out)
+	}
+
+	mutualNegative := "package main\nimport \"goforge.dev/goplus/std/smt\"\nfunc main() { signature := smt.DatatypeReferenceField(2, 2, \"children\", smt.EmptyMixedDatatypeSignature()); node := smt.DeclareMixedRecursiveDatatypeConstructor(1, 2, 1, \"node\", signature); wrong := smt.DatatypeConstructor(3, 2, 0, \"wrong\"); args := smt.DatatypeReferenceArgument(3, 2, wrong, smt.EmptyMixedDatatypeArgumentsFor(1, 2)); _ = smt.ApplyMixedRecursiveDatatypeConstructor(node, args) }\n"
+	out, err = compile(t, mutualNegative)
+	if err == nil {
+		t.Fatalf("wrong mutual datatype target unexpectedly compiled:\n%s", out)
+	}
+	if !strings.Contains(out, "dependent index mismatch") {
+		t.Fatalf("unexpected mutual datatype diagnostic: %s", out)
+	}
+
 }

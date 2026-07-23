@@ -1,6 +1,7 @@
 package smtlib
 
 import (
+	"strings"
 	"testing"
 
 	"goforge.dev/goplus/std/smt"
@@ -445,6 +446,94 @@ func TestExecuteMixedSortRecognizerSelectorModel(t *testing.T) {
 	payload, payloadOK := x.Value.Fields.At(0)
 	if !payloadOK || smt.CompareIntegerValue(payload.Integer, smt.NewIntegerValue(7)) != 0 {
 		t.Fatalf("recognizer-only mixed model=%+v", x.Value)
+	}
+}
+
+func TestExecuteMutuallyRecursiveDatatypes(t *testing.T) {
+	script := `(declare-datatypes ((Tree 0) (Forest 0))
+  (((leaf) (node (children Forest)))
+   ((nil) (cons (head Tree) (tail Forest)))))
+(declare-const x Tree)
+(assert (= x (node (cons leaf nil))))
+(assert (= (head (children x)) leaf))
+(assert (= (tail (children x)) nil))
+(assert (is-node x))
+(check-sat)
+(get-value (x (children x)))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[6].(Satisfiable); !ok {
+		t.Fatalf("check=%T responses=%#v", result.Responses[6], result.Responses)
+	}
+	values := result.Responses[7].(ValuesAvailable)
+	tree := values.Values[0].(DatatypeValue)
+	forest := values.Values[1].(DatatypeValue)
+	children, childrenOK := tree.Value.Fields.At(0)
+	head, headOK := forest.Value.Fields.At(0)
+	tail, tailOK := forest.Value.Fields.At(1)
+	if !childrenOK || children.Datatype == nil || children.Datatype.ConstructorName != "cons" || !headOK || head.Datatype == nil || head.Datatype.ConstructorName != "leaf" || !tailOK || tail.Datatype == nil || tail.Datatype.ConstructorName != "nil" {
+		t.Fatalf("mutual values=%#v", values.Values)
+	}
+}
+
+func TestExecuteMutuallyRecursiveDatatypeCycle(t *testing.T) {
+	script := `(declare-datatypes ((Tree 0) (Forest 0))
+  (((leaf) (node (children Forest)))
+   ((nil) (cons (head Tree) (tail Forest)))))
+(declare-const tree Tree)
+(declare-const forest Forest)
+(assert (= tree (node forest)))
+(assert (= forest (cons tree nil)))
+(check-sat)`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[5].(Unsatisfiable); !ok {
+		t.Fatalf("check=%T responses=%#v", result.Responses[5], result.Responses)
+	}
+}
+
+func TestExecuteMutuallyRecursiveRecognizerModel(t *testing.T) {
+	script := `(declare-datatypes ((Tree 0) (Forest 0))
+  (((leaf) (node (children Forest)))
+   ((nil) (cons (head Tree) (tail Forest)))))
+(declare-const x Tree)
+(assert (is-node x))
+(check-sat)
+(get-value (x))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[3].(Satisfiable); !ok {
+		t.Fatalf("check=%T responses=%#v", result.Responses[3], result.Responses)
+	}
+	value := result.Responses[4].(ValuesAvailable).Values[0].(DatatypeValue).Value
+	children, childrenOK := value.Fields.At(0)
+	if value.ConstructorName != "node" || !childrenOK || children.Datatype == nil || children.Datatype.DatatypeID == value.DatatypeID || children.Datatype.ConstructorID != 0 {
+		t.Fatalf("mutual recognizer model=%+v", value)
+	}
+}
+
+func TestExecuteMutuallyRecursiveDatatypeProductivity(t *testing.T) {
+	product := `(declare-datatypes ((Box 0)) (((box (payload Int)))))
+(declare-const x Box)
+(assert (= x (box 7)))
+(check-sat)`
+	result, ok := Execute(product).(Executed)
+	if !ok {
+		t.Fatalf("productive scalar datatype result=%#v", Execute(product))
+	}
+	if _, ok := result.Responses[3].(Satisfiable); !ok {
+		t.Fatalf("productive scalar datatype check=%#v", result.Responses)
+	}
+	uninhabited := `(declare-datatypes ((A 0) (B 0)) (((a (to-b B))) ((b (to-a A)))))`
+	failed, ok := Execute(uninhabited).(ExecutionFailed)
+	if !ok || len(failed.Errors) != 1 || !strings.Contains(failed.Errors[0].Message, "uninhabited sort") {
+		t.Fatalf("uninhabited mutual datatype result=%#v", Execute(uninhabited))
 	}
 }
 

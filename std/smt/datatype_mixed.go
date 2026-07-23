@@ -6,12 +6,27 @@ const (
 	mixedDatatypeFieldReal
 	mixedDatatypeFieldBitVec
 	mixedDatatypeFieldSelf
+	mixedDatatypeFieldReference
 )
 
 type MixedDatatypeFieldSpec struct {
-	Kind  int
-	Width int
-	Name  string
+	Kind             int
+	Width            int
+	Name             string
+	DatatypeID       int
+	ConstructorCount int
+}
+
+func prependMixedDatatypeReferenceFieldSpec(datatypeID, constructorCount int, name string, tail MixedDatatypeFieldSpecs) MixedDatatypeFieldSpecs {
+	result := prependMixedDatatypeFieldSpec(mixedDatatypeFieldReference, 0, name, tail)
+	if result.Overflow != nil {
+		result.Overflow[0].DatatypeID = datatypeID
+		result.Overflow[0].ConstructorCount = constructorCount
+	} else {
+		result.Inline[0].DatatypeID = datatypeID
+		result.Inline[0].ConstructorCount = constructorCount
+	}
+	return result
 }
 
 type MixedDatatypeFieldSpecs struct {
@@ -59,6 +74,9 @@ func validateMixedDatatypeFieldSpecs(specs MixedDatatypeFieldSpecs) {
 		if item.Kind == mixedDatatypeFieldBitVec && item.Width <= 0 {
 			panic("smt: mixed datatype bit-vector field width must be positive")
 		}
+		if item.Kind == mixedDatatypeFieldReference && (item.DatatypeID < 0 || item.ConstructorCount <= 0) {
+			panic("smt: datatype reference field requires a valid target declaration")
+		}
 		for right := left + 1; right < specs.Len(); right++ {
 			if item.Name == specs.At(right).Name {
 				panic("smt: mixed datatype selector names must be distinct")
@@ -68,9 +86,23 @@ func validateMixedDatatypeFieldSpecs(specs MixedDatatypeFieldSpecs) {
 }
 
 type MixedDatatypeTermValue struct {
-	Kind  int
-	Width int
-	Term  any
+	Kind             int
+	Width            int
+	Term             any
+	DatatypeID       int
+	ConstructorCount int
+}
+
+func prependMixedDatatypeReferenceTerm(datatypeID, constructorCount int, term any, tail MixedDatatypeTermValues) MixedDatatypeTermValues {
+	result := prependMixedDatatypeTerm(mixedDatatypeFieldReference, 0, term, tail)
+	if result.Overflow != nil {
+		result.Overflow[0].DatatypeID = datatypeID
+		result.Overflow[0].ConstructorCount = constructorCount
+	} else {
+		result.Inline[0].DatatypeID = datatypeID
+		result.Inline[0].ConstructorCount = constructorCount
+	}
+	return result
 }
 
 type MixedDatatypeTermValues struct {
@@ -158,7 +190,7 @@ func validateMixedDatatypeArguments(specs MixedDatatypeFieldSpecs, values MixedD
 	}
 	for index := 0; index < specs.Len(); index++ {
 		spec, value := specs.At(index), values.At(index)
-		if spec.Kind != value.Kind || spec.Width != value.Width {
+		if spec.Kind != value.Kind || spec.Width != value.Width || spec.DatatypeID != value.DatatypeID || spec.ConstructorCount != value.ConstructorCount {
 			panic("smt: mixed datatype argument sort does not match signature")
 		}
 	}

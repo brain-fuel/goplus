@@ -1114,6 +1114,51 @@ func TestMixedRecursiveDatatypeSupportsEveryScalarFieldSortTogether(t *testing.T
 	}
 }
 
+func TestMutuallyRecursiveDatatypeReferencesAndAcyclicity(t *testing.T) {
+	treeLeaf := DatatypeConstructor(100, 2, 0, "leaf")
+	forestNil := DatatypeConstructor(101, 2, 0, "nil")
+	treeNode := DeclareMixedRecursiveDatatypeConstructor(100, 2, 1, "node",
+		DatatypeReferenceField(101, 2, "children", EmptyMixedDatatypeSignature{}))
+	forestCons := DeclareMixedRecursiveDatatypeConstructor(101, 2, 1, "cons",
+		DatatypeReferenceField(100, 2, "head", SelfDatatypeField("tail", EmptyMixedDatatypeSignature{})))
+	forestValue := ApplyMixedRecursiveDatatypeConstructor(forestCons,
+		DatatypeReferenceArgument(100, 2, treeLeaf, SelfDatatypeArgument(forestNil, EmptyMixedDatatypeArguments{})))
+	treeValue := ApplyMixedRecursiveDatatypeConstructor(treeNode,
+		DatatypeReferenceArgument(101, 2, forestValue, EmptyMixedDatatypeArguments{}))
+	x := DatatypeConst(100, 2, 1, "x")
+	children := MixedDatatypeFields(treeNode)
+	head := MixedDatatypeFields(forestCons)
+	tail := NextMixedDatatypeField(head)
+	selectedForest := SelectMixedDatatypeReferenceField(101, 2, children, x)
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: treeValue},
+		Equal{Left: SelectMixedDatatypeReferenceField(100, 2, head, selectedForest), Right: treeLeaf},
+		Equal{Left: SelectMixedSelfDatatypeField(tail, selectedForest), Right: forestNil},
+	}}
+	result, ok := Check(Assert(1, New(), formula)).(Satisfiable)
+	if !ok {
+		t.Fatalf("mutual datatype result=%#v", Check(Assert(1, New(), formula)))
+	}
+	model, found := DatatypeModelValue(100, 2, result.Value, x)
+	forestField, forestOK := model.Fields.At(0)
+	if !found || !forestOK || forestField.Datatype == nil {
+		t.Fatalf("mutual datatype model=%+v found=%v", model, found)
+	}
+	headField, headOK := forestField.Datatype.Fields.At(0)
+	tailField, tailOK := forestField.Datatype.Fields.At(1)
+	if forestField.Datatype.ConstructorID != 1 || !headOK || headField.Datatype == nil || headField.Datatype.ConstructorID != 0 || !tailOK || tailField.Datatype == nil || tailField.Datatype.ConstructorID != 0 {
+		t.Fatalf("mutual datatype model=%+v found=%v", model, found)
+	}
+	treeVar := DatatypeConst(100, 2, 2, "tree")
+	forestVar := DatatypeConst(101, 2, 2, "forest")
+	cyclicTree := ApplyMixedRecursiveDatatypeConstructor(treeNode, DatatypeReferenceArgument(101, 2, forestVar, EmptyMixedDatatypeArguments{}))
+	cyclicForest := ApplyMixedRecursiveDatatypeConstructor(forestCons, DatatypeReferenceArgument(100, 2, treeVar, SelfDatatypeArgument(forestNil, EmptyMixedDatatypeArguments{})))
+	cycle := And{Values: []Term[BoolSort]{Equal{Left: treeVar, Right: cyclicTree}, Equal{Left: forestVar, Right: cyclicForest}}}
+	if _, ok := Check(Assert(2, New(), cycle)).(Unsatisfiable); !ok {
+		t.Fatal("cycles across mutually recursive datatype declarations must be rejected")
+	}
+}
+
 func TestNaryRecursiveDatatypeRecognizerBuildsWellFoundedModel(t *testing.T) {
 	branch := DeclareNaryRecursiveDatatypeConstructor(90, 2, 1, 3, "branch", ternaryDatatypeNames())
 	x := DatatypeConst(90, 2, 1, "x")

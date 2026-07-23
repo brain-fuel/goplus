@@ -78,8 +78,10 @@ type datatypeConstructorDeclaration struct {
 }
 
 type datatypeFieldSort struct {
-	sort  int
-	width int
+	sort         int
+	width        int
+	datatypeID   int
+	constructors int
 }
 
 type dynamicUnaryFunction struct {
@@ -305,6 +307,10 @@ func (executor *executor) command(index int, command Command) {
 			executor.declareDatatype(index, value)
 			return
 		}
+		if value.Name == "declare-datatypes" {
+			executor.declareDatatypes(index, value)
+			return
+		}
 		executor.fail(index, value.At, "unsupported command "+value.Name)
 	default:
 		executor.fail(index, commandSpan(command), "unsupported command")
@@ -456,7 +462,7 @@ func (executor *executor) declareDatatype(index int, declaration RawCommand) {
 					return
 				}
 				selectorName, selectorOK := atomText(field.Values[0])
-				fieldSort, sortOK := parseDatatypeFieldSort(field.Values[1], name)
+				fieldSort, sortOK := parseDatatypeFieldSort(field.Values[1], name, executor.datatypes)
 				if !selectorOK || !sortOK {
 					executor.fail(index, declaration.At, "datatype field must use Bool, Int, Real, (_ BitVec n), or the enclosing sort "+name)
 					return
@@ -549,6 +555,174 @@ func (executor *executor) declareDatatype(index int, declaration RawCommand) {
 		}
 	}
 	executor.acknowledge(index)
+}
+
+func (executor *executor) declareDatatypes(index int, declaration RawCommand) {
+	if len(declaration.Arguments) != 2 {
+		executor.fail(index, declaration.At, "declare-datatypes requires sort declarations and constructor lists")
+		return
+	}
+	sorts, sortsOK := declaration.Arguments[0].(List)
+	bodies, bodiesOK := declaration.Arguments[1].(List)
+	if !sortsOK || !bodiesOK || len(sorts.Values) == 0 || len(sorts.Values) != len(bodies.Values) {
+		executor.fail(index, declaration.At, "declare-datatypes requires one constructor list per sort")
+		return
+	}
+	names := make([]string, len(sorts.Values))
+	group := make(map[string]dynamicDatatype, len(names))
+	for sortIndex, expression := range sorts.Values {
+		entry, ok := expression.(List)
+		if !ok || len(entry.Values) != 2 {
+			executor.fail(index, declaration.At, "datatype sort declaration must be (name 0)")
+			return
+		}
+		name, nameOK := atomText(entry.Values[0])
+		arity, arityOK := atomText(entry.Values[1])
+		if !nameOK || !arityOK || arity != "0" {
+			executor.fail(index, declaration.At, "only non-parametric datatype sort declarations are supported")
+			return
+		}
+		_, groupDuplicate := group[name]
+		_, existingDatatype := executor.datatypes[name]
+		if groupDuplicate || existingDatatype || name == "Bool" || name == "Int" || name == "Real" {
+			executor.fail(index, declaration.At, "duplicate sort declaration "+name)
+			return
+		}
+		constructors, ok := bodies.Values[sortIndex].(List)
+		if !ok || len(constructors.Values) == 0 {
+			executor.fail(index, declaration.At, "datatype requires at least one constructor")
+			return
+		}
+		executor.nextSymbol++
+		datatype := dynamicDatatype{id: executor.nextSymbol, constructorCount: len(constructors.Values), sortCode: sortDatatypeBase - executor.nextSymbol}
+		names[sortIndex], group[name] = name, datatype
+	}
+	declarations := make([][]datatypeConstructorDeclaration, len(names))
+	seenConstructors := make(map[string]struct{})
+	seenSelectors := make(map[string]struct{})
+	for sortIndex, name := range names {
+		body := bodies.Values[sortIndex].(List)
+		declarations[sortIndex] = make([]datatypeConstructorDeclaration, len(body.Values))
+		for constructorIndex, expression := range body.Values {
+			entry, ok := expression.(List)
+			if !ok || len(entry.Values) == 0 {
+				executor.fail(index, declaration.At, "datatype constructor must be a nonempty list")
+				return
+			}
+			constructorName, ok := atomText(entry.Values[0])
+			if !ok {
+				executor.fail(index, declaration.At, "datatype constructor name must be a symbol")
+				return
+			}
+			_, duplicateConstructor := seenConstructors[constructorName]
+			_, conflictsSelector := seenSelectors[constructorName]
+			_, existingTerm := executor.datatypeTerms[constructorName]
+			_, existingConstructor := executor.datatypeConstructors[constructorName]
+			if duplicateConstructor || conflictsSelector || existingTerm || existingConstructor {
+				executor.fail(index, declaration.At, "duplicate datatype constructor "+constructorName)
+				return
+			}
+			seenConstructors[constructorName] = struct{}{}
+			constructor := &declarations[sortIndex][constructorIndex]
+			constructor.name, constructor.arity = constructorName, len(entry.Values)-1
+			if constructor.arity == 0 {
+				continue
+			}
+			constructor.selectorNames = make([]string, constructor.arity)
+			constructor.fieldSorts = make([]datatypeFieldSort, constructor.arity)
+			for fieldIndex, fieldExpression := range entry.Values[1:] {
+				field, ok := fieldExpression.(List)
+				if !ok || len(field.Values) != 2 {
+					executor.fail(index, declaration.At, "datatype field requires a selector and sort")
+					return
+				}
+				selector, selectorOK := atomText(field.Values[0])
+				fieldSort, sortOK := parseDatatypeFieldSort(field.Values[1], name, group)
+				if !selectorOK || !sortOK {
+					executor.fail(index, declaration.At, "unsupported mutually recursive datatype field sort")
+					return
+				}
+				if _, duplicate := seenSelectors[selector]; duplicate {
+					executor.fail(index, declaration.At, "duplicate datatype selector "+selector)
+					return
+				}
+				if _, conflict := seenConstructors[selector]; conflict {
+					executor.fail(index, declaration.At, "datatype selector conflicts with constructor "+selector)
+					return
+				}
+				if _, duplicate := executor.datatypeSelectors[selector]; duplicate {
+					executor.fail(index, declaration.At, "duplicate datatype selector "+selector)
+					return
+				}
+				seenSelectors[selector] = struct{}{}
+				constructor.selectorNames[fieldIndex], constructor.fieldSorts[fieldIndex] = selector, fieldSort
+			}
+		}
+	}
+	productive := make(map[int]bool, len(names))
+	for changed := true; changed; {
+		changed = false
+		for sortIndex, name := range names {
+			datatype := group[name]
+			if productive[datatype.sortCode] {
+				continue
+			}
+			for _, constructor := range declarations[sortIndex] {
+				ready := true
+				for _, field := range constructor.fieldSorts {
+					target := field.sort
+					if target == sortDatatypeSelf {
+						target = datatype.sortCode
+					}
+					if target <= sortDatatypeBase && !productive[target] {
+						ready = false
+						break
+					}
+				}
+				if ready {
+					productive[datatype.sortCode], changed = true, true
+					break
+				}
+			}
+		}
+	}
+	for _, name := range names {
+		if !productive[group[name].sortCode] {
+			executor.fail(index, declaration.At, "mutually recursive datatype group has an uninhabited sort "+name)
+			return
+		}
+	}
+	for _, name := range names {
+		executor.datatypes[name] = group[name]
+	}
+	for sortIndex, name := range names {
+		executor.installDatatypeConstructors(group[name], declarations[sortIndex])
+	}
+	executor.acknowledge(index)
+}
+
+func (executor *executor) installDatatypeConstructors(datatype dynamicDatatype, declarations []datatypeConstructorDeclaration) {
+	for constructorID, constructor := range declarations {
+		if constructor.arity == 0 {
+			executor.datatypeTerms[constructor.name] = dynamicTerm{sort: datatype.sortCode, datatypeID: datatype.id, constructorCount: datatype.constructorCount, datatype: smt.DatatypeConstructor(datatype.id, datatype.constructorCount, constructorID, constructor.name)}
+		} else {
+			witness := declareDynamicMixedDatatypeConstructor(datatype, constructorID, constructor)
+			dynamic := dynamicRecursiveDatatypeConstructor{mixedWitness: witness, fieldSorts: constructor.fieldSorts, datatypeID: datatype.id, constructors: datatype.constructorCount, sortCode: datatype.sortCode, arity: constructor.arity}
+			executor.datatypeConstructors[constructor.name] = dynamic
+			for field, selectorName := range constructor.selectorNames {
+				selector := dynamic
+				selector.field = field
+				executor.datatypeSelectors[selectorName] = selector
+			}
+		}
+		executor.datatypeRecognizers["is-"+constructor.name] = dynamicDatatypeRecognizer{datatypeID: datatype.id, constructorCount: datatype.constructorCount, constructorID: constructorID, sortCode: datatype.sortCode}
+		if constructor.arity != 0 {
+			recognizer := executor.datatypeRecognizers["is-"+constructor.name]
+			recognizer.recursive, recognizer.mixed, recognizer.arity = true, true, constructor.arity
+			recognizer.mixedWitness = executor.datatypeConstructors[constructor.name].mixedWitness
+			executor.datatypeRecognizers["is-"+constructor.name] = recognizer
+		}
+	}
 }
 
 func (executor *executor) declareUnary(index int, declaration DeclareFun) {
@@ -861,7 +1035,7 @@ func compactDatatypeSelectors(values []string) smt.NaryDatatypeSelectors {
 	return result
 }
 
-func parseDatatypeFieldSort(expression SExpr, enclosing string) (datatypeFieldSort, bool) {
+func parseDatatypeFieldSort(expression SExpr, enclosing string, references map[string]dynamicDatatype) (datatypeFieldSort, bool) {
 	if name, ok := atomText(expression); ok {
 		switch name {
 		case enclosing:
@@ -872,6 +1046,9 @@ func parseDatatypeFieldSort(expression SExpr, enclosing string) (datatypeFieldSo
 			return datatypeFieldSort{sort: sortInt}, true
 		case "Real":
 			return datatypeFieldSort{sort: sortReal}, true
+		}
+		if target, found := references[name]; found {
+			return datatypeFieldSort{sort: target.sortCode, datatypeID: target.id, constructors: target.constructorCount}, true
 		}
 	}
 	if width, ok := bitVectorSortWidth(expression); ok {
@@ -904,6 +1081,8 @@ func declareDynamicMixedDatatypeConstructor(datatype dynamicDatatype, constructo
 			signature = smt.BitVecDatatypeField(sort.width, name, signature)
 		case sortDatatypeSelf:
 			signature = smt.SelfDatatypeField(name, signature)
+		default:
+			signature = smt.DatatypeReferenceField(sort.datatypeID, sort.constructors, name, signature)
 		}
 	}
 	return smt.DeclareMixedRecursiveDatatypeConstructor(datatype.id, datatype.constructorCount, constructorID, constructor.name, signature)
@@ -943,7 +1122,10 @@ func dynamicMixedDatatypeArguments(fields []datatypeFieldSort, terms []dynamicTe
 		case sortDatatypeSelf:
 			arguments = smt.SelfDatatypeArgument(terms[field].datatype, arguments)
 		default:
-			return nil, false
+			if fields[field].datatypeID < 0 || fields[field].constructors <= 0 {
+				return nil, false
+			}
+			arguments = smt.DatatypeReferenceArgument(fields[field].datatypeID, fields[field].constructors, terms[field].datatype, arguments)
 		}
 	}
 	return arguments, true
@@ -967,7 +1149,10 @@ func selectDynamicMixedDatatypeField(selector dynamicRecursiveDatatypeConstructo
 	case sortDatatypeSelf:
 		return dynamicTerm{sort: selector.sortCode, datatypeID: target.datatypeID, constructorCount: target.constructorCount, datatype: smt.SelectMixedSelfDatatypeField(cursor, target.datatype)}, nil
 	default:
-		return dynamicTerm{}, fmt.Errorf("unsupported datatype selector sort")
+		if selected.datatypeID < 0 || selected.constructors <= 0 {
+			return dynamicTerm{}, fmt.Errorf("unsupported datatype selector sort")
+		}
+		return dynamicTerm{sort: selected.sort, datatypeID: selected.datatypeID, constructorCount: selected.constructors, datatype: smt.SelectMixedDatatypeReferenceField(selected.datatypeID, selected.constructors, cursor, target.datatype)}, nil
 	}
 }
 

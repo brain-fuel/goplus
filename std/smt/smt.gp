@@ -44,6 +44,7 @@ type DatatypeFieldSort enum {
 	RealDatatypeFieldSort()
 	BitVecDatatypeFieldSort(Width nat)
 	SelfDatatypeFieldSort()
+	DatatypeReferenceFieldSort(Datatype nat, Constructors nat)
 }
 type DatatypeFieldList enum {
 	NoDatatypeFields()
@@ -71,6 +72,11 @@ type MixedRecursiveDatatypeConstructor[d nat, n nat, c nat, fields DatatypeField
 //goplus:repr transparent
 type MixedDatatypeCursor[d nat, n nat, c nat, fields DatatypeFieldList] enum {
 	mixedDatatypeCursorValue(Declaration MixedRecursiveDatatypeConstructor[d, n, c, fields], Offset int) MixedDatatypeCursor[d, n, c, fields]
+}
+
+func EmptyMixedDatatypeArgumentsFor(datatype nat, constructors nat) MixedDatatypeArguments[datatype, constructors, NoDatatypeFields] {
+	if constructors < 1 { panic("smt: mixed datatype arguments require a target declaration") }
+	return EmptyMixedDatatypeArguments()
 }
 type BinaryDatatypeField enum {
 	FirstDatatypeField() BinaryDatatypeField
@@ -209,7 +215,7 @@ type Term[S any] enum {
 	datatypeNaryRecursiveSelector(DatatypeID int, ConstructorCount int, ConstructorID int, Arity int, Field int, SelectorName string, Value any) Term[S]
 	datatypeNaryRecursiveRecognizer(DatatypeID int, ConstructorCount int, ConstructorID int, Arity int, Name string, Value any) Term[BoolSort]
 	datatypeMixedApplication(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, Specs MixedDatatypeFieldSpecs, Values MixedDatatypeTermValues) Term[S]
-	datatypeMixedSelector(DatatypeID int, ConstructorCount int, ConstructorID int, Field int, FieldKind int, Width int, SelectorName string, Value any) Term[S]
+	datatypeMixedSelector(DatatypeID int, ConstructorCount int, ConstructorID int, Field int, FieldKind int, Width int, TargetDatatypeID int, TargetConstructorCount int, SelectorName string, Value any) Term[S]
 	datatypeMixedRecognizer(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, Specs MixedDatatypeFieldSpecs, Value any) Term[BoolSort]
 }
 
@@ -430,6 +436,14 @@ func SelfDatatypeField(name string, 0 tail DatatypeFieldList, rest MixedDatatype
 	}
 }
 
+func DatatypeReferenceField(targetDatatype nat, targetConstructors nat, name string, 0 tail DatatypeFieldList, rest MixedDatatypeSignature[tail]) MixedDatatypeSignature[DatatypeFieldCons(DatatypeReferenceFieldSort(targetDatatype, targetConstructors), tail)] {
+	if targetConstructors < 1 { panic("smt: datatype reference field requires a target constructor") }
+	match rest {
+	case EmptyMixedDatatypeSignature(): return mixedDatatypeSignatureValue(prependMixedDatatypeReferenceFieldSpec(int(targetDatatype), int(targetConstructors), name, MixedDatatypeFieldSpecs{}))
+	case mixedDatatypeSignatureValue(specs): return mixedDatatypeSignatureValue(prependMixedDatatypeReferenceFieldSpec(int(targetDatatype), int(targetConstructors), name, specs))
+	}
+}
+
 func BoolDatatypeArgument(0 datatype nat, 0 constructors nat, 0 tail DatatypeFieldList, value Term[BoolSort], rest MixedDatatypeArguments[datatype, constructors, tail]) MixedDatatypeArguments[datatype, constructors, DatatypeFieldCons(BoolDatatypeFieldSort, tail)] {
 	match rest { case EmptyMixedDatatypeArguments(): return mixedDatatypeArgumentsValue(prependMixedDatatypeTerm(mixedDatatypeFieldBool, 0, value, MixedDatatypeTermValues{})); case mixedDatatypeArgumentsValue(values): return mixedDatatypeArgumentsValue(prependMixedDatatypeTerm(mixedDatatypeFieldBool, 0, value, values)) }
 }
@@ -444,6 +458,9 @@ func BitVecDatatypeArgument(width nat, 0 datatype nat, 0 constructors nat, 0 tai
 }
 func SelfDatatypeArgument(0 datatype nat, 0 constructors nat, 0 tail DatatypeFieldList, value Term[DatatypeSort[datatype, constructors]], rest MixedDatatypeArguments[datatype, constructors, tail]) MixedDatatypeArguments[datatype, constructors, DatatypeFieldCons(SelfDatatypeFieldSort, tail)] {
 	match rest { case EmptyMixedDatatypeArguments(): return mixedDatatypeArgumentsValue(prependMixedDatatypeTerm(mixedDatatypeFieldSelf, 0, value, MixedDatatypeTermValues{})); case mixedDatatypeArgumentsValue(values): return mixedDatatypeArgumentsValue(prependMixedDatatypeTerm(mixedDatatypeFieldSelf, 0, value, values)) }
+}
+func DatatypeReferenceArgument(targetDatatype nat, targetConstructors nat, 0 datatype nat, 0 constructors nat, 0 tail DatatypeFieldList, value Term[DatatypeSort[targetDatatype, targetConstructors]], rest MixedDatatypeArguments[datatype, constructors, tail]) MixedDatatypeArguments[datatype, constructors, DatatypeFieldCons(DatatypeReferenceFieldSort(targetDatatype, targetConstructors), tail)] {
+	match rest { case EmptyMixedDatatypeArguments(): return mixedDatatypeArgumentsValue(prependMixedDatatypeReferenceTerm(int(targetDatatype), int(targetConstructors), value, MixedDatatypeTermValues{})); case mixedDatatypeArgumentsValue(values): return mixedDatatypeArgumentsValue(prependMixedDatatypeReferenceTerm(int(targetDatatype), int(targetConstructors), value, values)) }
 }
 
 func DeclareMixedRecursiveDatatypeConstructor(datatype nat, constructors nat, constructor nat, 0 fields DatatypeFieldList, name string, signature MixedDatatypeSignature[fields]) MixedRecursiveDatatypeConstructor[datatype, constructors, constructor, fields] {
@@ -464,13 +481,14 @@ func ApplyMixedRecursiveDatatypeConstructor(0 datatype nat, 0 constructors nat, 
 func MixedDatatypeFields(0 datatype nat, 0 constructors nat, 0 constructor nat, 0 fields DatatypeFieldList, declaration MixedRecursiveDatatypeConstructor[datatype, constructors, constructor, fields]) MixedDatatypeCursor[datatype, constructors, constructor, fields] { return mixedDatatypeCursorValue(declaration, 0) }
 func NextMixedDatatypeField(0 datatype nat, 0 constructors nat, 0 constructor nat, 0 head DatatypeFieldSort, 0 tail DatatypeFieldList, cursor MixedDatatypeCursor[datatype, constructors, constructor, DatatypeFieldCons(head, tail)]) MixedDatatypeCursor[datatype, constructors, constructor, tail] { match cursor { case mixedDatatypeCursorValue(declaration, offset): return mixedDatatypeCursorValue(declaration, offset+1) } }
 
-func SelectMixedBoolDatatypeField(0 datatype nat, 0 constructors nat, 0 constructor nat, 0 tail DatatypeFieldList, cursor MixedDatatypeCursor[datatype, constructors, constructor, DatatypeFieldCons(BoolDatatypeFieldSort, tail)], value Term[DatatypeSort[datatype, constructors]]) Term[BoolSort] { return selectMixedDatatypeField[BoolSort](mixedDatatypeFieldBool, 0, cursor, value) }
-func SelectMixedIntDatatypeField(0 datatype nat, 0 constructors nat, 0 constructor nat, 0 tail DatatypeFieldList, cursor MixedDatatypeCursor[datatype, constructors, constructor, DatatypeFieldCons(IntDatatypeFieldSort, tail)], value Term[DatatypeSort[datatype, constructors]]) Term[IntSort] { return selectMixedDatatypeField[IntSort](mixedDatatypeFieldInt, 0, cursor, value) }
-func SelectMixedRealDatatypeField(0 datatype nat, 0 constructors nat, 0 constructor nat, 0 tail DatatypeFieldList, cursor MixedDatatypeCursor[datatype, constructors, constructor, DatatypeFieldCons(RealDatatypeFieldSort, tail)], value Term[DatatypeSort[datatype, constructors]]) Term[RealSort] { return selectMixedDatatypeField[RealSort](mixedDatatypeFieldReal, 0, cursor, value) }
-func SelectMixedBitVecDatatypeField(width nat, 0 datatype nat, 0 constructors nat, 0 constructor nat, 0 tail DatatypeFieldList, cursor MixedDatatypeCursor[datatype, constructors, constructor, DatatypeFieldCons(BitVecDatatypeFieldSort(width), tail)], value Term[DatatypeSort[datatype, constructors]]) Term[BitVecSort[width]] { return selectMixedDatatypeField[BitVecSort[width]](mixedDatatypeFieldBitVec, int(width), cursor, value) }
-func SelectMixedSelfDatatypeField(0 datatype nat, 0 constructors nat, 0 constructor nat, 0 tail DatatypeFieldList, cursor MixedDatatypeCursor[datatype, constructors, constructor, DatatypeFieldCons(SelfDatatypeFieldSort, tail)], value Term[DatatypeSort[datatype, constructors]]) Term[DatatypeSort[datatype, constructors]] { return selectMixedDatatypeField[DatatypeSort[datatype, constructors]](mixedDatatypeFieldSelf, 0, cursor, value) }
+func SelectMixedBoolDatatypeField(0 datatype nat, 0 constructors nat, 0 constructor nat, 0 tail DatatypeFieldList, cursor MixedDatatypeCursor[datatype, constructors, constructor, DatatypeFieldCons(BoolDatatypeFieldSort, tail)], value Term[DatatypeSort[datatype, constructors]]) Term[BoolSort] { return selectMixedDatatypeField[BoolSort](mixedDatatypeFieldBool, 0, 0, 0, cursor, value) }
+func SelectMixedIntDatatypeField(0 datatype nat, 0 constructors nat, 0 constructor nat, 0 tail DatatypeFieldList, cursor MixedDatatypeCursor[datatype, constructors, constructor, DatatypeFieldCons(IntDatatypeFieldSort, tail)], value Term[DatatypeSort[datatype, constructors]]) Term[IntSort] { return selectMixedDatatypeField[IntSort](mixedDatatypeFieldInt, 0, 0, 0, cursor, value) }
+func SelectMixedRealDatatypeField(0 datatype nat, 0 constructors nat, 0 constructor nat, 0 tail DatatypeFieldList, cursor MixedDatatypeCursor[datatype, constructors, constructor, DatatypeFieldCons(RealDatatypeFieldSort, tail)], value Term[DatatypeSort[datatype, constructors]]) Term[RealSort] { return selectMixedDatatypeField[RealSort](mixedDatatypeFieldReal, 0, 0, 0, cursor, value) }
+func SelectMixedBitVecDatatypeField(width nat, 0 datatype nat, 0 constructors nat, 0 constructor nat, 0 tail DatatypeFieldList, cursor MixedDatatypeCursor[datatype, constructors, constructor, DatatypeFieldCons(BitVecDatatypeFieldSort(width), tail)], value Term[DatatypeSort[datatype, constructors]]) Term[BitVecSort[width]] { return selectMixedDatatypeField[BitVecSort[width]](mixedDatatypeFieldBitVec, int(width), 0, 0, cursor, value) }
+func SelectMixedSelfDatatypeField(0 datatype nat, 0 constructors nat, 0 constructor nat, 0 tail DatatypeFieldList, cursor MixedDatatypeCursor[datatype, constructors, constructor, DatatypeFieldCons(SelfDatatypeFieldSort, tail)], value Term[DatatypeSort[datatype, constructors]]) Term[DatatypeSort[datatype, constructors]] { return selectMixedDatatypeField[DatatypeSort[datatype, constructors]](mixedDatatypeFieldSelf, 0, 0, 0, cursor, value) }
+func SelectMixedDatatypeReferenceField(targetDatatype nat, targetConstructors nat, 0 datatype nat, 0 constructors nat, 0 constructor nat, 0 tail DatatypeFieldList, cursor MixedDatatypeCursor[datatype, constructors, constructor, DatatypeFieldCons(DatatypeReferenceFieldSort(targetDatatype, targetConstructors), tail)], value Term[DatatypeSort[datatype, constructors]]) Term[DatatypeSort[targetDatatype, targetConstructors]] { return selectMixedDatatypeField[DatatypeSort[targetDatatype, targetConstructors]](mixedDatatypeFieldReference, 0, int(targetDatatype), int(targetConstructors), cursor, value) }
 
-func selectMixedDatatypeField[S any](kind int, width int, 0 datatype nat, 0 constructors nat, 0 constructor nat, 0 fields DatatypeFieldList, cursor MixedDatatypeCursor[datatype, constructors, constructor, fields], value Term[DatatypeSort[datatype, constructors]]) Term[S] { match cursor { case mixedDatatypeCursorValue(declaration, offset): match declaration { case mixedRecursiveDatatypeConstructorValue(datatypeID, constructorCount, constructorID, _, specs): spec := specs.At(offset); if spec.Kind != kind || spec.Width != width { panic("smt: erased mixed datatype cursor sort mismatch") }; return Term[S].datatypeMixedSelector(datatypeID, constructorCount, constructorID, offset, kind, width, spec.Name, value) } } }
+func selectMixedDatatypeField[S any](kind int, width int, targetDatatypeID int, targetConstructorCount int, 0 datatype nat, 0 constructors nat, 0 constructor nat, 0 fields DatatypeFieldList, cursor MixedDatatypeCursor[datatype, constructors, constructor, fields], value Term[DatatypeSort[datatype, constructors]]) Term[S] { match cursor { case mixedDatatypeCursorValue(declaration, offset): match declaration { case mixedRecursiveDatatypeConstructorValue(datatypeID, constructorCount, constructorID, _, specs): spec := specs.At(offset); if spec.Kind != kind || spec.Width != width || spec.DatatypeID != targetDatatypeID || spec.ConstructorCount != targetConstructorCount { panic("smt: erased mixed datatype cursor sort mismatch") }; return Term[S].datatypeMixedSelector(datatypeID, constructorCount, constructorID, offset, kind, width, targetDatatypeID, targetConstructorCount, spec.Name, value) } } }
 func IsMixedRecursiveDatatypeConstructor(0 datatype nat, 0 constructors nat, 0 constructor nat, 0 fields DatatypeFieldList, declaration MixedRecursiveDatatypeConstructor[datatype, constructors, constructor, fields], value Term[DatatypeSort[datatype, constructors]]) Term[BoolSort] { match declaration { case mixedRecursiveDatatypeConstructorValue(datatypeID, constructorCount, constructorID, name, specs): return datatypeMixedRecognizer(datatypeID, constructorCount, constructorID, name, specs, value) } }
 
 func IntegerVariableID(term Term[IntSort]) (int, bool) {
