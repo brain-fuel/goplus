@@ -1481,6 +1481,116 @@ func TestIntegerSortedFunctionCongruence(t *testing.T) {
 	}
 }
 
+func TestSharedIntegerEUFExchangesLIAEquality(t *testing.T) {
+	x := IntegerVariable(1)
+	y := IntegerVariable(2)
+	function := DeclareIntUnaryFunction(3, "f")
+	formula := And{Values: []Term[BoolSort]{
+		LessEqual{Left: x, Right: y},
+		LessEqual{Left: y, Right: x},
+		Not{Value: Equal{
+			Left:  ApplySortedUnary(function, x),
+			Right: ApplySortedUnary(function, y),
+		}},
+	}}
+	if result := Check(Assert(1, New(), formula)); func() bool { _, ok := result.(Unsatisfiable); return ok }() == false {
+		t.Fatalf("result=%T", result)
+	}
+}
+
+func TestSharedIntegerEUFPurifiesApplicationsInsideArithmetic(t *testing.T) {
+	x := IntegerVariable(1)
+	y := IntegerVariable(2)
+	zero := Integer{Value: 0}
+	function := DeclareIntUnaryFunction(3, "f")
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: y},
+		LessEqual{Left: ApplySortedUnary(function, x), Right: zero},
+		Less{Left: zero, Right: ApplySortedUnary(function, y)},
+	}}
+	if result := Check(Assert(1, New(), formula)); func() bool { _, ok := result.(Unsatisfiable); return ok }() == false {
+		t.Fatalf("result=%T", result)
+	}
+}
+
+func TestSharedIntegerEUFPurifiesBinaryAffineArguments(t *testing.T) {
+	x := IntegerVariable(1)
+	y := IntegerVariable(2)
+	one := Integer{Value: 1}
+	zero := Integer{Value: 0}
+	function := DeclareIntBinaryFunction(3, "combine")
+	left := ApplySortedBinary(function, Add{Values: []Term[IntSort]{x, one}}, y)
+	right := ApplySortedBinary(function, Add{Values: []Term[IntSort]{y, one}}, x)
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: y},
+		LessEqual{Left: left, Right: zero},
+		Less{Left: zero, Right: right},
+	}}
+	if result := Check(Assert(1, New(), formula)); func() bool { _, ok := result.(Unsatisfiable); return ok }() == false {
+		t.Fatalf("result=%T", result)
+	}
+}
+
+func TestSharedIntegerEUFPropagatesApplicationEqualityIntoLIA(t *testing.T) {
+	x := IntegerVariable(1)
+	y := IntegerVariable(2)
+	z := IntegerVariable(3)
+	function := DeclareIntUnaryFunction(4, "f")
+	application := ApplySortedUnary(function, z)
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: application, Right: x},
+		Equal{Left: application, Right: y},
+		Less{Left: x, Right: y},
+	}}
+	if result := Check(Assert(1, New(), formula)); func() bool { _, ok := result.(Unsatisfiable); return ok }() == false {
+		t.Fatalf("result=%T", result)
+	}
+}
+
+func TestCompactIntegerEUFSystem(t *testing.T) {
+	system := CompactIntegerEUFSystem{
+		EqualityCount: 1, BinaryComparisonCount: 2,
+	}
+	system.EqualityLeft[0], system.EqualityRight[0] = 1, 2
+	system.BinaryComparisons[0] = IntegerBinaryComparison{
+		FunctionID: 3, FirstArgumentID: 1, SecondArgumentID: 2,
+		Bound: NewIntegerValue(0), ApplicationOnLeft: true,
+	}
+	system.BinaryComparisons[1] = IntegerBinaryComparison{
+		FunctionID: 3, FirstArgumentID: 2, SecondArgumentID: 1,
+		Bound: NewIntegerValue(0), ApplicationOnLeft: false, Strict: true,
+	}
+	if result := Check(Assert(1, New(), system)); func() bool { _, ok := result.(Unsatisfiable); return ok }() == false {
+		t.Fatalf("result=%T", result)
+	}
+	system.BinaryComparisons[1].Strict = false
+	if result := Check(Assert(2, New(), system)); func() bool { _, ok := result.(Satisfiable); return ok }() == false {
+		t.Fatalf("satisfiable result=%T", result)
+	}
+}
+
+func TestCompactIntegerEUFSystemExchangesDifferenceEquality(t *testing.T) {
+	system := CompactIntegerEUFSystem{DifferenceCount: 2, RelationCount: 1}
+	system.Differences[0] = IntegerDifferenceConstraint{
+		PositiveID: 1, NegativeID: 2, HasPositive: true, HasNegative: true,
+	}
+	system.Differences[1] = IntegerDifferenceConstraint{
+		PositiveID: 2, NegativeID: 1, HasPositive: true, HasNegative: true,
+	}
+	system.Relations[0] = UninterpretedEUFRelation{
+		Left: UninterpretedEUFTerm{
+			Kind: 2, SortID: -2, FunctionID: 3, FirstSortID: -2, FirstID: 1,
+		},
+		Right: UninterpretedEUFTerm{
+			Kind: 2, SortID: -2, FunctionID: 3, FirstSortID: -2, FirstID: 2,
+		},
+		Negated: true,
+	}
+	if result := Check(Assert(1, New(), system)); func() bool { _, ok := result.(Unsatisfiable); return ok }() == false {
+		t.Fatalf("result=%T", result)
+	}
+}
+
 func TestSharedRealEUFExchangesLRAImpliedEquality(t *testing.T) {
 	x := RealSymbol{ID: 1, Name: "x"}
 	y := RealSymbol{ID: 2, Name: "y"}

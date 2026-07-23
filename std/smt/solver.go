@@ -290,6 +290,11 @@ func (e *engine) solveAdditional(assumptions []Term[BoolSort]) checkOutcome {
 		if compact, ok := allAssertions[0].(BooleanInlineCNF); ok {
 			return solveBooleanInlineCNF(compact)
 		}
+		if compact, ok := allAssertions[0].(CompactIntegerEUFSystem); ok {
+			if outcome, recognized := solveCompactIntegerEUFSystem(compact); recognized {
+				return outcome
+			}
+		}
 		if normalized, ok := allAssertions[0].(BooleanCNF); ok {
 			if outcome, recognized := solveBooleanChoiceCNF(normalized); recognized {
 				return outcome
@@ -309,6 +314,7 @@ func (e *engine) solveAdditional(assumptions []Term[BoolSort]) checkOutcome {
 	eufTheory := false
 	realTheory := false
 	sharedRealEUF := false
+	sharedIntegerEUF := false
 	bitVectorTheory := false
 	arrayTheory := false
 	datatypeTheory := false
@@ -319,10 +325,12 @@ func (e *engine) solveAdditional(assumptions []Term[BoolSort]) checkOutcome {
 		arrayTheory = arrayTheory || containsArrayTheory(assertion)
 		bitVectorTheory = bitVectorTheory || containsBitVectorTheory(assertion)
 		shared := containsSharedRealEUF(assertion)
+		sharedInteger := containsSharedIntegerEUF(assertion)
 		integerTheory = integerTheory || containsIntegerTheory(assertion)
-		eufTheory = eufTheory || containsEUF(assertion) || shared
+		eufTheory = eufTheory || containsEUF(assertion) || shared || sharedInteger
 		realTheory = realTheory || containsRealTheory(assertion)
 		sharedRealEUF = sharedRealEUF || shared
+		sharedIntegerEUF = sharedIntegerEUF || sharedInteger
 	}
 	if stringTheory {
 		if datatypeTheory || arrayTheory || bitVectorTheory || eufTheory || realTheory {
@@ -372,6 +380,11 @@ func (e *engine) solveAdditional(assumptions []Term[BoolSort]) checkOutcome {
 		}
 		if sharedRealEUF {
 			if outcome, recognized := solveSharedRealEUF(allAssertions); recognized {
+				return outcome
+			}
+		}
+		if sharedIntegerEUF {
+			if outcome, recognized := solveSharedIntegerEUF(allAssertions); recognized {
 				return outcome
 			}
 		}

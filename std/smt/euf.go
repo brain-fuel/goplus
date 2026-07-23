@@ -136,6 +136,8 @@ func containsEUF(term Term[BoolSort]) bool {
 		return true
 	case RealBinaryComparison:
 		return true
+	case IntegerUnaryComparison, IntegerBinaryComparison:
+		return true
 	}
 	return false
 }
