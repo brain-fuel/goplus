@@ -409,6 +409,18 @@ func groundStringReplaceAllPreimage(
 		return candidate, found, complete
 	}
 	if anchor.Replacement == "" {
+		candidate, found, complete := shortestStringDeletionPreimage(
+			anchor.Target, anchor.Source,
+		)
+		if !found || !complete {
+			return "", found, complete
+		}
+		if result, accepted, evaluated := accept(candidate); accepted || !evaluated {
+			return result, accepted, evaluated
+		}
+		// The deletion inverse may contain cycles. A rejected shortest
+		// candidate does not prove that no longer candidate can satisfy a
+		// second equality or predicate.
 		return "", false, false
 	}
 	// Replacing every visible output occurrence is the common inverse and
@@ -422,6 +434,157 @@ func groundStringReplaceAllPreimage(
 	}
 	states := 0
 	return enumerateStringReplaceAllPreimages(anchor, accept, 0, "", &states)
+}
+
+func shortestStringDeletionPreimage(
+	target string, source string,
+) (string, bool, bool) {
+	var targetInline [16]rune
+	var sourceInline [16]rune
+	targetCodes, targetASCII := inlineASCIIStringCodePoints(target, targetInline[:])
+	if !targetASCII {
+		targetCodes = DecodeStringCodePoints(target)
+	}
+	sourceCodes, sourceASCII := inlineASCIIStringCodePoints(source, sourceInline[:])
+	if !sourceASCII {
+		sourceCodes = DecodeStringCodePoints(source)
+	}
+	if len(sourceCodes) == 0 {
+		return target, true, true
+	}
+	if len(targetCodes)+1 > compactStringWordEquationSearchLimit/len(sourceCodes) {
+		return "", false, false
+	}
+	stateCount := (len(targetCodes) + 1) * len(sourceCodes)
+	const inlineDeletionStates = 32
+	var visitedInline [inlineDeletionStates]bool
+	var previousInline [inlineDeletionStates]int
+	var inputInline [inlineDeletionStates]rune
+	var queueInline [inlineDeletionStates]int
+	var visited []bool
+	var previous []int
+	var input []rune
+	var queue []int
+	if stateCount <= inlineDeletionStates {
+		visited = visitedInline[:stateCount]
+		previous = previousInline[:stateCount]
+		input = inputInline[:stateCount]
+		queue = queueInline[:1]
+	} else {
+		visited = make([]bool, stateCount)
+		previous = make([]int, stateCount)
+		input = make([]rune, stateCount)
+		queue = make([]int, 1, stateCount)
+	}
+	for index := range previous {
+		previous[index] = -1
+	}
+	visited[0] = true
+	queue[0] = 0
+	for head := 0; head < len(queue); head++ {
+		state := queue[head]
+		output := state / len(sourceCodes)
+		prefix := state % len(sourceCodes)
+		if stringDeletionAcceptsEOF(sourceCodes, targetCodes, prefix, output) {
+			codes := make([]rune, 0, head)
+			for state != 0 {
+				codes = append(codes, input[state])
+				state = previous[state]
+			}
+			var candidate strings.Builder
+			for index := len(codes) - 1; index >= 0; index-- {
+				encoded, _ := EncodeStringCodePoint(int64(codes[index]))
+				candidate.WriteString(encoded)
+			}
+			return candidate.String(), true, true
+		}
+		appendTransition := func(code rune) {
+			nextPrefix, nextOutput, ok := stringDeletionTransition(
+				sourceCodes, targetCodes, prefix, output, code,
+			)
+			if !ok {
+				return
+			}
+			next := nextOutput*len(sourceCodes) + nextPrefix
+			if visited[next] {
+				return
+			}
+			visited[next] = true
+			previous[next] = state
+			input[next] = code
+			queue = append(queue, next)
+		}
+		for _, code := range sourceCodes {
+			appendTransition(code)
+		}
+		for _, code := range targetCodes {
+			appendTransition(code)
+		}
+	}
+	return "", false, true
+}
+
+func inlineASCIIStringCodePoints(value string, storage []rune) ([]rune, bool) {
+	if len(value) > len(storage) {
+		return nil, false
+	}
+	for index := 0; index < len(value); index++ {
+		if value[index] >= 0x80 {
+			return nil, false
+		}
+		storage[index] = rune(value[index])
+	}
+	return storage[:len(value)], true
+}
+
+func stringDeletionAcceptsEOF(
+	source []rune, target []rune, prefix int, output int,
+) bool {
+	if len(target)-output != prefix {
+		return false
+	}
+	for index := 0; index < prefix; index++ {
+		if source[index] != target[output+index] {
+			return false
+		}
+	}
+	return true
+}
+
+func stringDeletionTransition(
+	source []rune,
+	target []rune,
+	prefix int,
+	output int,
+	code rune,
+) (int, int, bool) {
+	start := 0
+	length := prefix + 1
+	at := func(index int) rune {
+		if index < prefix {
+			return source[index]
+		}
+		return code
+	}
+	for start < length {
+		remaining := length - start
+		matchesPrefix := remaining <= len(source)
+		for index := 0; matchesPrefix && index < remaining; index++ {
+			matchesPrefix = at(start+index) == source[index]
+		}
+		if matchesPrefix {
+			if remaining == len(source) {
+				return 0, output, true
+			}
+			return remaining, output, true
+		}
+		if output >= len(target) || at(start) != target[output] {
+			return 0, 0, false
+		}
+		output++
+		start++
+	}
+	return 0, output, true
 }
 
 func enumerateStringReplaceAllPreimages(

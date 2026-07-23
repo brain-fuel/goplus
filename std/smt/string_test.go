@@ -1018,14 +1018,58 @@ func TestGroundStringReplaceEqualities(t *testing.T) {
 		}
 	})
 
-	t.Run("unbounded deletion inverse remains explicit", func(t *testing.T) {
+	t.Run("deletion inverse", func(t *testing.T) {
+		formula := Equal{
+			Left:  StringReplaceAll(x, StringVal("ab"), StringVal("")),
+			Right: StringVal("ab"),
+		}
+		checked := Check(Assert(75, New(), formula))
+		result, ok := checked.(Satisfiable)
+		if !ok {
+			t.Fatalf("result=%T", checked)
+		}
+		if actual, found := StringModelValue(result.Value, x); !found || actual != "aabb" {
+			t.Fatalf("x=(%q,%v)", actual, found)
+		}
+	})
+
+	t.Run("impossible deletion inverse", func(t *testing.T) {
 		formula := Equal{
 			Left:  StringReplaceAll(x, StringVal("a"), StringVal("")),
 			Right: StringVal("a"),
 		}
-		checked := Check(Assert(75, New(), formula))
+		checked := Check(Assert(76, New(), formula))
+		if _, ok := checked.(Unsatisfiable); !ok {
+			t.Fatalf("result=%T", checked)
+		}
+	})
+
+	t.Run("filtered cyclic deletion remains explicit", func(t *testing.T) {
+		formula := And{Values: []Term[BoolSort]{
+			Equal{
+				Left:  StringReplaceAll(x, StringVal("ab"), StringVal("")),
+				Right: StringVal("ab"),
+			},
+			Equal{Left: x, Right: StringVal("abaabb")},
+		}}
+		checked := Check(Assert(77, New(), formula))
 		if _, ok := checked.(Unknown); !ok {
 			t.Fatalf("result=%T", checked)
+		}
+	})
+
+	t.Run("deletion state limit", func(t *testing.T) {
+		formula := Equal{
+			Left:  StringReplaceAll(x, StringVal("a"), StringVal("")),
+			Right: StringVal(strings.Repeat("a", compactStringWordEquationSearchLimit)),
+		}
+		checked := Check(Assert(78, New(), formula))
+		unknown, ok := checked.(Unknown)
+		if !ok {
+			t.Fatalf("result=%T", checked)
+		}
+		if _, ok := unknown.Reason.(ResourceLimit); !ok {
+			t.Fatalf("reason=%T", unknown.Reason)
 		}
 	})
 }
@@ -1115,6 +1159,50 @@ func TestGroundStringReplaceAllEqualities(t *testing.T) {
 			t.Fatalf("result=%T", checked)
 		}
 	})
+}
+
+func TestShortestStringDeletionPreimageExhaustive(t *testing.T) {
+	sources := []string{"a", "b", "aa", "ab", "ba", "aba"}
+	targets := []string{"", "a", "b", "aa", "ab", "ba", "aba", "bab"}
+	for _, source := range sources {
+		for _, target := range targets {
+			candidate, found, complete := shortestStringDeletionPreimage(target, source)
+			if !complete {
+				t.Fatalf("unexpected resource limit for source=%q target=%q", source, target)
+			}
+			if found && strings.ReplaceAll(candidate, source, "") != target {
+				t.Fatalf("invalid preimage %q for source=%q target=%q", candidate, source, target)
+			}
+			limit := (len([]rune(target)) + 1) * len([]rune(source))
+			bruteFound := false
+			var search func(string, int)
+			search = func(prefix string, remaining int) {
+				if bruteFound {
+					return
+				}
+				if strings.ReplaceAll(prefix, source, "") == target {
+					bruteFound = true
+					return
+				}
+				if remaining == 0 {
+					return
+				}
+				search(prefix+"a", remaining-1)
+				search(prefix+"b", remaining-1)
+			}
+			search("", limit)
+			if found != bruteFound {
+				t.Fatalf(
+					"source=%q target=%q found=%v brute=%v candidate=%q",
+					source, target, found, bruteFound, candidate,
+				)
+			}
+		}
+	}
+	candidate, found, complete := shortestStringDeletionPreimage("🙂a", "🙂a")
+	if !complete || !found || strings.ReplaceAll(candidate, "🙂a", "") != "🙂a" {
+		t.Fatalf("unicode candidate=(%q,%v,%v)", candidate, found, complete)
+	}
 }
 
 func TestCompactStringReplaceAllStreamingEquality(t *testing.T) {
