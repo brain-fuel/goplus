@@ -122,22 +122,30 @@ func (aliases *integerSequenceAliases) union(left, right int) {
 }
 
 type integerSequenceRequirements struct {
-	prefix      IntegerSequenceValue
-	suffix      IntegerSequenceValue
-	exactLength int
-	minLength   int
-	maxLength   int
-	hasPrefix   bool
-	hasSuffix   bool
-	hasLength   bool
-	hasMin      bool
-	hasMax      bool
-	contains    [4]IntegerSequenceValue
-	overflow    []IntegerSequenceValue
-	containment int
-	excluded    [4]IntegerSequenceValue
-	excludeMore []IntegerSequenceValue
-	exclusion   int
+	prefix        IntegerSequenceValue
+	suffix        IntegerSequenceValue
+	exactLength   int
+	minLength     int
+	maxLength     int
+	hasPrefix     bool
+	hasSuffix     bool
+	hasLength     bool
+	hasMin        bool
+	hasMax        bool
+	contains      [4]IntegerSequenceValue
+	overflow      []IntegerSequenceValue
+	containment   int
+	excluded      [4]IntegerSequenceValue
+	excludeMore   []IntegerSequenceValue
+	exclusion     int
+	negative      [4]negativeIntegerSequenceRequirement
+	negativeMore  []negativeIntegerSequenceRequirement
+	negativeCount int
+}
+
+type negativeIntegerSequenceRequirement struct {
+	value IntegerSequenceValue
+	kind  uint8
 }
 
 const maximumConstructedIntegerSequenceLength = 4096
@@ -302,6 +310,116 @@ func (requirements integerSequenceRequirements) excludes(
 		}
 	}
 	return false
+}
+
+func (requirements *integerSequenceRequirements) addNegative(
+	kind uint8,
+	value IntegerSequenceValue,
+) bool {
+	for index := 0; index < requirements.negativeCount; index++ {
+		existing := requirements.negativeAt(index)
+		if existing.kind == kind &&
+			equalIntegerSequences(existing.value, value) {
+			return true
+		}
+	}
+	if requirements.negativeCount == maximumConstructedIntegerSequenceLength {
+		return false
+	}
+	item := negativeIntegerSequenceRequirement{value: value, kind: kind}
+	if requirements.negativeCount < len(requirements.negative) {
+		requirements.negative[requirements.negativeCount] = item
+	} else {
+		requirements.negativeMore = append(requirements.negativeMore, item)
+	}
+	requirements.negativeCount++
+	return true
+}
+
+func (requirements integerSequenceRequirements) negativeAt(
+	index int,
+) negativeIntegerSequenceRequirement {
+	if index < len(requirements.negative) {
+		return requirements.negative[index]
+	}
+	return requirements.negativeMore[index-len(requirements.negative)]
+}
+
+func (requirements integerSequenceRequirements) acceptsNegativeConstraints(
+	value IntegerSequenceValue,
+) bool {
+	for index := 0; index < requirements.negativeCount; index++ {
+		item := requirements.negativeAt(index)
+		switch item.kind {
+		case 0:
+			if findIntegerSubsequence(value, item.value, 0) >= 0 {
+				return false
+			}
+		case 1:
+			if integerSequenceStartsWith(value, item.value) {
+				return false
+			}
+		default:
+			if integerSequenceEndsWith(value, item.value) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (requirements integerSequenceRequirements) freshNegativeElement() IntegerValue {
+	for candidate := int64(0); ; candidate++ {
+		found := false
+		for index := 0; index < requirements.negativeCount && !found; index++ {
+			value := requirements.negativeAt(index).value
+			for elementIndex := 0; elementIndex < value.Len(); elementIndex++ {
+				element, _ := value.At(elementIndex)
+				if actual, fits := element.Int64(); fits && actual == candidate {
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			return NewIntegerValue(candidate)
+		}
+	}
+}
+
+func (requirements integerSequenceRequirements) negativeRequirementsConsistent() bool {
+	for index := 0; index < requirements.negativeCount; index++ {
+		item := requirements.negativeAt(index)
+		switch item.kind {
+		case 0:
+			if requirements.hasPrefix &&
+				findIntegerSubsequence(requirements.prefix, item.value, 0) >= 0 {
+				return false
+			}
+			if requirements.hasSuffix &&
+				findIntegerSubsequence(requirements.suffix, item.value, 0) >= 0 {
+				return false
+			}
+			for containment := 0; containment < requirements.containment; containment++ {
+				if findIntegerSubsequence(
+					requirements.containmentAt(containment), item.value, 0,
+				) >= 0 {
+					return false
+				}
+			}
+		case 1:
+			if requirements.hasPrefix &&
+				integerSequenceStartsWith(requirements.prefix, item.value) {
+				return false
+			}
+		default:
+			if requirements.hasSuffix &&
+				integerSequenceEndsWith(requirements.suffix, item.value) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // Len reports the number of elements.
@@ -1592,6 +1710,52 @@ func collectNegatedIntegerSequenceRequirement(
 	aliases *integerSequenceAliases,
 ) (bool, bool, bool) {
 	switch value := term.(type) {
+	case sequenceContains, sequencePrefix, sequenceSuffix:
+		var sequenceTerm, groundTerm any
+		var kind uint8
+		switch predicate := value.(type) {
+		case sequenceContains:
+			sequenceTerm, groundTerm = predicate.value, predicate.subsequence
+		case sequencePrefix:
+			sequenceTerm, groundTerm, kind = predicate.value, predicate.prefix, 1
+		case sequenceSuffix:
+			sequenceTerm, groundTerm, kind = predicate.value, predicate.suffix, 2
+		}
+		id, symbolic := integerSequenceSymbolID(sequenceTerm)
+		if !symbolic {
+			result, ok := evaluateBoolWithIntegerSequences(
+				term, booleanModel{}, integerModel{}, rationalModel{}, model,
+			)
+			return !result, ok, true
+		}
+		id = aliases.root(id)
+		ground, ok := groundTerm.(Term[SequenceSort[IntSort]])
+		if !ok {
+			return true, false, true
+		}
+		forbidden, ok := evaluateIntegerSequenceWithModel(
+			ground,
+			booleanModel{},
+			integerModel{},
+			rationalModel{},
+			model,
+		)
+		if !ok {
+			return true, false, true
+		}
+		if forbidden.Len() == 0 {
+			return false, true, true
+		}
+		if _, ok := model.lookup(id); ok {
+			result, evaluated := evaluateBoolWithIntegerSequences(
+				term, booleanModel{}, integerModel{}, rationalModel{}, model,
+			)
+			return !result, evaluated, true
+		}
+		if !requirements.forSymbol(id).addNegative(kind, forbidden) {
+			return true, false, true
+		}
+		return true, true, true
 	case Equal:
 		leftID, leftSymbol := integerSequenceSymbolID(value.Left)
 		rightID, rightSymbol := integerSequenceSymbolID(value.Right)
@@ -1903,6 +2067,7 @@ type fixedIntegerSequenceBuilder struct {
 	inlineAssigned [8]bool
 	overflow       []IntegerValue
 	assigned       []bool
+	defaultValue   IntegerValue
 }
 
 func newFixedIntegerSequenceBuilder(length int) fixedIntegerSequenceBuilder {
@@ -2007,18 +2172,20 @@ func (builder *fixedIntegerSequenceBuilder) value() IntegerSequenceValue {
 	for index := 0; index < builder.length; index++ {
 		value, assigned := builder.valueAt(index)
 		if !assigned {
-			value = IntegerValue{}
+			value = builder.defaultValue
 		}
 		result.append(value)
 	}
 	return result
 }
 
-func (builder *fixedIntegerSequenceBuilder) avoidExclusions(
+func (builder *fixedIntegerSequenceBuilder) satisfyNegativeConstraintsAndExclusions(
 	requirements integerSequenceRequirements,
 ) bool {
+	builder.defaultValue = requirements.freshNegativeElement()
 	candidate := builder.value()
-	if !requirements.excludes(candidate) {
+	if requirements.acceptsNegativeConstraints(candidate) &&
+		!requirements.excludes(candidate) {
 		return true
 	}
 	for position := 0; position < builder.length; position++ {
@@ -2026,9 +2193,12 @@ func (builder *fixedIntegerSequenceBuilder) avoidExclusions(
 		if assigned {
 			continue
 		}
-		for discriminator := 1; discriminator <= requirements.exclusion+1; discriminator++ {
+		limit := requirements.exclusion + requirements.negativeCount + 1
+		for discriminator := 0; discriminator <= limit; discriminator++ {
 			builder.assign(position, NewIntegerValue(int64(discriminator)))
-			if !requirements.excludes(builder.value()) {
+			candidate = builder.value()
+			if requirements.acceptsNegativeConstraints(candidate) &&
+				!requirements.excludes(candidate) {
 				return true
 			}
 			builder.clear(position)
@@ -2044,7 +2214,7 @@ func placeIntegerSequenceContainments(
 	states *int,
 ) (bool, bool) {
 	if index == requirements.containment {
-		return builder.avoidExclusions(requirements), true
+		return builder.satisfyNegativeConstraintsAndExclusions(requirements), true
 	}
 	part := requirements.containmentAt(index)
 	for offset := 0; offset+part.Len() <= builder.length; offset++ {
@@ -2101,6 +2271,9 @@ func buildFixedLengthIntegerSequenceWitness(
 func buildIntegerSequenceWitness(
 	requirements integerSequenceRequirements,
 ) (IntegerSequenceValue, bool, bool) {
+	if !requirements.negativeRequirementsConsistent() {
+		return IntegerSequenceValue{}, false, true
+	}
 	if requirements.hasLength {
 		states := 0
 		return buildFixedLengthIntegerSequenceWitness(requirements, &states)
@@ -2151,7 +2324,7 @@ func buildIntegerSequenceWitness(
 		}
 		return IntegerSequenceValue{}, false, true
 	}
-	if requirements.exclusion > 0 {
+	if requirements.exclusion > 0 || requirements.negativeCount > 0 {
 		minimum := result.Len()
 		if requirements.hasMin && requirements.minLength > minimum {
 			minimum = requirements.minLength
@@ -2787,6 +2960,15 @@ func supportsConjunctiveNegatedIntegerSequenceAtom(
 	term Term[BoolSort],
 ) bool {
 	switch atom := term.(type) {
+	case sequenceContains:
+		_, symbolic := integerSequenceSymbolID(atom.value)
+		return symbolic
+	case sequencePrefix:
+		_, symbolic := integerSequenceSymbolID(atom.value)
+		return symbolic
+	case sequenceSuffix:
+		_, symbolic := integerSequenceSymbolID(atom.value)
+		return symbolic
 	case Equal:
 		_, leftSymbol := integerSequenceSymbolID(atom.Left)
 		_, rightSymbol := integerSequenceSymbolID(atom.Right)

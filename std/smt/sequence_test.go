@@ -266,12 +266,15 @@ func TestPositiveSymbolicIntegerSequenceWitness(t *testing.T) {
 		t.Fatalf("incompatible result=%T", checked)
 	}
 
-	unsupported := Not{Value: SequenceContains(x, unit(1))}
-	if checked := Check(Assert(10, New(), unsupported)); func() bool {
-		_, ok := checked.(Unknown)
-		return ok
-	}() == false {
-		t.Fatalf("unsupported result=%T", checked)
+	negative := Not{Value: SequenceContains(x, unit(1))}
+	negativeResult, ok := Check(Assert(10, New(), negative)).(Satisfiable)
+	if !ok {
+		t.Fatal("negative containment must construct a model")
+	}
+	if valid, found := BoolValue(
+		negativeResult.Value, negative,
+	); !found || !valid {
+		t.Fatalf("negative formula=(%v,%v)", valid, found)
 	}
 }
 
@@ -1146,6 +1149,98 @@ func TestSymbolicIntegerSequenceGroundDisequality(t *testing.T) {
 		return ok
 	}() == false {
 		t.Fatalf("excluded placements result=%T", checked)
+	}
+}
+
+func TestNegatedGroundSymbolicIntegerSequencePredicates(t *testing.T) {
+	unit := func(value int64) Term[SequenceSort[IntSort]] {
+		return SequenceUnit[IntSort](Integer{Value: value})
+	}
+	x := SequenceConst[IntSort](59, "x")
+
+	avoidsZero := And{Values: []Term[BoolSort]{
+		Equal{Left: SequenceLength(x), Right: Integer{Value: 1}},
+		Not{Value: SequenceContains(x, unit(0))},
+	}}
+	avoidsResult, ok := Check(Assert(59, New(), avoidsZero)).(Satisfiable)
+	if !ok {
+		t.Fatal("fresh element must avoid a forbidden singleton")
+	}
+	avoidsValue, found := IntegerSequenceModelValue(avoidsResult.Value, x)
+	element, elementFound := avoidsValue.At(0)
+	if !found || !elementFound {
+		t.Fatal("missing negative-containment model")
+	}
+	if actual, fits := element.Int64(); !fits || actual != 1 {
+		t.Fatalf("fresh element=(%d,%v)", actual, fits)
+	}
+
+	alternatePlacement := And{Values: []Term[BoolSort]{
+		Equal{Left: SequenceLength(x), Right: Integer{Value: 2}},
+		SequenceContains(x, unit(1)),
+		Not{Value: SequenceHasPrefix(x, unit(1))},
+	}}
+	alternateResult, ok := Check(Assert(60, New(), alternatePlacement)).(Satisfiable)
+	if !ok {
+		t.Fatal("negative prefix must backtrack containment placement")
+	}
+	alternateValue, _ := IntegerSequenceModelValue(alternateResult.Value, x)
+	first, _ := alternateValue.At(0)
+	second, _ := alternateValue.At(1)
+	firstValue, _ := first.Int64()
+	secondValue, _ := second.Int64()
+	if firstValue != 0 || secondValue != 1 {
+		t.Fatalf("alternate negative-prefix model=[%d,%d]", firstValue, secondValue)
+	}
+
+	combined := And{Values: []Term[BoolSort]{
+		Equal{Left: SequenceLength(x), Right: Integer{Value: 1}},
+		Not{Value: SequenceHasPrefix(x, unit(1))},
+		Not{Value: SequenceHasSuffix(x, unit(2))},
+	}}
+	combinedResult, ok := Check(Assert(61, New(), combined)).(Satisfiable)
+	if !ok {
+		t.Fatal("fresh model must avoid negative boundaries")
+	}
+	if valid, found := BoolValue(
+		combinedResult.Value, combined,
+	); !found || !valid {
+		t.Fatalf("combined formula=(%v,%v)", valid, found)
+	}
+
+	conflict := And{Values: []Term[BoolSort]{
+		SequenceContains(x, unit(3)),
+		Not{Value: SequenceContains(x, unit(3))},
+	}}
+	if checked := Check(Assert(62, New(), conflict)); func() bool {
+		_, ok := checked.(Unsatisfiable)
+		return ok
+	}() == false {
+		t.Fatalf("containment conflict result=%T", checked)
+	}
+
+	fixedPrefix := And{Values: []Term[BoolSort]{
+		Equal{Left: SequenceLength(x), Right: Integer{Value: 1}},
+		SequenceHasPrefix(x, unit(4)),
+		Not{Value: SequenceHasPrefix(x, unit(4))},
+	}}
+	if checked := Check(Assert(63, New(), fixedPrefix)); func() bool {
+		_, ok := checked.(Unsatisfiable)
+		return ok
+	}() == false {
+		t.Fatalf("fixed prefix conflict result=%T", checked)
+	}
+
+	empty := SequenceEmpty[IntSort]()
+	for index, predicate := range []Term[BoolSort]{
+		SequenceContains(x, empty),
+		SequenceHasPrefix(x, empty),
+		SequenceHasSuffix(x, empty),
+	} {
+		checked := Check(Assert(64+index, New(), Not{Value: predicate}))
+		if _, ok := checked.(Unsatisfiable); !ok {
+			t.Fatalf("empty case %d result=%T", index, checked)
+		}
 	}
 }
 
