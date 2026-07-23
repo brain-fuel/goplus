@@ -56,10 +56,10 @@ type dynamicDatatype struct {
 }
 
 type parametricDatatypeFamily struct {
-	name      string
-	parameter string
-	body      List
-	instances map[string]dynamicDatatype
+	name       string
+	parameters []string
+	body       List
+	instances  map[string]dynamicDatatype
 }
 
 type dynamicDatatypeRecognizer struct {
@@ -478,7 +478,7 @@ func (executor *executor) declare(index int, name string, sortExpression SExpr, 
 
 func (executor *executor) instantiateParametricSort(expression SExpr) (dynamicDatatype, bool, error) {
 	application, ok := expression.(List)
-	if !ok || len(application.Values) != 2 {
+	if !ok || len(application.Values) < 2 {
 		return dynamicDatatype{}, false, nil
 	}
 	name, nameOK := atomText(application.Values[0])
@@ -489,11 +489,18 @@ func (executor *executor) instantiateParametricSort(expression SExpr) (dynamicDa
 	if !found {
 		return dynamicDatatype{}, false, nil
 	}
-	argument, argumentOK := executor.parametricSortArgument(application.Values[1])
-	if !argumentOK {
-		return dynamicDatatype{}, true, fmt.Errorf("unsupported type argument for parametric datatype %s", name)
+	if len(application.Values)-1 != len(family.parameters) {
+		return dynamicDatatype{}, true, fmt.Errorf("parametric datatype %s requires %d type arguments", name, len(family.parameters))
 	}
-	key := parametricSortKey(argument)
+	arguments := make([]datatypeFieldSort, len(family.parameters))
+	for index, expression := range application.Values[1:] {
+		argument, argumentOK := executor.parametricSortArgument(expression)
+		if !argumentOK {
+			return dynamicDatatype{}, true, fmt.Errorf("unsupported type argument %d for parametric datatype %s", index, name)
+		}
+		arguments[index] = argument
+	}
+	key := parametricSortKey(arguments)
 	if datatype, exists := family.instances[key]; exists {
 		return datatype, true, nil
 	}
@@ -528,7 +535,7 @@ func (executor *executor) instantiateParametricSort(expression SExpr) (dynamicDa
 				return dynamicDatatype{}, true, fmt.Errorf("datatype field requires a selector and sort")
 			}
 			selector, selectorOK := atomText(field.Values[0])
-			fieldSort, sortOK := executor.instantiateParametricFieldSort(field.Values[1], family, argument, datatype)
+			fieldSort, sortOK := executor.instantiateParametricFieldSort(field.Values[1], family, application.Values[1:], arguments, datatype)
 			if !selectorOK || !sortOK {
 				return dynamicDatatype{}, true, fmt.Errorf("unsupported parametric datatype field sort")
 			}
@@ -587,26 +594,76 @@ func (executor *executor) parametricSortArgument(expression SExpr) (datatypeFiel
 	return datatypeFieldSort{}, false
 }
 
-func parametricSortKey(sort datatypeFieldSort) string {
-	return fmt.Sprintf("%d/%d/%d/%d", sort.sort, sort.width, sort.datatypeID, sort.constructors)
+func parametricSortKey(sorts []datatypeFieldSort) string {
+	var key strings.Builder
+	for _, sort := range sorts {
+		fmt.Fprintf(&key, "%d/%d/%d/%d;", sort.sort, sort.width, sort.datatypeID, sort.constructors)
+	}
+	return key.String()
 }
 
-func (executor *executor) instantiateParametricFieldSort(expression SExpr, family *parametricDatatypeFamily, argument datatypeFieldSort, datatype dynamicDatatype) (datatypeFieldSort, bool) {
+func (executor *executor) instantiateParametricFieldSort(expression SExpr, family *parametricDatatypeFamily, argumentExpressions []SExpr, arguments []datatypeFieldSort, datatype dynamicDatatype) (datatypeFieldSort, bool) {
 	if name, ok := atomText(expression); ok {
-		if name == family.parameter {
-			return argument, true
+		for index, parameter := range family.parameters {
+			if name == parameter {
+				return arguments[index], true
+			}
 		}
 		return parseDatatypeFieldSort(expression, family.name, executor.datatypes)
 	}
 	application, ok := expression.(List)
-	if ok && len(application.Values) == 2 {
+	if ok && len(application.Values) == len(family.parameters)+1 {
 		name, nameOK := atomText(application.Values[0])
-		parameter, parameterOK := atomText(application.Values[1])
-		if nameOK && parameterOK && name == family.name && parameter == family.parameter {
+		if nameOK && name == family.name {
+			for index, argument := range application.Values[1:] {
+				parameter, parameterOK := atomText(argument)
+				if !parameterOK || parameter != family.parameters[index] {
+					return datatypeFieldSort{}, false
+				}
+			}
 			return datatypeFieldSort{sort: sortDatatypeSelf, datatypeID: datatype.id, constructors: datatype.constructorCount}, true
 		}
 	}
+	if ok && len(application.Values) > 0 {
+		if name, nameOK := atomText(application.Values[0]); nameOK && name == family.name {
+			// Non-regular recursion changes the instantiation at every edge
+			// and cannot be represented by one finite monomorphized sort.
+			return datatypeFieldSort{}, false
+		}
+	}
+	substituted, changed := substituteParametricSortExpression(expression, family.parameters, argumentExpressions)
+	if changed {
+		if nested, ok, err := executor.instantiateParametricSort(substituted); ok && err == nil {
+			return datatypeFieldSort{sort: nested.sortCode, datatypeID: nested.id, constructors: nested.constructorCount}, true
+		}
+	}
 	return datatypeFieldSort{}, false
+}
+
+func substituteParametricSortExpression(expression SExpr, parameters []string, arguments []SExpr) (SExpr, bool) {
+	if name, ok := atomText(expression); ok {
+		for index, parameter := range parameters {
+			if name == parameter {
+				return arguments[index], true
+			}
+		}
+		return expression, false
+	}
+	list, ok := expression.(List)
+	if !ok {
+		return expression, false
+	}
+	values := make([]SExpr, len(list.Values))
+	changed := false
+	for index, item := range list.Values {
+		values[index], ok = substituteParametricSortExpression(item, parameters, arguments)
+		changed = changed || ok
+	}
+	if !changed {
+		return expression, false
+	}
+	list.Values = values
+	return list, true
 }
 
 func (executor *executor) declareDatatype(index int, declaration RawCommand) {
@@ -778,7 +835,7 @@ func (executor *executor) declareDatatypes(index int, declaration RawCommand) {
 		executor.fail(index, declaration.At, "declare-datatypes requires one constructor list per sort")
 		return
 	}
-	if len(sorts.Values) == 1 && executor.declareUnaryParametricDatatype(index, declaration.At, sorts.Values[0], bodies.Values[0]) {
+	if len(sorts.Values) == 1 && executor.declareParametricDatatype(index, declaration.At, sorts.Values[0], bodies.Values[0]) {
 		return
 	}
 	names := make([]string, len(sorts.Values))
@@ -914,32 +971,43 @@ func (executor *executor) declareDatatypes(index int, declaration RawCommand) {
 	executor.acknowledge(index)
 }
 
-func (executor *executor) declareUnaryParametricDatatype(index int, at Span, sortExpression, bodyExpression SExpr) bool {
+func (executor *executor) declareParametricDatatype(index int, at Span, sortExpression, bodyExpression SExpr) bool {
 	sortDeclaration, sortOK := sortExpression.(List)
 	if !sortOK || len(sortDeclaration.Values) != 2 {
 		return false
 	}
 	name, nameOK := atomText(sortDeclaration.Values[0])
 	arity, arityOK := atomText(sortDeclaration.Values[1])
-	if !nameOK || !arityOK || arity != "1" {
+	parameterCount, arityErr := strconv.Atoi(arity)
+	if !nameOK || !arityOK || arityErr != nil || parameterCount <= 0 {
 		return false
 	}
 	body, bodyOK := bodyExpression.(List)
 	if !bodyOK || len(body.Values) != 3 {
-		executor.fail(index, at, "unary parametric datatype body must be (par (T) constructors)")
+		executor.fail(index, at, "parametric datatype body must be (par (T ...) constructors)")
 		return true
 	}
 	par, parOK := atomText(body.Values[0])
 	parameters, parametersOK := body.Values[1].(List)
 	constructors, constructorsOK := body.Values[2].(List)
-	if !parOK || par != "par" || !parametersOK || len(parameters.Values) != 1 || !constructorsOK || len(constructors.Values) == 0 {
-		executor.fail(index, at, "unary parametric datatype body must be (par (T) constructors)")
+	if !parOK || par != "par" || !parametersOK || len(parameters.Values) != parameterCount || !constructorsOK || len(constructors.Values) == 0 {
+		executor.fail(index, at, "parametric datatype parameter count must match its declared arity")
 		return true
 	}
-	parameter, parameterOK := atomText(parameters.Values[0])
-	if !parameterOK {
-		executor.fail(index, at, "parametric datatype parameter must be a symbol")
-		return true
+	parameterNames := make([]string, parameterCount)
+	seenParameters := make(map[string]struct{}, parameterCount)
+	for parameterIndex, expression := range parameters.Values {
+		parameter, parameterOK := atomText(expression)
+		if !parameterOK {
+			executor.fail(index, at, "parametric datatype parameter must be a symbol")
+			return true
+		}
+		if _, duplicate := seenParameters[parameter]; duplicate {
+			executor.fail(index, at, "duplicate parametric datatype parameter "+parameter)
+			return true
+		}
+		seenParameters[parameter] = struct{}{}
+		parameterNames[parameterIndex] = parameter
 	}
 	if _, exists := executor.parametricFamilies[name]; exists {
 		executor.fail(index, at, "duplicate sort declaration "+name)
@@ -950,7 +1018,7 @@ func (executor *executor) declareUnaryParametricDatatype(index int, at Span, sor
 		return true
 	}
 	executor.parametricFamilies[name] = &parametricDatatypeFamily{
-		name: name, parameter: parameter, body: constructors, instances: make(map[string]dynamicDatatype),
+		name: name, parameters: parameterNames, body: constructors, instances: make(map[string]dynamicDatatype),
 	}
 	executor.acknowledge(index)
 	return true

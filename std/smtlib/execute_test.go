@@ -681,6 +681,115 @@ func TestExecuteParametricDatatypeMatch(t *testing.T) {
 	}
 }
 
+func TestExecuteMultiParameterDatatype(t *testing.T) {
+	script := `(declare-datatypes ((Pair 2))
+	  ((par (A B) ((pair (first A) (second B))))))
+	(declare-const p (Pair Int Bool))
+	(assert (= p (pair 42 true)))
+	(assert (= (first p) 42))
+	(assert (= (second p) true))
+	(check-sat)
+	(get-value (p (first p) (second p)))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[5].(Satisfiable); !ok {
+		t.Fatalf("expected sat, got %#v", result.Responses[5])
+	}
+	values := result.Responses[6].(ValuesAvailable).Values
+	pair, pairOK := values[0].(DatatypeValue)
+	first, firstOK := values[1].(IntegerValue)
+	second, secondOK := values[2].(BooleanValue)
+	if !pairOK || pair.Value.ConstructorName != "pair" || !firstOK || first.Value != 42 || !secondOK || !second.Value {
+		t.Fatalf("unexpected multi-parameter values: %#v", values)
+	}
+}
+
+func TestExecuteMultiParameterRecursiveDatatype(t *testing.T) {
+	script := `(declare-datatypes ((DuoList 2))
+	  ((par (A B) ((nil) (cons (left A) (right B) (tail (DuoList A B)))))))
+	(declare-const xs (DuoList Int Bool))
+	(assert (= xs (cons 42 true (as nil (DuoList Int Bool)))))
+	(assert (= (left xs) 42))
+	(assert (= (right xs) true))
+	(check-sat)
+	(get-value (xs (tail xs)))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[5].(Satisfiable); !ok {
+		t.Fatalf("expected sat, got %#v", result.Responses[5])
+	}
+	values := result.Responses[6].(ValuesAvailable).Values
+	list, listOK := values[0].(DatatypeValue)
+	tail, tailOK := values[1].(DatatypeValue)
+	if !listOK || list.Value.ConstructorName != "cons" || !tailOK || tail.Value.ConstructorName != "nil" {
+		t.Fatalf("unexpected multi-parameter recursive values: %#v", values)
+	}
+}
+
+func TestExecuteNestedMultiParameterDatatypeField(t *testing.T) {
+	script := `(declare-datatypes ((PList 1))
+	  ((par (T) ((nil) (cons (head T) (tail (PList T)))))))
+	(declare-datatypes ((Envelope 2))
+	  ((par (A B) ((envelope (items (PList A)) (metadata B))))))
+	(declare-const value (Envelope Int Bool))
+	(assert (= value (envelope (cons 42 (as nil (PList Int))) true)))
+	(assert (= (head (items value)) 42))
+	(check-sat)
+	(get-value (value (items value)))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[5].(Satisfiable); !ok {
+		t.Fatalf("expected sat, got %#v", result.Responses[5])
+	}
+	values := result.Responses[6].(ValuesAvailable).Values
+	envelope, envelopeOK := values[0].(DatatypeValue)
+	items, itemsOK := values[1].(DatatypeValue)
+	if !envelopeOK || envelope.Value.ConstructorName != "envelope" || !itemsOK || items.Value.ConstructorName != "cons" {
+		t.Fatalf("unexpected nested multi-parameter values: %#v", values)
+	}
+}
+
+func TestExecuteRejectsInvalidMultiParameterDatatypeInstances(t *testing.T) {
+	wrongArity := `(declare-datatypes ((Pair 2))
+	  ((par (A B) ((pair (first A) (second B))))))
+	(declare-const p (Pair Int))`
+	failed, ok := Execute(wrongArity).(ExecutionFailed)
+	if !ok || len(failed.Errors) != 1 || !strings.Contains(failed.Errors[0].Message, "requires 2 type arguments") {
+		t.Fatalf("wrong multi-parameter arity result=%#v", Execute(wrongArity))
+	}
+
+	duplicate := `(declare-datatypes ((Pair 2))
+	  ((par (A A) ((pair (first A) (second A))))))`
+	failed, ok = Execute(duplicate).(ExecutionFailed)
+	if !ok || len(failed.Errors) != 1 || !strings.Contains(failed.Errors[0].Message, "duplicate parametric datatype parameter") {
+		t.Fatalf("duplicate multi-parameter result=%#v", Execute(duplicate))
+	}
+
+	distinctInstances := `(declare-datatypes ((Pair 2))
+	  ((par (A B) ((pair (first A) (second B))))))
+	(declare-const p (Pair Int Bool))
+	(declare-const q (Pair Bool Int))
+	(assert (= p q))`
+	failed, ok = Execute(distinctInstances).(ExecutionFailed)
+	if !ok || len(failed.Errors) != 1 {
+		t.Fatalf("identity-distinct multi-parameter instances result=%#v", Execute(distinctInstances))
+	}
+
+	nonRegular := `(declare-datatypes ((Swap 2))
+	  ((par (A B) ((stop) (step (next (Swap B A)))))))
+	(declare-const value (Swap Int Bool))`
+	failed, ok = Execute(nonRegular).(ExecutionFailed)
+	if !ok || len(failed.Errors) != 1 || !strings.Contains(failed.Errors[0].Message, "unsupported parametric datatype field sort") {
+		t.Fatalf("non-regular multi-parameter recursion result=%#v", Execute(nonRegular))
+	}
+}
+
 func TestExecuteUnconstrainedParametricDatatypeMatch(t *testing.T) {
 	script := `(declare-datatypes ((PList 1))
 	  ((par (T) ((nil) (cons (head T) (tail (PList T)))))))
