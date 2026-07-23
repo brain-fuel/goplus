@@ -221,6 +221,29 @@ func TestExecuteFiniteEnumerationDatatypeExhaustion(t *testing.T) {
 	}
 }
 
+func TestExecuteFiniteEnumerationDatatypeBooleanStructure(t *testing.T) {
+	script := `(declare-datatype Color ((red) (blue)))
+	(declare-const x Color)
+	(assert (or (= x red) (= x blue)))
+	(assert (=> (= x red) (not (= x blue))))
+	(assert (= (= x red) (not (= x blue))))
+	(assert (ite (= x red) false (= x blue)))
+	(assert (not (= x red)))
+	(check-sat)
+	(get-value (x))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[7].(Satisfiable); !ok {
+		t.Fatalf("expected sat, got %#v", result.Responses[7])
+	}
+	value, ok := result.Responses[8].(ValuesAvailable).Values[0].(DatatypeValue)
+	if !ok || value.Value.ConstructorName != "blue" {
+		t.Fatalf("unexpected Boolean QF_DT value: %#v", result.Responses[8])
+	}
+}
+
 func TestExecuteRecursiveUnaryDatatype(t *testing.T) {
 	script := `(set-logic QF_DT)
 (declare-datatype Nat ((zero) (succ (pred Nat))))

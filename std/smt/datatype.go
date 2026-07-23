@@ -713,6 +713,18 @@ func containsDatatypeTheory(term Term[BoolSort]) bool {
 				return true
 			}
 		}
+	case Or:
+		for _, item := range value.Values {
+			if containsDatatypeTheory(item) {
+				return true
+			}
+		}
+	case Implies:
+		return containsDatatypeTheory(value.Left) || containsDatatypeTheory(value.Right)
+	case Iff:
+		return containsDatatypeTheory(value.Left) || containsDatatypeTheory(value.Right)
+	case If[BoolSort]:
+		return containsDatatypeTheory(value.Condition) || containsDatatypeTheory(value.Then) || containsDatatypeTheory(value.Else)
 	case BooleanConjunction:
 		items, _ := value.values()
 		for _, item := range items {
@@ -790,6 +802,9 @@ func isMixedDatatypeApplication(term any) bool {
 }
 
 func solveDatatypeAssertions(assertions []Term[BoolSort]) (checkOutcome, bool) {
+	if containsBooleanDatatypeAssertions(assertions) {
+		return solveBooleanDatatypeAssertions(assertions)
+	}
 	if containsDatatypeConditionalAssertions(assertions) {
 		return solveDatatypeConditionalAssertions(assertions)
 	}

@@ -814,6 +814,58 @@ func TestFiniteEnumerationDatatypeColoringDetectsExhaustion(t *testing.T) {
 	}
 }
 
+func TestFiniteEnumerationDatatypeBooleanStructure(t *testing.T) {
+	red := DatatypeConstructor(701, 2, 0, "red")
+	blue := DatatypeConstructor(701, 2, 1, "blue")
+	x := DatatypeConst(701, 2, 1, "x")
+	isRed := Equal{Left: x, Right: red}
+	isBlue := Equal{Left: x, Right: blue}
+	formula := And{Values: []Term[BoolSort]{
+		Or{Values: []Term[BoolSort]{isRed, isBlue}},
+		Implies{Left: isRed, Right: Not{Value: isBlue}},
+		Iff{Left: isRed, Right: Not{Value: isBlue}},
+		If[BoolSort]{Condition: isRed, Then: Bool{Value: true}, Else: isBlue},
+		Not{Value: isRed},
+	}}
+	result, ok := Check(Assert(1, New(), formula)).(Satisfiable)
+	if !ok {
+		t.Fatalf("Boolean QF_DT result=%#v", result)
+	}
+	value, found := DatatypeModelValue(701, 2, result.Value, x)
+	if !found || value.ConstructorID != 1 {
+		t.Fatalf("Boolean QF_DT model=%+v found=%v", value, found)
+	}
+
+	contradiction := And{Values: []Term[BoolSort]{
+		Or{Values: []Term[BoolSort]{isRed, isBlue}},
+		Not{Value: Or{Values: []Term[BoolSort]{isRed, isBlue}}},
+	}}
+	if result := Check(Assert(2, New(), contradiction)); func() bool { _, ok := result.(Unsatisfiable); return ok }() == false {
+		t.Fatalf("Boolean QF_DT contradiction result=%#v", result)
+	}
+}
+
+func TestFiniteEnumerationDatatypeBooleanBranchLimit(t *testing.T) {
+	red := DatatypeConstructor(702, 2, 0, "red")
+	blue := DatatypeConstructor(702, 2, 1, "blue")
+	terms := make([]Term[BoolSort], 9)
+	for index := range terms {
+		x := DatatypeConst(702, 2, index+1, "x")
+		terms[index] = Or{Values: []Term[BoolSort]{
+			Equal{Left: x, Right: red},
+			Equal{Left: x, Right: blue},
+		}}
+	}
+	result, ok := Check(Assert(1, New(), And{Values: terms})).(Unknown)
+	if !ok {
+		t.Fatalf("Boolean QF_DT branch-limit result=%#v", result)
+	}
+	limit, ok := result.Reason.(ResourceLimit)
+	if !ok || limit.Limit != datatypeBooleanBranchLimit {
+		t.Fatalf("Boolean QF_DT branch-limit reason=%#v", result.Reason)
+	}
+}
+
 func TestRecursiveUnaryDatatypeConstructorsSelectorsAndModels(t *testing.T) {
 	zero := DatatypeConstructor(10, 2, 0, "zero")
 	succ := DeclareRecursiveDatatypeConstructor(10, 2, 1, "succ", "pred")
