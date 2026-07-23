@@ -44,33 +44,79 @@ const (
 	compactStringWordEquationSystemLimit   = 8
 )
 
-func solveBoundedWordEquationConjunction(assertions []Term[BoolSort]) (checkOutcome, bool) {
-	var conjuncts [compactStringWordEquationConjunctLimit]Term[BoolSort]
-	count := 0
-	for _, assertion := range assertions {
-		if !appendBoundedWordEquationConjunct(assertion, &conjuncts, &count) {
-			return checkOutcome{}, false
-		}
+type boundedWordEquationConjuncts struct {
+	count    int
+	inline   [compactStringWordEquationConjunctLimit]Term[BoolSort]
+	overflow []Term[BoolSort]
+}
+
+func (conjuncts *boundedWordEquationConjuncts) append(term Term[BoolSort]) {
+	if conjuncts.overflow != nil {
+		conjuncts.overflow = append(conjuncts.overflow, term)
+		conjuncts.count++
+		return
 	}
+	if conjuncts.count < len(conjuncts.inline) {
+		conjuncts.inline[conjuncts.count] = term
+		conjuncts.count++
+		return
+	}
+	conjuncts.overflow = make([]Term[BoolSort], conjuncts.count, conjuncts.count*2)
+	copy(conjuncts.overflow, conjuncts.inline[:])
+	conjuncts.overflow = append(conjuncts.overflow, term)
+	conjuncts.count++
+}
+
+func (conjuncts *boundedWordEquationConjuncts) values() []Term[BoolSort] {
+	if conjuncts.overflow != nil {
+		return conjuncts.overflow
+	}
+	return conjuncts.inline[:conjuncts.count]
+}
+
+func solveBoundedWordEquationConjunction(assertions []Term[BoolSort]) (checkOutcome, bool) {
+	var storage boundedWordEquationConjuncts
+	for _, assertion := range assertions {
+		appendBoundedWordEquationConjunct(assertion, &storage)
+	}
+	conjuncts := storage.values()
 	var equations [compactStringWordEquationSystemLimit]CompactStringWordEquation
+	var overflowEquations []CompactStringWordEquation
 	var equationConjuncts [compactStringWordEquationConjunctLimit]bool
+	var overflowEquationConjuncts []bool
+	if len(conjuncts) > len(equationConjuncts) {
+		overflowEquationConjuncts = make([]bool, len(conjuncts))
+	}
 	equationCount := 0
-	for index := 0; index < count; index++ {
+	for index := 0; index < len(conjuncts); index++ {
 		if candidate, ok := compactStringWordEquationFromTerm(conjuncts[index]); ok {
-			if equationCount == len(equations) {
-				return checkOutcome{}, false
+			if equationCount < len(equations) {
+				equations[equationCount] = candidate
+			} else {
+				if overflowEquations == nil {
+					overflowEquations = make(
+						[]CompactStringWordEquation, equationCount, equationCount*2,
+					)
+					copy(overflowEquations, equations[:])
+				}
+				overflowEquations = append(overflowEquations, candidate)
 			}
-			equations[equationCount] = candidate
 			equationCount++
-			equationConjuncts[index] = true
+			if overflowEquationConjuncts != nil {
+				overflowEquationConjuncts[index] = true
+			} else {
+				equationConjuncts[index] = true
+			}
 		}
 	}
 	if equationCount == 0 {
 		return checkOutcome{}, false
 	}
 	var constraints boundedWordEquationConstraints
-	for index := 0; index < count; index++ {
-		if equationConjuncts[index] {
+	for index := 0; index < len(conjuncts); index++ {
+		isEquation := overflowEquationConjuncts != nil && overflowEquationConjuncts[index] ||
+			overflowEquationConjuncts == nil && equationConjuncts[index]
+		if isEquation {
 			continue
 		}
 		recognized, contradiction := bindBoundedWordEquationGroundConjunct(conjuncts[index], &constraints)
@@ -84,8 +130,14 @@ func solveBoundedWordEquationConjunction(assertions []Term[BoolSort]) (checkOutc
 	for index := 0; index < constraints.lengthCount; index++ {
 		found := false
 		for equationIndex := 0; equationIndex < equationCount; equationIndex++ {
+			var equation CompactStringWordEquation
+			if overflowEquations != nil {
+				equation = overflowEquations[equationIndex]
+			} else {
+				equation = equations[equationIndex]
+			}
 			found = found || compactStringPatternContainsID(
-				equations[equationIndex].Pattern, constraints.lengths[index].id,
+				equation.Pattern, constraints.lengths[index].id,
 			)
 		}
 		if !found {
@@ -93,9 +145,17 @@ func solveBoundedWordEquationConjunction(assertions []Term[BoolSort]) (checkOutc
 		}
 	}
 	steps := 0
-	model, found, complete := searchCompactStringWordEquationSystem(
-		equations, equationCount, 0, 0, 0, constraints, &steps,
-	)
+	var model stringModel
+	var found, complete bool
+	if overflowEquations == nil {
+		model, found, complete = searchCompactStringWordEquationSystem(
+			equations, equationCount, 0, 0, 0, constraints, &steps,
+		)
+	} else {
+		model, found, complete = searchCompactStringWordEquationOverflowSystem(
+			overflowEquations, 0, 0, 0, constraints, &steps,
+		)
+	}
 	if !complete {
 		var reason UnknownReason = ResourceLimit{Limit: compactStringWordEquationSearchLimit}
 		if steps <= compactStringWordEquationSearchLimit {
@@ -109,7 +169,7 @@ func solveBoundedWordEquationConjunction(assertions []Term[BoolSort]) (checkOutc
 	if !found {
 		return checkOutcome{status: checkUnsat}, true
 	}
-	for index := 0; index < count; index++ {
+	for index := 0; index < len(conjuncts); index++ {
 		value, complete := evaluateStringBoolean(conjuncts[index], model, integerModel{})
 		if !complete || !value {
 			return checkOutcome{}, false
@@ -120,32 +180,26 @@ func solveBoundedWordEquationConjunction(assertions []Term[BoolSort]) (checkOutc
 
 func appendBoundedWordEquationConjunct(
 	term Term[BoolSort],
-	result *[compactStringWordEquationConjunctLimit]Term[BoolSort],
-	count *int,
-) bool {
+	result *boundedWordEquationConjuncts,
+) {
 	switch value := term.(type) {
 	case And:
 		for _, child := range value.Values {
-			if !appendBoundedWordEquationConjunct(child, result, count) {
-				return false
-			}
+			appendBoundedWordEquationConjunct(child, result)
 		}
-		return true
 	case BooleanConjunction:
 		children, negated := value.values()
-		for index, child := range children {
-			if negated[index] || !appendBoundedWordEquationConjunct(child, result, count) {
-				return false
+		for _, childNegated := range negated {
+			if childNegated {
+				result.append(term)
+				return
 			}
 		}
-		return true
-	default:
-		if *count == len(result) {
-			return false
+		for _, child := range children {
+			appendBoundedWordEquationConjunct(child, result)
 		}
-		result[*count] = term
-		*count++
-		return true
+	default:
+		result.append(term)
 	}
 }
 
@@ -743,6 +797,110 @@ func searchCompactStringWordEquationSystem(
 		}
 		result, found, complete := searchCompactStringWordEquationSystem(
 			equations, equationCount, equationIndex, index+1, end, candidate, steps,
+		)
+		if !complete {
+			return stringModel{}, false, false
+		}
+		if found {
+			return result, true, true
+		}
+	}
+	return stringModel{}, false, true
+}
+
+func searchCompactStringWordEquationOverflowSystem(
+	equations []CompactStringWordEquation,
+	equationIndex, index, offset int,
+	constraints boundedWordEquationConstraints,
+	steps *int,
+) (stringModel, bool, bool) {
+	if equationIndex == len(equations) {
+		for index := 0; index < constraints.regexCount; index++ {
+			constraint := constraints.regexes[index]
+			value, bound := constraints.model.lookup(constraint.id)
+			if !bound {
+				return stringModel{}, false, false
+			}
+			accepted, known := regexCandidateMembership(value, constraint.expression, constraints.model)
+			if !known {
+				return stringModel{}, false, false
+			}
+			if accepted == constraint.negated {
+				return stringModel{}, false, true
+			}
+		}
+		for index := 0; index < constraints.predicateCount; index++ {
+			value, known := evaluateStringBoolean(
+				constraints.predicates[index], constraints.model, integerModel{},
+			)
+			if !known {
+				return stringModel{}, false, false
+			}
+			if !value {
+				return stringModel{}, false, true
+			}
+		}
+		return constraints.model, true, true
+	}
+	*steps++
+	if *steps > compactStringWordEquationSearchLimit {
+		return stringModel{}, false, false
+	}
+	equation := equations[equationIndex]
+	pattern, target := equation.Pattern, equation.Target
+	if pattern.Count < 1 || pattern.Count > len(pattern.SymbolIDs) {
+		return stringModel{}, false, true
+	}
+	delimiter := pattern.Delimiters[index]
+	if offset > len(target) || !strings.HasPrefix(target[offset:], delimiter) {
+		return stringModel{}, false, true
+	}
+	offset += len(delimiter)
+	if index == pattern.Count {
+		if offset != len(target) {
+			return stringModel{}, false, true
+		}
+		return searchCompactStringWordEquationOverflowSystem(
+			equations, equationIndex+1, 0, 0, constraints, steps,
+		)
+	}
+	id := pattern.SymbolIDs[index]
+	if value, bound := constraints.model.lookup(id); bound {
+		if !strings.HasPrefix(target[offset:], value) {
+			return stringModel{}, false, true
+		}
+		return searchCompactStringWordEquationOverflowSystem(
+			equations, equationIndex, index+1, offset+len(value), constraints, steps,
+		)
+	}
+	for end := offset; end <= len(target); end++ {
+		if !stringWordEquationBoundary(target, end) {
+			continue
+		}
+		value := target[offset:end]
+		if length, constrained := constraints.length(id); constrained &&
+			!length.allows(int64(stringCodePointCount(value))) {
+			continue
+		}
+		candidate := constraints
+		candidate.model.set(id, value)
+		rejected := false
+		for regexIndex := 0; regexIndex < candidate.regexCount; regexIndex++ {
+			regex := candidate.regexes[regexIndex]
+			if regex.id != id {
+				continue
+			}
+			accepted, known := regexCandidateMembership(value, regex.expression, candidate.model)
+			if known && accepted == regex.negated {
+				rejected = true
+				break
+			}
+		}
+		if rejected {
+			continue
+		}
+		result, found, complete := searchCompactStringWordEquationOverflowSystem(
+			equations, equationIndex, index+1, end, candidate, steps,
 		)
 		if !complete {
 			return stringModel{}, false, false

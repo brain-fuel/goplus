@@ -639,6 +639,53 @@ func TestEightWordEquationInteraction(t *testing.T) {
 	}
 }
 
+func TestOverflowWordEquationInteraction(t *testing.T) {
+	x := StringConst(1, "x")
+	y := StringConst(2, "y")
+	z := StringConst(3, "z")
+	w := StringConst(4, "w")
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: StringConcat(x, y), Right: StringVal("abc")},
+		Equal{Left: StringConcat(x, StringVal("-"), z), Right: StringVal("a-tail")},
+		Equal{Left: StringConcat(y, w), Right: StringVal("bc!")},
+		Equal{Left: StringConcat(z, w), Right: StringVal("tail!")},
+		Equal{Left: StringConcat(StringVal("<"), x, y), Right: StringVal("<abc")},
+		Equal{Left: StringConcat(x, y, StringVal(">")), Right: StringVal("abc>")},
+		Equal{Left: StringConcat(StringVal("["), z, w), Right: StringVal("[tail!")},
+		Equal{Left: StringConcat(z, w, StringVal("]")), Right: StringVal("tail!]")},
+		Equal{Left: StringConcat(StringVal("<"), x, StringVal("-"), z), Right: StringVal("<a-tail")},
+		Equal{Left: StringConcat(x, StringVal("-"), z, StringVal(">")), Right: StringVal("a-tail>")},
+		Equal{Left: StringConcat(StringVal("("), y, w), Right: StringVal("(bc!")},
+		Equal{Left: StringConcat(z, w, StringVal(")")), Right: StringVal("tail!)")},
+		Bool{Value: true},
+		Bool{Value: true},
+		Bool{Value: true},
+		Bool{Value: true},
+		Bool{Value: true},
+	}}
+	checked := Check(Assert(39, New(), formula))
+	result, ok := checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("result=%T", checked)
+	}
+	for _, item := range []struct {
+		expression Term[StringSort]
+		expected   string
+	}{
+		{x, "a"},
+		{y, "bc"},
+		{z, "tail"},
+		{w, "!"},
+	} {
+		if actual, found := StringModelValue(result.Value, item.expression); !found || actual != item.expected {
+			t.Fatalf("value=(%q,%v), want=%q", actual, found, item.expected)
+		}
+	}
+	if valid, found := BoolValue(result.Value, formula); !found || !valid {
+		t.Fatalf("formula=(%v,%v)", valid, found)
+	}
+}
+
 func TestWordEquationRegexInteraction(t *testing.T) {
 	x := StringConst(1, "x")
 	y := StringConst(2, "y")
