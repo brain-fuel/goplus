@@ -21,6 +21,26 @@ func TestStringGroundOperations(t *testing.T) {
 	}
 }
 
+func TestStringIndexedOperationsUseUnicodeCodePoints(t *testing.T) {
+	value := StringVal("a🙂bc🙂")
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: StringAt(value, Integer{Value: 1}), Right: StringVal("🙂")},
+		Equal{Left: StringAt(value, Integer{Value: -1}), Right: StringVal("")},
+		Equal{Left: StringAt(value, Integer{Value: 99}), Right: StringVal("")},
+		Equal{Left: StringSubstring(value, Integer{Value: 1}, Integer{Value: 3}), Right: StringVal("🙂bc")},
+		Equal{Left: StringSubstring(value, Integer{Value: 4}, Integer{Value: 99}), Right: StringVal("🙂")},
+		Equal{Left: StringSubstring(value, Integer{Value: -1}, Integer{Value: 2}), Right: StringVal("")},
+		Equal{Left: StringIndexOf(value, StringVal("🙂"), Integer{Value: 2}), Right: Integer{Value: 4}},
+		Equal{Left: StringIndexOf(value, StringVal(""), Integer{Value: 5}), Right: Integer{Value: 5}},
+		Equal{Left: StringIndexOf(value, StringVal("x"), Integer{Value: 0}), Right: Integer{Value: -1}},
+		Equal{Left: StringReplace(value, StringVal("🙂"), StringVal("!")), Right: StringVal("a!bc🙂")},
+		Equal{Left: StringReplace(StringVal("ab"), StringVal(""), StringVal("!")), Right: StringVal("!ab")},
+	}}
+	if _, ok := Check(Assert(6, New(), formula)).(Satisfiable); !ok {
+		t.Fatalf("result=%T", Check(Assert(6, New(), formula)))
+	}
+}
+
 func TestStringSymbolModel(t *testing.T) {
 	x := StringConst(1, "x")
 	formula := And{Values: []Term[BoolSort]{

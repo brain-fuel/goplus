@@ -160,7 +160,7 @@ func (model stringModel) lookup(id int) (string, bool) {
 	return value, ok
 }
 
-func evaluateString(term Term[StringSort], model stringModel) (string, bool) {
+func evaluateString(term Term[StringSort], model stringModel, integers integerModel) (string, bool) {
 	switch value := term.(type) {
 	case stringValue[StringSort]:
 		return value.value, true
@@ -169,13 +169,48 @@ func evaluateString(term Term[StringSort], model stringModel) (string, bool) {
 	case stringConcat[StringSort]:
 		var result strings.Builder
 		for _, item := range value.values {
-			part, ok := evaluateString(item, model)
+			part, ok := evaluateString(item, model, integers)
 			if !ok {
 				return "", false
 			}
 			result.WriteString(part)
 		}
 		return result.String(), true
+	case stringAt[StringSort]:
+		text, textOK := evaluateString(value.value, model, integers)
+		index, indexOK := evaluateStringOffset(value.index, integers)
+		if !textOK || !indexOK {
+			return "", false
+		}
+		runes := []rune(text)
+		if index < 0 || index >= int64(len(runes)) {
+			return "", true
+		}
+		return string(runes[index]), true
+	case stringSubstring[StringSort]:
+		text, textOK := evaluateString(value.value, model, integers)
+		offset, offsetOK := evaluateStringOffset(value.offset, integers)
+		length, lengthOK := evaluateStringOffset(value.length, integers)
+		if !textOK || !offsetOK || !lengthOK {
+			return "", false
+		}
+		runes := []rune(text)
+		if offset < 0 || offset >= int64(len(runes)) || length <= 0 {
+			return "", true
+		}
+		end := offset + length
+		if end < offset || end > int64(len(runes)) {
+			end = int64(len(runes))
+		}
+		return string(runes[offset:end]), true
+	case stringReplace[StringSort]:
+		text, textOK := evaluateString(value.value, model, integers)
+		source, sourceOK := evaluateString(value.source, model, integers)
+		replacement, replacementOK := evaluateString(value.replacement, model, integers)
+		if !textOK || !sourceOK || !replacementOK {
+			return "", false
+		}
+		return strings.Replace(text, source, replacement, 1), true
 	default:
 		return "", false
 	}
@@ -183,7 +218,7 @@ func evaluateString(term Term[StringSort], model stringModel) (string, bool) {
 
 func evaluateBoolWithStringsAndDatatypes(term Term[BoolSort], booleans booleanModel, integers integerModel, reals rationalModel, strings stringModel, datatypes *datatypeModel) (bool, bool) {
 	if containsStringTheory(term) {
-		return evaluateStringBoolean(term, strings)
+		return evaluateStringBoolean(term, strings, integers)
 	}
 	return evaluateBoolWithDatatypes(term, booleans, integers, reals, datatypes)
 }
@@ -215,7 +250,7 @@ func containsStringTheory(term Term[BoolSort]) bool {
 
 func isStringTerm(term any) bool {
 	switch term.(type) {
-	case stringValue[StringSort], stringSymbol[StringSort], stringConcat[StringSort]:
+	case stringValue[StringSort], stringSymbol[StringSort], stringConcat[StringSort], stringAt[StringSort], stringSubstring[StringSort], stringReplace[StringSort]:
 		return true
 	default:
 		return false
@@ -223,15 +258,19 @@ func isStringTerm(term any) bool {
 }
 
 func isStringIntegerTerm(term any) bool {
-	_, ok := term.(stringLength)
-	return ok
+	switch term.(type) {
+	case stringLength, stringIndexOf:
+		return true
+	default:
+		return false
+	}
 }
 
 func solveStringAssertions(assertions []Term[BoolSort]) (checkOutcome, bool) {
 	var model stringModel
 	var symbols stringSymbols
 	for _, assertion := range assertions {
-		if value, ground := evaluateStringBoolean(assertion, stringModel{}); ground && !value {
+		if value, ground := evaluateStringBoolean(assertion, stringModel{}, integerModel{}); ground && !value {
 			return checkOutcome{status: checkUnsat}, true
 		}
 		collectStringSymbolsBoolean(assertion, &symbols)
@@ -250,7 +289,7 @@ func solveStringAssertions(assertions []Term[BoolSort]) (checkOutcome, bool) {
 	}
 	defaultUnboundStrings(symbols, &model)
 	for _, assertion := range assertions {
-		value, ok := evaluateStringBoolean(assertion, model)
+		value, ok := evaluateStringBoolean(assertion, model, integerModel{})
 		if !ok {
 			return checkOutcome{}, false
 		}
@@ -444,8 +483,19 @@ func collectStringSymbols(term any, symbols *stringSymbols) {
 		for _, item := range value.values {
 			collectStringSymbols(item, symbols)
 		}
+	case stringAt[StringSort]:
+		collectStringSymbols(value.value, symbols)
+	case stringSubstring[StringSort]:
+		collectStringSymbols(value.value, symbols)
+	case stringReplace[StringSort]:
+		collectStringSymbols(value.value, symbols)
+		collectStringSymbols(value.source, symbols)
+		collectStringSymbols(value.replacement, symbols)
 	case stringLength:
 		collectStringSymbols(value.value, symbols)
+	case stringIndexOf:
+		collectStringSymbols(value.value, symbols)
+		collectStringSymbols(value.substring, symbols)
 	}
 }
 
@@ -508,8 +558,8 @@ func bindStringAssertion(term Term[BoolSort], negated bool, model *stringModel) 
 		}
 		leftID, leftSymbol := stringSymbolID(value.Left)
 		rightID, rightSymbol := stringSymbolID(value.Right)
-		left, leftOK := evaluateString(value.Left.(Term[StringSort]), *model)
-		right, rightOK := evaluateString(value.Right.(Term[StringSort]), *model)
+		left, leftOK := evaluateString(value.Left.(Term[StringSort]), *model, integerModel{})
+		right, rightOK := evaluateString(value.Right.(Term[StringSort]), *model, integerModel{})
 		if !negated {
 			if leftSymbol && rightOK {
 				return setExistingString(model, leftID, right)
@@ -567,7 +617,7 @@ func synthesizeStringAssertion(term Term[BoolSort], negated bool, model *stringM
 
 func synthesizeStringPredicate(value, part Term[StringSort], negated bool, kind int, model *stringModel) {
 	id, symbolic := stringSymbolID(value)
-	partValue, partOK := evaluateString(part, *model)
+	partValue, partOK := evaluateString(part, *model, integerModel{})
 	if !symbolic || !partOK {
 		return
 	}
@@ -612,7 +662,7 @@ func integerConstant(term any) (int64, bool) {
 	}
 }
 
-func evaluateStringBoolean(term Term[BoolSort], model stringModel) (bool, bool) {
+func evaluateStringBoolean(term Term[BoolSort], model stringModel, integers integerModel) (bool, bool) {
 	switch value := term.(type) {
 	case stringSystem:
 		for _, relation := range value.system.relations() {
@@ -625,11 +675,11 @@ func evaluateStringBoolean(term Term[BoolSort], model stringModel) (bool, bool) 
 	case Bool:
 		return value.Value, true
 	case Not:
-		inner, ok := evaluateStringBoolean(value.Value, model)
+		inner, ok := evaluateStringBoolean(value.Value, model, integers)
 		return !inner, ok
 	case And:
 		for _, item := range value.Values {
-			result, ok := evaluateStringBoolean(item, model)
+			result, ok := evaluateStringBoolean(item, model, integers)
 			if !ok || !result {
 				return result, ok
 			}
@@ -638,7 +688,7 @@ func evaluateStringBoolean(term Term[BoolSort], model stringModel) (bool, bool) 
 	case BooleanConjunction:
 		items, polarities := value.values()
 		for index, item := range items {
-			result, ok := evaluateStringBoolean(item, model)
+			result, ok := evaluateStringBoolean(item, model, integers)
 			if !ok || result == polarities[index] {
 				return false, ok
 			}
@@ -650,38 +700,78 @@ func evaluateStringBoolean(term Term[BoolSort], model stringModel) (bool, bool) 
 			if !rightOK {
 				return false, false
 			}
-			leftValue, leftOK := evaluateString(left, model)
-			rightValue, rightValueOK := evaluateString(right, model)
+			leftValue, leftOK := evaluateString(left, model, integers)
+			rightValue, rightValueOK := evaluateString(right, model, integers)
 			return leftValue == rightValue, leftOK && rightValueOK
 		}
-		leftLength, leftOK := evaluateStringInteger(value.Left, model)
-		rightLength, rightOK := evaluateStringInteger(value.Right, model)
+		leftLength, leftOK := evaluateStringInteger(value.Left, model, integers)
+		rightLength, rightOK := evaluateStringInteger(value.Right, model, integers)
 		return leftLength == rightLength, leftOK && rightOK
 	case stringContains:
-		text, textOK := evaluateString(value.value, model)
-		part, partOK := evaluateString(value.substring, model)
+		text, textOK := evaluateString(value.value, model, integers)
+		part, partOK := evaluateString(value.substring, model, integers)
 		return strings.Contains(text, part), textOK && partOK
 	case stringPrefix:
-		prefix, prefixOK := evaluateString(value.prefix, model)
-		text, textOK := evaluateString(value.value, model)
+		prefix, prefixOK := evaluateString(value.prefix, model, integers)
+		text, textOK := evaluateString(value.value, model, integers)
 		return strings.HasPrefix(text, prefix), prefixOK && textOK
 	case stringSuffix:
-		suffix, suffixOK := evaluateString(value.suffix, model)
-		text, textOK := evaluateString(value.value, model)
+		suffix, suffixOK := evaluateString(value.suffix, model, integers)
+		text, textOK := evaluateString(value.value, model, integers)
 		return strings.HasSuffix(text, suffix), suffixOK && textOK
 	default:
 		return false, false
 	}
 }
 
-func evaluateStringInteger(term any, model stringModel) (int64, bool) {
+func evaluateStringInteger(term any, model stringModel, integers integerModel) (int64, bool) {
 	if constant, ok := integerConstant(term); ok {
 		return constant, true
 	}
-	length, ok := term.(stringLength)
+	switch value := term.(type) {
+	case stringLength:
+		text, found := evaluateString(value.value, model, integers)
+		return int64(utf8.RuneCountInString(text)), found
+	case stringIndexOf:
+		text, textOK := evaluateString(value.value, model, integers)
+		substring, substringOK := evaluateString(value.substring, model, integers)
+		offset, offsetOK := evaluateStringOffset(value.offset, integers)
+		if !textOK || !substringOK || !offsetOK {
+			return 0, false
+		}
+		return stringIndexOfRunes(text, substring, offset), true
+	default:
+		return evaluateStringOffsetTerm(term, integers)
+	}
+}
+
+func evaluateStringOffset(term Term[IntSort], integers integerModel) (int64, bool) {
+	if constant, ok := integerConstant(term); ok {
+		return constant, true
+	}
+	return evaluateInt(term, booleanModel{}, integers, rationalModel{})
+}
+
+func evaluateStringOffsetTerm(term any, integers integerModel) (int64, bool) {
+	value, ok := term.(Term[IntSort])
 	if !ok {
 		return 0, false
 	}
-	value, found := evaluateString(length.value, model)
-	return int64(utf8.RuneCountInString(value)), found
+	return evaluateStringOffset(value, integers)
+}
+
+func stringIndexOfRunes(text, substring string, offset int64) int64 {
+	textRunes, substringRunes := []rune(text), []rune(substring)
+	if offset < 0 || offset > int64(len(textRunes)) {
+		return -1
+	}
+	if len(substringRunes) == 0 {
+		return offset
+	}
+	for index := int(offset); index+len(substringRunes) <= len(textRunes); index++ {
+		if string(textRunes[index:index+len(substringRunes)]) == substring {
+			return int64(index)
+		}
+	}
+	return -1
 }

@@ -2032,6 +2032,25 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 		if values, ok := stringTerms(); ok && len(values) == 2 {
 			return dynamicTerm{sort: sortBool, boolean: smt.StringHasSuffix(values[1], values[0])}, nil
 		}
+	case "str.at":
+		if len(terms) == 2 && terms[0].sort == sortString && (terms[1].sort == sortInt || terms[1].sort == sortNumber && terms[1].integer != nil) {
+			return dynamicTerm{sort: sortString, stringValue: smt.StringAt(terms[0].stringValue, terms[1].integer)}, nil
+		}
+	case "str.substr":
+		if len(terms) == 3 && terms[0].sort == sortString &&
+			(terms[1].sort == sortInt || terms[1].sort == sortNumber && terms[1].integer != nil) &&
+			(terms[2].sort == sortInt || terms[2].sort == sortNumber && terms[2].integer != nil) {
+			return dynamicTerm{sort: sortString, stringValue: smt.StringSubstring(terms[0].stringValue, terms[1].integer, terms[2].integer)}, nil
+		}
+	case "str.indexof":
+		if len(terms) == 3 && terms[0].sort == sortString && terms[1].sort == sortString &&
+			(terms[2].sort == sortInt || terms[2].sort == sortNumber && terms[2].integer != nil) {
+			return dynamicTerm{sort: sortInt, integer: smt.StringIndexOf(terms[0].stringValue, terms[1].stringValue, terms[2].integer)}, nil
+		}
+	case "str.replace":
+		if values, ok := stringTerms(); ok && len(values) == 3 {
+			return dynamicTerm{sort: sortString, stringValue: smt.StringReplace(values[0], values[1], values[2])}, nil
+		}
 	case "ubv_to_int":
 		if len(terms) == 1 && terms[0].sort == sortBitVector {
 			return dynamicTerm{sort: sortInt, integer: smt.BitVecToNat(terms[0].bitVector)}, nil

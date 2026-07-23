@@ -171,6 +171,10 @@ type Term[S any] enum {
 	stringContains(Value Term[StringSort], Substring Term[StringSort]) Term[BoolSort]
 	stringPrefix(Prefix Term[StringSort], Value Term[StringSort]) Term[BoolSort]
 	stringSuffix(Suffix Term[StringSort], Value Term[StringSort]) Term[BoolSort]
+	stringAt(Value Term[StringSort], Index Term[IntSort]) Term[S]
+	stringSubstring(Value Term[StringSort], Offset Term[IntSort], Length Term[IntSort]) Term[S]
+	stringIndexOf(Value Term[StringSort], Substring Term[StringSort], Offset Term[IntSort]) Term[IntSort]
+	stringReplace(Value Term[StringSort], Source Term[StringSort], Replacement Term[StringSort]) Term[S]
 	stringSystem(System CompactStringSystem) Term[BoolSort]
 	sequenceEmpty() Term[S]
 	sequenceUnit(Value any) Term[S]
@@ -538,6 +542,10 @@ func StringLength(value Term[StringSort]) Term[IntSort] { return stringLength(va
 func StringContains(value Term[StringSort], substring Term[StringSort]) Term[BoolSort] { return stringContains(value, substring) }
 func StringHasPrefix(value Term[StringSort], prefix Term[StringSort]) Term[BoolSort] { return stringPrefix(prefix, value) }
 func StringHasSuffix(value Term[StringSort], suffix Term[StringSort]) Term[BoolSort] { return stringSuffix(suffix, value) }
+func StringAt(value Term[StringSort], index Term[IntSort]) Term[StringSort] { return Term[StringSort].stringAt(value, index) }
+func StringSubstring(value Term[StringSort], offset Term[IntSort], length Term[IntSort]) Term[StringSort] { return Term[StringSort].stringSubstring(value, offset, length) }
+func StringIndexOf(value Term[StringSort], substring Term[StringSort], offset Term[IntSort]) Term[IntSort] { return stringIndexOf(value, substring, offset) }
+func StringReplace(value Term[StringSort], source Term[StringSort], replacement Term[StringSort]) Term[StringSort] { return Term[StringSort].stringReplace(value, source, replacement) }
 func SequenceEmpty[E any]() Term[SequenceSort[E]] { return Term[SequenceSort[E]].sequenceEmpty() }
 func SequenceUnit[E any](value Term[E]) Term[SequenceSort[E]] { return Term[SequenceSort[E]].sequenceUnit(value) }
 func SequenceConcat[E any](values ...Term[SequenceSort[E]]) Term[SequenceSort[E]] { return Term[SequenceSort[E]].sequenceConcat(values) }
@@ -871,11 +879,11 @@ func BitVecModelValue(0 c nat, 0 width nat, model Model[c], term Term[BitVecSort
 }
 
 func StringModelValue(0 c nat, model Model[c], term Term[StringSort]) (string, bool) {
-	match model { case modelValue(_, _, _, _, _, strings, _, _, _): return evaluateString(term, strings) }
+	match model { case modelValue(_, _, integers, _, _, strings, _, _, _): return evaluateString(term, strings, integers) }
 }
 
 func StringIntegerModelValue(0 c nat, model Model[c], term Term[IntSort]) (int64, bool) {
-	match model { case modelValue(_, _, _, _, _, strings, _, _, _): return evaluateStringInteger(term, strings) }
+	match model { case modelValue(_, _, integers, _, _, strings, _, _, _): return evaluateStringInteger(term, strings, integers) }
 }
 
 func IntegerArrayValue(0 c nat, model Model[c], array Term[ArraySort[IntSort, IntSort]], index IntegerValue) (IntegerValue, bool) {

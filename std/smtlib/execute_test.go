@@ -66,13 +66,45 @@ func TestExecuteStringLogicAndModelValues(t *testing.T) {
 func TestExecuteUnicodeStringLength(t *testing.T) {
 	script := `(set-logic QF_SLIA)
 (assert (= (str.len "Go+🙂") 4))
+(assert (= (str.len "Go+\u{1f642}") 4))
+(assert (= (str.at "Go+\u{1f642}" 3) "\u{1f642}"))
 (check-sat)`
 	result, ok := Execute(script).(Executed)
 	if !ok {
 		t.Fatalf("result=%#v", Execute(script))
 	}
-	if _, ok := result.Responses[2].(Satisfiable); !ok {
-		t.Fatalf("check response=%T", result.Responses[2])
+	if _, ok := result.Responses[4].(Satisfiable); !ok {
+		t.Fatalf("check response=%T", result.Responses[4])
+	}
+}
+
+func TestExecuteIndexedStringOperations(t *testing.T) {
+	script := `(set-logic QF_SLIA)
+(assert (= (str.at "a🙂bc🙂" 1) "🙂"))
+(assert (= (str.substr "a🙂bc🙂" 1 3) "🙂bc"))
+(assert (= (str.indexof "a🙂bc🙂" "🙂" 2) 4))
+(assert (= (str.replace "a🙂bc🙂" "🙂" "!") "a!bc🙂"))
+(check-sat)
+(get-value ((str.at "a🙂bc🙂" 1) (str.substr "a🙂bc🙂" 1 3) (str.indexof "a🙂bc🙂" "🙂" 2) (str.replace "a🙂bc🙂" "🙂" "!")))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[5].(Satisfiable); !ok {
+		t.Fatalf("check response=%T", result.Responses[5])
+	}
+	values := result.Responses[6].(ValuesAvailable).Values
+	if value, ok := values[0].(StringValue); !ok || value.Value != "🙂" {
+		t.Fatalf("at=%#v", values[0])
+	}
+	if value, ok := values[1].(StringValue); !ok || value.Value != "🙂bc" {
+		t.Fatalf("substr=%#v", values[1])
+	}
+	if value, ok := values[2].(IntegerValue); !ok || value.Value != 4 {
+		t.Fatalf("indexof=%#v", values[2])
+	}
+	if value, ok := values[3].(StringValue); !ok || value.Value != "a!bc🙂" {
+		t.Fatalf("replace=%#v", values[3])
 	}
 }
 

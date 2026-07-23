@@ -76,6 +76,13 @@ func lexSMTLib(source string) ([]token, []ParseError) {
 			closed := false
 			for offset < len(source) {
 				next, nextSize := utf8.DecodeRuneInString(source[offset:])
+				if next == '\\' {
+					if escaped, end, ok := decodeUnicodeStringEscape(source, offset); ok {
+						value.WriteRune(escaped)
+						offset = end
+						continue
+					}
+				}
 				if next == '"' {
 					if offset+nextSize < len(source) {
 						after, afterSize := utf8.DecodeRuneInString(source[offset+nextSize:])
@@ -126,6 +133,38 @@ func lexSMTLib(source string) ([]token, []ParseError) {
 		tokens = append(tokens, token{kind: tokenAtom, text: source[start:offset], start: start, end: offset})
 	}
 	return tokens, errors
+}
+
+func decodeUnicodeStringEscape(source string, offset int) (rune, int, bool) {
+	if offset+2 > len(source) || source[offset] != '\\' || source[offset+1] != 'u' {
+		return 0, offset, false
+	}
+	start, end := offset+2, offset+6
+	if start < len(source) && source[start] == '{' {
+		start++
+		close := strings.IndexByte(source[start:], '}')
+		if close < 1 || close > 6 {
+			return 0, offset, false
+		}
+		end = start + close + 1
+		value, err := strconv.ParseUint(source[start:start+close], 16, 32)
+		if err != nil || !validStringCodePoint(rune(value)) {
+			return 0, offset, false
+		}
+		return rune(value), end, true
+	}
+	if end > len(source) {
+		return 0, offset, false
+	}
+	value, err := strconv.ParseUint(source[start:end], 16, 16)
+	if err != nil || !validStringCodePoint(rune(value)) {
+		return 0, offset, false
+	}
+	return rune(value), end, true
+}
+
+func validStringCodePoint(value rune) bool {
+	return value >= 0 && value <= utf8.MaxRune && (value < 0xd800 || value > 0xdfff)
 }
 
 func (parser *scriptParser) expression() (SExpr, bool) {

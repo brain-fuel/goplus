@@ -946,6 +946,41 @@ type stringSuffix struct {
 
 func (stringSuffix) isTerm(BoolSort) {}
 
+//goplus:variant (Term[S]) stringAt(Value Term[StringSort], Index Term[IntSort]) Term[S]
+type stringAt[S any] struct {
+	value Term[StringSort]
+	index Term[IntSort]
+}
+
+func (stringAt[S]) isTerm(S) {}
+
+//goplus:variant (Term[S]) stringSubstring(Value Term[StringSort], Offset Term[IntSort], Length Term[IntSort]) Term[S]
+type stringSubstring[S any] struct {
+	value  Term[StringSort]
+	offset Term[IntSort]
+	length Term[IntSort]
+}
+
+func (stringSubstring[S]) isTerm(S) {}
+
+//goplus:variant (Term[S]) stringIndexOf(Value Term[StringSort], Substring Term[StringSort], Offset Term[IntSort]) Term[IntSort]
+type stringIndexOf struct {
+	value     Term[StringSort]
+	substring Term[StringSort]
+	offset    Term[IntSort]
+}
+
+func (stringIndexOf) isTerm(IntSort) {}
+
+//goplus:variant (Term[S]) stringReplace(Value Term[StringSort], Source Term[StringSort], Replacement Term[StringSort]) Term[S]
+type stringReplace[S any] struct {
+	value       Term[StringSort]
+	source      Term[StringSort]
+	replacement Term[StringSort]
+}
+
+func (stringReplace[S]) isTerm(S) {}
+
 //goplus:variant (Term[S]) stringSystem(System CompactStringSystem) Term[BoolSort]
 type stringSystem struct {
 	system CompactStringSystem
@@ -1596,6 +1631,10 @@ type TermCases[S any, R any] struct {
 	stringContains                     func(Value Term[StringSort], Substring Term[StringSort]) R
 	stringPrefix                       func(Prefix Term[StringSort], Value Term[StringSort]) R
 	stringSuffix                       func(Suffix Term[StringSort], Value Term[StringSort]) R
+	stringAt                           func(Value Term[StringSort], Index Term[IntSort]) R
+	stringSubstring                    func(Value Term[StringSort], Offset Term[IntSort], Length Term[IntSort]) R
+	stringIndexOf                      func(Value Term[StringSort], Substring Term[StringSort], Offset Term[IntSort]) R
+	stringReplace                      func(Value Term[StringSort], Source Term[StringSort], Replacement Term[StringSort]) R
 	stringSystem                       func(System CompactStringSystem) R
 	sequenceEmpty                      func() R
 	sequenceUnit                       func(Value any) R
@@ -1744,6 +1783,14 @@ func TermFold[S any, R any](t Term[S], cs TermCases[S, R]) R {
 		return cs.stringPrefix(m.prefix, m.value)
 	case stringSuffix:
 		return cs.stringSuffix(m.suffix, m.value)
+	case stringAt[S]:
+		return cs.stringAt(m.value, m.index)
+	case stringSubstring[S]:
+		return cs.stringSubstring(m.value, m.offset, m.length)
+	case stringIndexOf:
+		return cs.stringIndexOf(m.value, m.substring, m.offset)
+	case stringReplace[S]:
+		return cs.stringReplace(m.value, m.source, m.replacement)
 	case stringSystem:
 		return cs.stringSystem(m.system)
 	case sequenceEmpty[S]:
@@ -2905,6 +2952,18 @@ func StringHasPrefix(value Term[StringSort], prefix Term[StringSort]) Term[BoolS
 func StringHasSuffix(value Term[StringSort], suffix Term[StringSort]) Term[BoolSort] {
 	return stringSuffix{suffix: suffix, value: value}
 }
+func StringAt(value Term[StringSort], index Term[IntSort]) Term[StringSort] {
+	return stringAt[StringSort]{value: value, index: index}
+}
+func StringSubstring(value Term[StringSort], offset Term[IntSort], length Term[IntSort]) Term[StringSort] {
+	return stringSubstring[StringSort]{value: value, offset: offset, length: length}
+}
+func StringIndexOf(value Term[StringSort], substring Term[StringSort], offset Term[IntSort]) Term[IntSort] {
+	return stringIndexOf{value: value, substring: substring, offset: offset}
+}
+func StringReplace(value Term[StringSort], source Term[StringSort], replacement Term[StringSort]) Term[StringSort] {
+	return stringReplace[StringSort]{value: value, source: source, replacement: replacement}
+}
 func SequenceEmpty[E any]() Term[SequenceSort[E]] { return sequenceEmpty[SequenceSort[E]]{} }
 func SequenceUnit[E any](value Term[E]) Term[SequenceSort[E]] {
 	return sequenceUnit[SequenceSort[E]]{value: value}
@@ -3452,8 +3511,9 @@ func BitVecModelValue(model Model, term Term[BitVecSort]) (BitVectorValue, bool)
 func StringModelValue(model Model, term Term[StringSort]) (string, bool) {
 	switch __gp_m48 := any(model).(type) {
 	case modelValue:
+		integers := __gp_m48.integers
 		strings := __gp_m48.strings
-		return evaluateString(term, strings)
+		return evaluateString(term, strings, integers)
 	default:
 		panic("goplus: impossible enum value in match")
 	}
@@ -3463,8 +3523,9 @@ func StringModelValue(model Model, term Term[StringSort]) (string, bool) {
 func StringIntegerModelValue(model Model, term Term[IntSort]) (int64, bool) {
 	switch __gp_m49 := any(model).(type) {
 	case modelValue:
+		integers := __gp_m49.integers
 		strings := __gp_m49.strings
-		return evaluateStringInteger(term, strings)
+		return evaluateStringInteger(term, strings, integers)
 	default:
 		panic("goplus: impossible enum value in match")
 	}
