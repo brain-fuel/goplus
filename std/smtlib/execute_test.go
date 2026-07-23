@@ -703,6 +703,64 @@ func TestExecuteUnconstrainedParametricDatatypeMatch(t *testing.T) {
 	}
 }
 
+func TestExecuteUnconstrainedBitVectorParametricDatatypeMatch(t *testing.T) {
+	script := `(declare-datatypes ((PList 1))
+	  ((par (T) ((nil) (cons (head T) (tail (PList T)))))))
+	(declare-const xs (PList (_ BitVec 8)))
+	(assert (= (match xs (((nil) #x00) ((cons h t) h))) #x2a))
+	(check-sat)
+	(get-value (xs (match xs (((nil) #x00) ((cons h t) h)))))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[3].(Satisfiable); !ok {
+		t.Fatalf("expected sat, got %#v", result.Responses[3])
+	}
+	values := result.Responses[4].(ValuesAvailable).Values
+	list, listOK := values[0].(DatatypeValue)
+	matched, matchOK := values[1].(BitVectorValue)
+	if !listOK || list.Value.ConstructorName != "cons" || !matchOK || !smt.EqualBitVectorValue(matched.Value, smt.NewBitVectorUint64(8, 0x2a)) {
+		t.Fatalf("unexpected unconstrained bit-vector match values: %#v", values)
+	}
+}
+
+func TestExecuteUnconstrainedDatatypeValuedParametricMatch(t *testing.T) {
+	script := `(declare-datatypes ((PList 1))
+	  ((par (T) ((nil) (cons (head T) (tail (PList T)))))))
+	(declare-datatype Color ((red) (blue)))
+	(declare-const xs (PList Int))
+	(assert (= (match xs (((nil) red) ((cons h t) blue))) blue))
+	(check-sat)
+	(get-value ((match xs (((nil) red) ((cons h t) blue)))))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[4].(Satisfiable); !ok {
+		t.Fatalf("expected sat, got %#v", result.Responses[4])
+	}
+	matched, matchOK := result.Responses[5].(ValuesAvailable).Values[0].(DatatypeValue)
+	if !matchOK || matched.Value.ConstructorName != "blue" {
+		t.Fatalf("unexpected datatype-valued match: %#v", result.Responses[5])
+	}
+
+	contradiction := `(declare-datatypes ((PList 1))
+	  ((par (T) ((nil) (cons (head T) (tail (PList T)))))))
+	(declare-datatype Color ((red) (blue)))
+	(declare-const xs (PList Int))
+	(assert ((_ is nil) xs))
+	(assert (= (match xs (((nil) red) ((cons h t) blue))) blue))
+	(check-sat)`
+	executed, ok := Execute(contradiction).(Executed)
+	if !ok {
+		t.Fatalf("contradiction result=%#v", Execute(contradiction))
+	}
+	if _, ok := executed.Responses[5].(Unsatisfiable); !ok {
+		t.Fatalf("expected unsat, got %#v", executed.Responses[5])
+	}
+}
+
 func TestExecuteRejectsNonExhaustiveParametricDatatypeMatch(t *testing.T) {
 	script := `(declare-datatypes ((PList 1))
 	  ((par (T) ((nil) (cons (head T) (tail (PList T)))))))

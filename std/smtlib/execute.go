@@ -1525,11 +1525,21 @@ func dynamicConditional(condition smt.Term[smt.BoolSort], then, otherwise dynami
 	if then.sort != otherwise.sort || then.bitWidth != otherwise.bitWidth || then.datatypeID != otherwise.datatypeID || then.constructorCount != otherwise.constructorCount {
 		return dynamicTerm{}, fmt.Errorf("match branches must have one result sort")
 	}
+	if then.datatype != nil && otherwise.datatype != nil {
+		return dynamicTerm{
+			sort:             then.sort,
+			datatype:         smt.If[smt.DatatypeSort]{Condition: condition, Then: then.datatype, Else: otherwise.datatype},
+			datatypeID:       then.datatypeID,
+			constructorCount: then.constructorCount,
+		}, nil
+	}
 	switch then.sort {
 	case sortBool:
 		return dynamicTerm{sort: sortBool, boolean: smt.If[smt.BoolSort]{Condition: condition, Then: then.boolean, Else: otherwise.boolean}}, nil
 	case sortReal:
 		return dynamicTerm{sort: sortReal, real: smt.If[smt.RealSort]{Condition: condition, Then: then.real, Else: otherwise.real}}, nil
+	case sortBitVector:
+		return dynamicTerm{sort: sortBitVector, bitWidth: then.bitWidth, bitVector: smt.If[smt.BitVecSort]{Condition: condition, Then: then.bitVector, Else: otherwise.bitVector}}, nil
 	default:
 		return dynamicTerm{}, fmt.Errorf("unsupported datatype match result sort")
 	}

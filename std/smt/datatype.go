@@ -726,7 +726,7 @@ func containsDatatypeTheory(term Term[BoolSort]) bool {
 
 func isDatatypeTerm(term any) bool {
 	switch term.(type) {
-	case datatypeSymbol[DatatypeSort], datatypeConstructor[DatatypeSort], datatypeRecursiveApplication[DatatypeSort], datatypeRecursiveSelector[DatatypeSort], datatypeBinaryRecursiveApplication[DatatypeSort], datatypeBinaryRecursiveSelector[DatatypeSort], datatypeNaryRecursiveApplication[DatatypeSort], datatypeNaryRecursiveSelector[DatatypeSort], datatypeMixedApplication[DatatypeSort], datatypeMixedSelector[DatatypeSort], datatypeMixedUpdate[DatatypeSort]:
+	case datatypeSymbol[DatatypeSort], datatypeConstructor[DatatypeSort], datatypeRecursiveApplication[DatatypeSort], datatypeRecursiveSelector[DatatypeSort], datatypeBinaryRecursiveApplication[DatatypeSort], datatypeBinaryRecursiveSelector[DatatypeSort], datatypeNaryRecursiveApplication[DatatypeSort], datatypeNaryRecursiveSelector[DatatypeSort], datatypeMixedApplication[DatatypeSort], datatypeMixedSelector[DatatypeSort], datatypeMixedUpdate[DatatypeSort], If[DatatypeSort]:
 		return true
 	default:
 		return false
@@ -751,6 +751,8 @@ func isMixedScalarDatatypeSelector(term any) bool {
 	case If[RealSort]:
 		return containsMixedDatatypeTheory(value.Condition) || isMixedScalarDatatypeSelector(value.Then) || isMixedScalarDatatypeSelector(value.Else)
 	case If[BoolSort]:
+		return containsMixedDatatypeTheory(value.Condition) || isMixedScalarDatatypeSelector(value.Then) || isMixedScalarDatatypeSelector(value.Else)
+	case If[BitVecSort]:
 		return containsMixedDatatypeTheory(value.Condition) || isMixedScalarDatatypeSelector(value.Then) || isMixedScalarDatatypeSelector(value.Else)
 	default:
 		return false
@@ -788,6 +790,9 @@ func isMixedDatatypeApplication(term any) bool {
 }
 
 func solveDatatypeAssertions(assertions []Term[BoolSort]) (checkOutcome, bool) {
+	if containsDatatypeConditionalAssertions(assertions) {
+		return solveDatatypeConditionalAssertions(assertions)
+	}
 	problem := datatypeProblem{}
 	problem.nodes = problem.inlineNodes[:0]
 	problem.parents = problem.inlineParents[:0]
@@ -805,6 +810,232 @@ func solveDatatypeAssertions(assertions []Term[BoolSort]) (checkOutcome, bool) {
 		return checkOutcome{status: checkUnsat}, true
 	}
 	return problem.solve()
+}
+
+type datatypeConditionalTarget struct {
+	term             any
+	datatypeID       int
+	constructorCount int
+}
+
+func containsDatatypeConditionalAssertions(assertions []Term[BoolSort]) bool {
+	for _, assertion := range assertions {
+		if containsDatatypeConditionalAssertion(assertion) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsDatatypeConditionalAssertion(assertion Term[BoolSort]) bool {
+	switch value := assertion.(type) {
+	case Equal:
+		return containsDatatypeConditionalTerm(value.Left) || containsDatatypeConditionalTerm(value.Right)
+	case Not:
+		return containsDatatypeConditionalAssertion(value.Value)
+	case And:
+		for _, item := range value.Values {
+			if containsDatatypeConditionalAssertion(item) {
+				return true
+			}
+		}
+	case BooleanConjunction:
+		items, _ := value.values()
+		for _, item := range items {
+			if containsDatatypeConditionalAssertion(item) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func containsDatatypeConditionalTerm(term any) bool {
+	_, ok := term.(If[DatatypeSort])
+	return ok
+}
+
+func solveDatatypeConditionalAssertions(assertions []Term[BoolSort]) (checkOutcome, bool) {
+	targets := make([]datatypeConditionalTarget, 0, 2)
+	for _, assertion := range assertions {
+		if !collectDatatypeConditionalTargets(assertion, &targets) {
+			return checkOutcome{}, false
+		}
+	}
+	if len(targets) == 0 {
+		return checkOutcome{}, false
+	}
+	assignment := make([]int, len(targets))
+	var unknown checkOutcome
+	unknownSeen := false
+	var search func(int) (checkOutcome, bool)
+	search = func(position int) (checkOutcome, bool) {
+		if position < len(targets) {
+			for constructor := 0; constructor < targets[position].constructorCount; constructor++ {
+				assignment[position] = constructor
+				if outcome, sat := search(position + 1); sat {
+					return outcome, true
+				} else if outcome.status == checkUnknown {
+					unknown, unknownSeen = outcome, true
+				}
+			}
+			return checkOutcome{status: checkUnsat}, false
+		}
+		rewritten := make([]Term[BoolSort], 0, len(assertions)+len(targets))
+		for _, assertion := range assertions {
+			item, ok := rewriteDatatypeConditionalAssertion(assertion, targets, assignment)
+			if !ok {
+				return checkOutcome{status: checkUnknown, reason: UnsupportedTheory{Name: "datatype-valued match context"}}, false
+			}
+			rewritten = append(rewritten, item)
+		}
+		for index, target := range targets {
+			rewritten = append(rewritten, datatypeRecognizer{
+				datatypeID: target.datatypeID, constructorCount: target.constructorCount,
+				constructorID: assignment[index], value: target.term,
+			})
+		}
+		outcome, ok := solveDatatypeAssertions(rewritten)
+		return outcome, ok && outcome.status == checkSat
+	}
+	if outcome, sat := search(0); sat {
+		return outcome, true
+	}
+	if unknownSeen {
+		return unknown, true
+	}
+	return checkOutcome{status: checkUnsat}, true
+}
+
+func collectDatatypeConditionalTargets(assertion Term[BoolSort], targets *[]datatypeConditionalTarget) bool {
+	switch value := assertion.(type) {
+	case Equal:
+		return collectDatatypeConditionalTermTargets(value.Left, targets) && collectDatatypeConditionalTermTargets(value.Right, targets)
+	case Not:
+		return collectDatatypeConditionalTargets(value.Value, targets)
+	case And:
+		for _, item := range value.Values {
+			if !collectDatatypeConditionalTargets(item, targets) {
+				return false
+			}
+		}
+	case BooleanConjunction:
+		items, _ := value.values()
+		for _, item := range items {
+			if !collectDatatypeConditionalTargets(item, targets) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func collectDatatypeConditionalTermTargets(term any, targets *[]datatypeConditionalTarget) bool {
+	value, ok := term.(If[DatatypeSort])
+	if !ok {
+		return true
+	}
+	target, datatypeID, constructorCount, ok := datatypeConditionTarget(value.Condition)
+	if !ok {
+		return false
+	}
+	for _, candidate := range *targets {
+		if reflect.DeepEqual(candidate.term, target) {
+			return candidate.datatypeID == datatypeID && candidate.constructorCount == constructorCount &&
+				collectDatatypeConditionalTermTargets(value.Then, targets) && collectDatatypeConditionalTermTargets(value.Else, targets)
+		}
+	}
+	*targets = append(*targets, datatypeConditionalTarget{term: target, datatypeID: datatypeID, constructorCount: constructorCount})
+	return collectDatatypeConditionalTermTargets(value.Then, targets) && collectDatatypeConditionalTermTargets(value.Else, targets)
+}
+
+func datatypeConditionTarget(condition Term[BoolSort]) (any, int, int, bool) {
+	switch value := condition.(type) {
+	case datatypeRecognizer:
+		return value.value, value.datatypeID, value.constructorCount, true
+	case datatypeRecursiveRecognizer:
+		return value.value, value.datatypeID, value.constructorCount, true
+	case datatypeBinaryRecursiveRecognizer:
+		return value.value, value.datatypeID, value.constructorCount, true
+	case datatypeNaryRecursiveRecognizer:
+		return value.value, value.datatypeID, value.constructorCount, true
+	case datatypeMixedRecognizer:
+		return value.value, value.datatypeID, value.constructorCount, true
+	default:
+		return nil, 0, 0, false
+	}
+}
+
+func rewriteDatatypeConditionalAssertion(assertion Term[BoolSort], targets []datatypeConditionalTarget, assignment []int) (Term[BoolSort], bool) {
+	switch value := assertion.(type) {
+	case Equal:
+		left, leftOK := rewriteDatatypeConditionalTerm(value.Left, targets, assignment)
+		right, rightOK := rewriteDatatypeConditionalTerm(value.Right, targets, assignment)
+		return Equal{Left: left, Right: right}, leftOK && rightOK
+	case Not:
+		inner, ok := rewriteDatatypeConditionalAssertion(value.Value, targets, assignment)
+		return Not{Value: inner}, ok
+	case And:
+		items := make([]Term[BoolSort], len(value.Values))
+		for index, item := range value.Values {
+			var ok bool
+			items[index], ok = rewriteDatatypeConditionalAssertion(item, targets, assignment)
+			if !ok {
+				return nil, false
+			}
+		}
+		return And{Values: items}, true
+	case BooleanConjunction:
+		values, polarities := value.values()
+		items := make([]Term[BoolSort], len(values))
+		for index, item := range values {
+			var ok bool
+			items[index], ok = rewriteDatatypeConditionalAssertion(item, targets, assignment)
+			if !ok {
+				return nil, false
+			}
+			if polarities[index] {
+				items[index] = Not{Value: items[index]}
+			}
+		}
+		return And{Values: items}, true
+	default:
+		return assertion, true
+	}
+}
+
+func rewriteDatatypeConditionalTerm(term any, targets []datatypeConditionalTarget, assignment []int) (any, bool) {
+	value, ok := term.(If[DatatypeSort])
+	if !ok {
+		return term, true
+	}
+	target, _, _, targetOK := datatypeConditionTarget(value.Condition)
+	if !targetOK {
+		return nil, false
+	}
+	for index, candidate := range targets {
+		if !reflect.DeepEqual(candidate.term, target) {
+			continue
+		}
+		conditionConstructor := -1
+		switch condition := value.Condition.(type) {
+		case datatypeRecognizer:
+			conditionConstructor = condition.constructorID
+		case datatypeRecursiveRecognizer:
+			conditionConstructor = condition.constructorID
+		case datatypeBinaryRecursiveRecognizer:
+			conditionConstructor = condition.constructorID
+		case datatypeNaryRecursiveRecognizer:
+			conditionConstructor = condition.constructorID
+		case datatypeMixedRecognizer:
+			conditionConstructor = condition.constructorID
+		}
+		if assignment[index] == conditionConstructor {
+			return rewriteDatatypeConditionalTerm(value.Then, targets, assignment)
+		}
+		return rewriteDatatypeConditionalTerm(value.Else, targets, assignment)
+	}
+	return nil, false
 }
 
 func (problem *datatypeProblem) boolean(term Term[BoolSort], negated bool) bool {
@@ -951,6 +1182,8 @@ func (problem *datatypeProblem) retainMixedScalarSelectorTarget(term any) bool {
 	case If[RealSort]:
 		return problem.retainMixedBooleanTargets(value.Condition) && problem.retainMixedScalarSelectorTarget(value.Then) && problem.retainMixedScalarSelectorTarget(value.Else)
 	case If[BoolSort]:
+		return problem.retainMixedBooleanTargets(value.Condition) && problem.retainMixedScalarSelectorTarget(value.Then) && problem.retainMixedScalarSelectorTarget(value.Else)
+	case If[BitVecSort]:
 		return problem.retainMixedBooleanTargets(value.Condition) && problem.retainMixedScalarSelectorTarget(value.Then) && problem.retainMixedScalarSelectorTarget(value.Else)
 	default:
 		return true
@@ -1747,6 +1980,21 @@ func (problem *datatypeProblem) rewriteMixedScalarTerm(term any) (any, bool) {
 		thenTerm, thenTypeOK := then.(Term[BoolSort])
 		otherwiseTerm, otherwiseTypeOK := otherwise.(Term[BoolSort])
 		return If[BoolSort]{Condition: condition, Then: thenTerm, Else: otherwiseTerm}, conditionOK && thenOK && otherwiseOK && thenTypeOK && otherwiseTypeOK
+	case If[BitVecSort]:
+		condition, conditionOK := problem.rewriteDatatypeCondition(value.Condition)
+		if boolean, known := condition.(Bool); known {
+			if boolean.Value {
+				then, thenOK := problem.rewriteMixedScalarTerm(value.Then)
+				return then, conditionOK && thenOK
+			}
+			otherwise, otherwiseOK := problem.rewriteMixedScalarTerm(value.Else)
+			return otherwise, conditionOK && otherwiseOK
+		}
+		then, thenOK := problem.rewriteMixedScalarTerm(value.Then)
+		otherwise, otherwiseOK := problem.rewriteMixedScalarTerm(value.Else)
+		thenTerm, thenTypeOK := then.(Term[BitVecSort])
+		otherwiseTerm, otherwiseTypeOK := otherwise.(Term[BitVecSort])
+		return If[BitVecSort]{Condition: condition, Then: thenTerm, Else: otherwiseTerm}, conditionOK && thenOK && otherwiseOK && thenTypeOK && otherwiseTypeOK
 	default:
 		return term, true
 	}
