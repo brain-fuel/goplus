@@ -388,7 +388,7 @@ func containsStringTheory(term Term[BoolSort]) bool {
 	switch value := term.(type) {
 	case stringContains, stringPrefix, stringSuffix, stringIsDigit, stringInRegex, stringSystem,
 		CompactStringBooleanFormula, CompactStringWordEquation, CompactStringLengthRelation,
-		CompactStringIndexedEquality:
+		CompactStringIndexedEquality, CompactStringReplaceEquality:
 		return true
 	case Equal:
 		return isStringTerm(value.Left) || isStringTerm(value.Right) || isStringIntegerTerm(value.Left) || isStringIntegerTerm(value.Right)
@@ -442,6 +442,9 @@ func isStringIntegerTerm(term any) bool {
 }
 
 func solveStringAssertions(assertions []Term[BoolSort]) (checkOutcome, bool) {
+	if outcome, recognized := solveGroundStringReplaceEqualities(assertions); recognized {
+		return outcome, true
+	}
 	if outcome, recognized := solveGroundIndexedStringEqualities(assertions); recognized {
 		return outcome, true
 	}
@@ -1207,6 +1210,12 @@ func integerConstant(term any) (int64, bool) {
 
 func evaluateStringBoolean(term Term[BoolSort], model stringModel, integers integerModel) (bool, bool) {
 	switch value := term.(type) {
+	case CompactStringReplaceEquality:
+		symbol, found := model.lookup(value.SymbolID)
+		if !found {
+			return false, false
+		}
+		return strings.Replace(symbol, value.Source, value.Replacement, 1) == value.Target, true
 	case CompactStringIndexedEquality:
 		symbol, found := model.lookup(value.SymbolID)
 		if !found {

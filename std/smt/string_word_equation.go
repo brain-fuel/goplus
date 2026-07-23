@@ -375,6 +375,8 @@ func bindBoundedWordEquationGroundConjunct(term Term[BoolSort], constraints *bou
 		return appendBoundedWordEquationPredicate(constraints, value)
 	case CompactStringIndexedEquality:
 		return appendBoundedWordEquationPredicate(constraints, value)
+	case CompactStringReplaceEquality:
+		return appendBoundedWordEquationPredicate(constraints, value)
 	case stringContains, stringPrefix, stringSuffix, stringIsDigit:
 		return appendBoundedWordEquationPredicate(constraints, value)
 	case Or, Implies, Iff, If[BoolSort]:
@@ -449,7 +451,7 @@ func isBoundedWordEquationPredicate(term Term[BoolSort]) bool {
 	switch value := term.(type) {
 	case Bool, stringContains, stringPrefix, stringSuffix, stringIsDigit,
 		stringInRegex, CompactStringBooleanFormula, CompactStringLengthRelation,
-		CompactStringIndexedEquality:
+		CompactStringIndexedEquality, CompactStringReplaceEquality:
 		return true
 	case Equal:
 		return isStringTerm(value.Left) && isStringTerm(value.Right) ||

@@ -907,6 +907,107 @@ func TestGroundIndexedStringEqualities(t *testing.T) {
 	})
 }
 
+func TestGroundStringReplaceEqualities(t *testing.T) {
+	x := StringConst(1, "x")
+	t.Run("canonical unchanged preimage", func(t *testing.T) {
+		formula := Equal{
+			Left:  StringReplace(x, StringVal("a"), StringVal("z")),
+			Right: StringVal("z"),
+		}
+		checked := Check(Assert(57, New(), formula))
+		result, ok := checked.(Satisfiable)
+		if !ok {
+			t.Fatalf("result=%T", checked)
+		}
+		if actual, found := StringModelValue(result.Value, x); !found || actual != "z" {
+			t.Fatalf("x=(%q,%v)", actual, found)
+		}
+	})
+
+	t.Run("forced replacement preimage", func(t *testing.T) {
+		formula := Equal{
+			Left:  StringReplace(x, StringVal("a"), StringVal("z")),
+			Right: StringVal("za"),
+		}
+		checked := Check(Assert(58, New(), formula))
+		result, ok := checked.(Satisfiable)
+		if !ok {
+			t.Fatalf("result=%T", checked)
+		}
+		if actual, found := StringModelValue(result.Value, x); !found || actual != "aa" {
+			t.Fatalf("x=(%q,%v)", actual, found)
+		}
+	})
+
+	t.Run("empty source", func(t *testing.T) {
+		formula := Equal{
+			Left:  StringReplace(x, StringVal(""), StringVal("!")),
+			Right: StringVal("!ab"),
+		}
+		checked := Check(Assert(59, New(), formula))
+		result, ok := checked.(Satisfiable)
+		if !ok {
+			t.Fatalf("result=%T", checked)
+		}
+		if actual, found := StringModelValue(result.Value, x); !found || actual != "ab" {
+			t.Fatalf("x=(%q,%v)", actual, found)
+		}
+	})
+
+	t.Run("constraint intersection", func(t *testing.T) {
+		formula := And{Values: []Term[BoolSort]{
+			Equal{
+				Left:  StringReplace(x, StringVal("a"), StringVal("z")),
+				Right: StringVal("z"),
+			},
+			Equal{
+				Left:  StringReplace(x, StringVal("b"), StringVal("y")),
+				Right: StringVal("a"),
+			},
+		}}
+		checked := Check(Assert(60, New(), formula))
+		result, ok := checked.(Satisfiable)
+		if !ok {
+			t.Fatalf("result=%T", checked)
+		}
+		if actual, found := StringModelValue(result.Value, x); !found || actual != "a" {
+			t.Fatalf("x=(%q,%v)", actual, found)
+		}
+	})
+
+	t.Run("unicode and reversed equality", func(t *testing.T) {
+		formula := Equal{
+			Left:  StringVal("go!🙂"),
+			Right: StringReplace(x, StringVal("🙂"), StringVal("!")),
+		}
+		checked := Check(Assert(61, New(), formula))
+		result, ok := checked.(Satisfiable)
+		if !ok {
+			t.Fatalf("result=%T", checked)
+		}
+		if actual, found := StringModelValue(result.Value, x); !found || actual != "go🙂🙂" {
+			t.Fatalf("x=(%q,%v)", actual, found)
+		}
+	})
+
+	t.Run("incompatible targets", func(t *testing.T) {
+		formula := And{Values: []Term[BoolSort]{
+			Equal{
+				Left:  StringReplace(x, StringVal("a"), StringVal("z")),
+				Right: StringVal("z"),
+			},
+			Equal{
+				Left:  StringReplace(x, StringVal("a"), StringVal("z")),
+				Right: StringVal("q"),
+			},
+		}}
+		checked := Check(Assert(62, New(), formula))
+		if _, ok := checked.(Unsatisfiable); !ok {
+			t.Fatalf("result=%T", checked)
+		}
+	})
+}
+
 func TestMultipleWordEquationInteraction(t *testing.T) {
 	x := StringConst(1, "x")
 	y := StringConst(2, "y")
