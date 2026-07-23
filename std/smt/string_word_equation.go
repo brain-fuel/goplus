@@ -39,16 +39,21 @@ type boundedWordEquationConstraints struct {
 	predicates     [4]Term[BoolSort]
 }
 
+const (
+	compactStringWordEquationConjunctLimit = 16
+	compactStringWordEquationSystemLimit   = 8
+)
+
 func solveBoundedWordEquationConjunction(assertions []Term[BoolSort]) (checkOutcome, bool) {
-	var conjuncts [8]Term[BoolSort]
+	var conjuncts [compactStringWordEquationConjunctLimit]Term[BoolSort]
 	count := 0
 	for _, assertion := range assertions {
 		if !appendBoundedWordEquationConjunct(assertion, &conjuncts, &count) {
 			return checkOutcome{}, false
 		}
 	}
-	var equations [4]CompactStringWordEquation
-	var equationConjuncts [8]bool
+	var equations [compactStringWordEquationSystemLimit]CompactStringWordEquation
+	var equationConjuncts [compactStringWordEquationConjunctLimit]bool
 	equationCount := 0
 	for index := 0; index < count; index++ {
 		if candidate, ok := compactStringWordEquationFromTerm(conjuncts[index]); ok {
@@ -113,7 +118,11 @@ func solveBoundedWordEquationConjunction(assertions []Term[BoolSort]) (checkOutc
 	return checkOutcome{status: checkSat, strings: model}, true
 }
 
-func appendBoundedWordEquationConjunct(term Term[BoolSort], result *[8]Term[BoolSort], count *int) bool {
+func appendBoundedWordEquationConjunct(
+	term Term[BoolSort],
+	result *[compactStringWordEquationConjunctLimit]Term[BoolSort],
+	count *int,
+) bool {
 	switch value := term.(type) {
 	case And:
 		for _, child := range value.Values {
@@ -632,7 +641,7 @@ func searchCompactStringWordEquation(
 	constraints boundedWordEquationConstraints,
 	steps *int,
 ) (stringModel, bool, bool) {
-	equations := [4]CompactStringWordEquation{{
+	equations := [compactStringWordEquationSystemLimit]CompactStringWordEquation{{
 		Pattern: pattern,
 		Target:  target,
 	}}
@@ -642,7 +651,7 @@ func searchCompactStringWordEquation(
 }
 
 func searchCompactStringWordEquationSystem(
-	equations [4]CompactStringWordEquation,
+	equations [compactStringWordEquationSystemLimit]CompactStringWordEquation,
 	equationCount, equationIndex, index, offset int,
 	constraints boundedWordEquationConstraints,
 	steps *int,
