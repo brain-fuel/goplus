@@ -821,6 +821,14 @@ func collectStringSymbolsBoolean(term Term[BoolSort], symbols *stringSymbols) {
 		for index := 0; index < value.Pattern.Count; index++ {
 			symbols.add(value.Pattern.SymbolIDs[index])
 		}
+	case CompactStringIndexedEquality:
+		symbols.add(value.SymbolID)
+	case CompactStringReplaceEquality:
+		symbols.add(value.SymbolID)
+	case CompactStringBooleanFormula:
+		for index := 0; index < value.AtomCount; index++ {
+			symbols.add(value.Atoms[index].SymbolID)
+		}
 	case stringSystem:
 		for _, relation := range value.system.relations() {
 			if relation.Left.Kind == compactStringSymbol || relation.Left.Kind == compactStringSingleSymbolConcat {
@@ -847,6 +855,8 @@ func collectStringSymbolsBoolean(term Term[BoolSort], symbols *stringSymbols) {
 		if value.expression.node != nil {
 			collectRegexStringSymbols(value.expression.node, symbols)
 		}
+	case stringIsDigit:
+		collectStringSymbols(value.value, symbols)
 	case Not:
 		collectStringSymbolsBoolean(value.Value, symbols)
 	case And:
@@ -858,6 +868,20 @@ func collectStringSymbolsBoolean(term Term[BoolSort], symbols *stringSymbols) {
 		for _, item := range items {
 			collectStringSymbolsBoolean(item, symbols)
 		}
+	case Or:
+		for _, item := range value.Values {
+			collectStringSymbolsBoolean(item, symbols)
+		}
+	case Implies:
+		collectStringSymbolsBoolean(value.Left, symbols)
+		collectStringSymbolsBoolean(value.Right, symbols)
+	case Iff:
+		collectStringSymbolsBoolean(value.Left, symbols)
+		collectStringSymbolsBoolean(value.Right, symbols)
+	case If[BoolSort]:
+		collectStringSymbolsBoolean(value.Condition, symbols)
+		collectStringSymbolsBoolean(value.Then, symbols)
+		collectStringSymbolsBoolean(value.Else, symbols)
 	}
 }
 

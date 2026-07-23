@@ -16,13 +16,16 @@ type CompactStringReplaceEquality struct {
 func (CompactStringReplaceEquality) isTerm(BoolSort) {}
 
 type groundStringReplaceConstraint struct {
-	id              int
-	equalityCount   int
-	equalities      [4]CompactStringReplaceEquality
-	overflow        []CompactStringReplaceEquality
-	indexedCount    int
-	indexed         [4]CompactStringIndexedEquality
-	indexedOverflow []CompactStringIndexedEquality
+	id                int
+	equalityCount     int
+	equalities        [4]CompactStringReplaceEquality
+	overflow          []CompactStringReplaceEquality
+	indexedCount      int
+	indexed           [4]CompactStringIndexedEquality
+	indexedOverflow   []CompactStringIndexedEquality
+	predicateCount    int
+	predicates        [4]Term[BoolSort]
+	predicateOverflow []Term[BoolSort]
 }
 
 type groundStringReplaceConstraints struct {
@@ -115,6 +118,32 @@ func (constraint *groundStringReplaceConstraint) appendIndexed(equality CompactS
 	constraint.indexedCount++
 }
 
+func (constraint *groundStringReplaceConstraint) predicateAt(index int) Term[BoolSort] {
+	if constraint.predicateOverflow != nil {
+		return constraint.predicateOverflow[index]
+	}
+	return constraint.predicates[index]
+}
+
+func (constraint *groundStringReplaceConstraint) appendPredicate(predicate Term[BoolSort]) {
+	if constraint.predicateOverflow != nil {
+		constraint.predicateOverflow = append(constraint.predicateOverflow, predicate)
+		constraint.predicateCount++
+		return
+	}
+	if constraint.predicateCount < len(constraint.predicates) {
+		constraint.predicates[constraint.predicateCount] = predicate
+		constraint.predicateCount++
+		return
+	}
+	constraint.predicateOverflow = make(
+		[]Term[BoolSort], constraint.predicateCount, constraint.predicateCount*2,
+	)
+	copy(constraint.predicateOverflow, constraint.predicates[:])
+	constraint.predicateOverflow = append(constraint.predicateOverflow, predicate)
+	constraint.predicateCount++
+}
+
 func solveGroundStringReplaceEqualities(assertions []Term[BoolSort]) (checkOutcome, bool) {
 	var storage boundedWordEquationConjuncts
 	for _, assertion := range assertions {
@@ -138,10 +167,19 @@ func solveGroundStringReplaceEqualities(assertions []Term[BoolSort]) (checkOutco
 			continue
 		}
 		indexed, indexedOK := compactGroundIndexedStringEquality(conjunct)
-		if !indexedOK {
+		if indexedOK {
+			constraints.findOrAppend(indexed.SymbolID).appendIndexed(indexed)
+			continue
+		}
+		if !isBoundedWordEquationPredicate(conjunct) {
 			return checkOutcome{}, false
 		}
-		constraints.findOrAppend(indexed.SymbolID).appendIndexed(indexed)
+		var symbols stringSymbols
+		collectStringSymbolsBoolean(conjunct, &symbols)
+		if symbols.count != 1 || len(symbols.overflow) != 0 {
+			return checkOutcome{}, false
+		}
+		constraints.findOrAppend(symbols.inline[0]).appendPredicate(conjunct)
 	}
 	if constraints.count == 0 {
 		return checkOutcome{}, false
@@ -232,6 +270,21 @@ func groundStringReplacePreimage(
 				constraint.indexedAt(index), candidate,
 			) {
 				return "", false, true
+			}
+		}
+		if constraint.predicateCount > 0 {
+			var model stringModel
+			model.set(constraint.id, candidate)
+			for index := 0; index < constraint.predicateCount; index++ {
+				accepted, known := evaluateStringBoolean(
+					constraint.predicateAt(index), model, integerModel{},
+				)
+				if !known {
+					return "", false, false
+				}
+				if !accepted {
+					return "", false, true
+				}
 			}
 		}
 		return candidate, true, true

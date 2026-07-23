@@ -1046,6 +1046,70 @@ func TestGroundStringReplaceIndexedInteraction(t *testing.T) {
 	})
 }
 
+func TestGroundStringReplacePredicateInteraction(t *testing.T) {
+	x := StringConst(1, "x")
+	replacement := Equal{
+		Left:  StringReplace(x, StringVal("a"), StringVal("z")),
+		Right: StringVal("z"),
+	}
+	t.Run("contains selects replacement preimage", func(t *testing.T) {
+		formula := And{Values: []Term[BoolSort]{
+			replacement,
+			StringContains(x, StringVal("a")),
+			Equal{Left: StringLength(x), Right: Integer{Value: 1}},
+		}}
+		checked := Check(Assert(65, New(), formula))
+		result, ok := checked.(Satisfiable)
+		if !ok {
+			t.Fatalf("result=%T", checked)
+		}
+		if actual, found := StringModelValue(result.Value, x); !found || actual != "a" {
+			t.Fatalf("x=(%q,%v)", actual, found)
+		}
+	})
+
+	t.Run("negated contains selects unchanged preimage", func(t *testing.T) {
+		formula := And{Values: []Term[BoolSort]{
+			replacement,
+			Not{Value: StringContains(x, StringVal("a"))},
+		}}
+		checked := Check(Assert(66, New(), formula))
+		result, ok := checked.(Satisfiable)
+		if !ok {
+			t.Fatalf("result=%T", checked)
+		}
+		if actual, found := StringModelValue(result.Value, x); !found || actual != "z" {
+			t.Fatalf("x=(%q,%v)", actual, found)
+		}
+	})
+
+	t.Run("Boolean predicate rejects every preimage", func(t *testing.T) {
+		formula := And{Values: []Term[BoolSort]{
+			replacement,
+			Or{Values: []Term[BoolSort]{
+				StringHasPrefix(x, StringVal("b")),
+				StringHasSuffix(x, StringVal("b")),
+			}},
+		}}
+		checked := Check(Assert(67, New(), formula))
+		if _, ok := checked.(Unsatisfiable); !ok {
+			t.Fatalf("result=%T", checked)
+		}
+	})
+
+	t.Run("foreign symbol remains unknown", func(t *testing.T) {
+		y := StringConst(2, "y")
+		formula := And{Values: []Term[BoolSort]{
+			replacement,
+			StringContains(y, StringVal("a")),
+		}}
+		checked := Check(Assert(68, New(), formula))
+		if _, ok := checked.(Unknown); !ok {
+			t.Fatalf("result=%T", checked)
+		}
+	})
+}
+
 func TestMultipleWordEquationInteraction(t *testing.T) {
 	x := StringConst(1, "x")
 	y := StringConst(2, "y")
