@@ -204,16 +204,18 @@ func bindBoundedWordEquationGroundConjunct(term Term[BoolSort], constraints *bou
 		return appendBoundedWordEquationPredicate(constraints, value)
 	case CompactStringBooleanFormula:
 		return appendBoundedWordEquationPredicate(constraints, value)
+	case stringContains, stringPrefix, stringSuffix, stringIsDigit:
+		return appendBoundedWordEquationPredicate(constraints, value)
 	case Or, Implies, Iff, If[BoolSort]:
 		return appendBoundedWordEquationPredicate(constraints, value)
 	case stringSystem:
-		hasNegatedEquality := false
-		onlyEqualities := true
+		requiresPredicateSearch := false
 		for _, relation := range value.system.relations() {
-			hasNegatedEquality = hasNegatedEquality || relation.Kind == CompactStringEqual && relation.Negated
-			onlyEqualities = onlyEqualities && relation.Kind == CompactStringEqual
+			requiresPredicateSearch = requiresPredicateSearch ||
+				relation.Kind >= CompactStringContains ||
+				relation.Kind == CompactStringEqual && relation.Negated
 		}
-		if hasNegatedEquality && onlyEqualities {
+		if requiresPredicateSearch && isBoundedWordEquationPredicate(value) {
 			return appendBoundedWordEquationPredicate(constraints, value)
 		}
 		for _, relation := range value.system.relations() {
@@ -265,7 +267,7 @@ func appendBoundedWordEquationPredicate(
 	constraints *boundedWordEquationConstraints,
 	predicate Term[BoolSort],
 ) (bool, bool) {
-	if !isBoundedWordEquationRegexPredicate(predicate) ||
+	if !isBoundedWordEquationPredicate(predicate) ||
 		constraints.predicateCount == len(constraints.predicates) {
 		return false, false
 	}
@@ -274,24 +276,25 @@ func appendBoundedWordEquationPredicate(
 	return true, false
 }
 
-func isBoundedWordEquationRegexPredicate(term Term[BoolSort]) bool {
+func isBoundedWordEquationPredicate(term Term[BoolSort]) bool {
 	switch value := term.(type) {
-	case Bool, stringInRegex, CompactStringBooleanFormula:
+	case Bool, stringContains, stringPrefix, stringSuffix, stringIsDigit,
+		stringInRegex, CompactStringBooleanFormula:
 		return true
 	case Equal:
 		return isStringTerm(value.Left) && isStringTerm(value.Right)
 	case stringSystem:
 		for _, relation := range value.system.relations() {
-			if relation.Kind != CompactStringEqual {
+			if relation.Kind > CompactStringSuffix {
 				return false
 			}
 		}
 		return true
 	case Not:
-		return isBoundedWordEquationRegexPredicate(value.Value)
+		return isBoundedWordEquationPredicate(value.Value)
 	case And:
 		for _, child := range value.Values {
-			if !isBoundedWordEquationRegexPredicate(child) {
+			if !isBoundedWordEquationPredicate(child) {
 				return false
 			}
 		}
@@ -299,28 +302,28 @@ func isBoundedWordEquationRegexPredicate(term Term[BoolSort]) bool {
 	case BooleanConjunction:
 		children, _ := value.values()
 		for _, child := range children {
-			if !isBoundedWordEquationRegexPredicate(child) {
+			if !isBoundedWordEquationPredicate(child) {
 				return false
 			}
 		}
 		return true
 	case Or:
 		for _, child := range value.Values {
-			if !isBoundedWordEquationRegexPredicate(child) {
+			if !isBoundedWordEquationPredicate(child) {
 				return false
 			}
 		}
 		return true
 	case Implies:
-		return isBoundedWordEquationRegexPredicate(value.Left) &&
-			isBoundedWordEquationRegexPredicate(value.Right)
+		return isBoundedWordEquationPredicate(value.Left) &&
+			isBoundedWordEquationPredicate(value.Right)
 	case Iff:
-		return isBoundedWordEquationRegexPredicate(value.Left) &&
-			isBoundedWordEquationRegexPredicate(value.Right)
+		return isBoundedWordEquationPredicate(value.Left) &&
+			isBoundedWordEquationPredicate(value.Right)
 	case If[BoolSort]:
-		return isBoundedWordEquationRegexPredicate(value.Condition) &&
-			isBoundedWordEquationRegexPredicate(value.Then) &&
-			isBoundedWordEquationRegexPredicate(value.Else)
+		return isBoundedWordEquationPredicate(value.Condition) &&
+			isBoundedWordEquationPredicate(value.Then) &&
+			isBoundedWordEquationPredicate(value.Else)
 	default:
 		return false
 	}
