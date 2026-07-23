@@ -154,11 +154,10 @@ type integerSequenceRequirementSet struct {
 }
 
 type integerSequenceLengthRelation struct {
-	firstID           int
-	secondID          int
-	firstCoefficient  IntegerValue
-	secondCoefficient IntegerValue
-	constant          IntegerValue
+	ids          [3]int
+	coefficients [3]IntegerValue
+	count        int
+	constant     IntegerValue
 }
 
 func (set *integerSequenceRequirementSet) addRelation(
@@ -1171,15 +1170,15 @@ func normalizeIntegerSequenceLengthAffine(
 	return form
 }
 
-type integerSequenceLengthPairAffine struct {
-	ids          [2]int
-	coefficients [2]IntegerValue
+type integerSequenceLengthMultiAffine struct {
+	ids          [3]int
+	coefficients [3]IntegerValue
 	count        int
 	constant     IntegerValue
 	valid        bool
 }
 
-func (form *integerSequenceLengthPairAffine) add(
+func (form *integerSequenceLengthMultiAffine) add(
 	id int,
 	coefficient IntegerValue,
 ) {
@@ -1200,10 +1199,10 @@ func (form *integerSequenceLengthPairAffine) add(
 	form.count++
 }
 
-func accumulateIntegerSequenceLengthPairAffine(
+func accumulateIntegerSequenceLengthMultiAffine(
 	term Term[IntSort],
 	multiplier IntegerValue,
-	form *integerSequenceLengthPairAffine,
+	form *integerSequenceLengthMultiAffine,
 	aliases *integerSequenceAliases,
 ) {
 	if !form.valid {
@@ -1241,19 +1240,19 @@ func accumulateIntegerSequenceLengthPairAffine(
 		)
 	case Add:
 		for _, item := range value.Values {
-			accumulateIntegerSequenceLengthPairAffine(
+			accumulateIntegerSequenceLengthMultiAffine(
 				item, multiplier, form, aliases,
 			)
 		}
 	case Subtract:
-		accumulateIntegerSequenceLengthPairAffine(
+		accumulateIntegerSequenceLengthMultiAffine(
 			value.Left, multiplier, form, aliases,
 		)
-		accumulateIntegerSequenceLengthPairAffine(
+		accumulateIntegerSequenceLengthMultiAffine(
 			value.Right, NegateIntegerValue(multiplier), form, aliases,
 		)
 	case IntegerScale:
-		accumulateIntegerSequenceLengthPairAffine(
+		accumulateIntegerSequenceLengthMultiAffine(
 			value.Value,
 			MultiplyIntegerValue(multiplier, value.Coefficient),
 			form,
@@ -1264,19 +1263,19 @@ func accumulateIntegerSequenceLengthPairAffine(
 	}
 }
 
-func normalizeIntegerSequenceLengthPairAffine(
+func normalizeIntegerSequenceLengthMultiAffine(
 	left,
 	right Term[IntSort],
 	aliases *integerSequenceAliases,
-) integerSequenceLengthPairAffine {
-	form := integerSequenceLengthPairAffine{valid: true}
-	accumulateIntegerSequenceLengthPairAffine(
+) integerSequenceLengthMultiAffine {
+	form := integerSequenceLengthMultiAffine{valid: true}
+	accumulateIntegerSequenceLengthMultiAffine(
 		left, NewIntegerValue(1), &form, aliases,
 	)
-	accumulateIntegerSequenceLengthPairAffine(
+	accumulateIntegerSequenceLengthMultiAffine(
 		right, NewIntegerValue(-1), &form, aliases,
 	)
-	compacted := integerSequenceLengthPairAffine{
+	compacted := integerSequenceLengthMultiAffine{
 		constant: form.constant,
 		valid:    form.valid,
 	}
@@ -1331,18 +1330,53 @@ func collectAffineIntegerSequenceLengthEquality(
 	}
 	form := normalizeIntegerSequenceLengthAffine(left, right)
 	if !form.valid {
-		pair := normalizeIntegerSequenceLengthPairAffine(left, right, aliases)
-		if pair.valid && pair.count == 2 {
-			requirements.forSymbol(pair.ids[0])
-			requirements.forSymbol(pair.ids[1])
-			requirements.addRelation(integerSequenceLengthRelation{
-				firstID:           pair.ids[0],
-				secondID:          pair.ids[1],
-				firstCoefficient:  pair.coefficients[0],
-				secondCoefficient: pair.coefficients[1],
-				constant:          pair.constant,
-			})
-			return true, true, true
+		multi := normalizeIntegerSequenceLengthMultiAffine(left, right, aliases)
+		if multi.valid {
+			switch multi.count {
+			case 0:
+				return CompareIntegerValue(multi.constant, IntegerValue{}) == 0,
+					true, true
+			case 1:
+				id := multi.ids[0]
+				if _, assigned := model.lookup(id); assigned {
+					result, ok := evaluateBoolWithIntegerSequences(
+						value,
+						booleanModel{},
+						integerModel{},
+						rationalModel{},
+						model,
+					)
+					return result, ok, true
+				}
+				quotient, remainder, ok := DivModIntegerValue(
+					NegateIntegerValue(multi.constant),
+					multi.coefficients[0],
+				)
+				if !ok || CompareIntegerValue(remainder, IntegerValue{}) != 0 {
+					return false, true, true
+				}
+				length, fits := quotient.Int64()
+				if !fits || length > maximumConstructedIntegerSequenceLength {
+					return true, false, true
+				}
+				if length < 0 {
+					return false, true, true
+				}
+				return addIntegerSequenceExactLength(
+					requirements.forSymbol(id), int(length),
+				), true, true
+			default:
+				for index := 0; index < multi.count; index++ {
+					requirements.forSymbol(multi.ids[index])
+				}
+				requirements.addRelation(integerSequenceLengthRelation{
+					ids:          multi.ids,
+					coefficients: multi.coefficients,
+					count:        multi.count,
+					constant:     multi.constant,
+				})
+				return true, true, true
+			}
 		}
 		return true, false, true
 	}
@@ -1926,73 +1960,153 @@ func buildIntegerSequenceAtLength(
 	return buildIntegerSequenceWitness(requirements)
 }
 
+type integerSequenceLengthSearch struct {
+	relation     integerSequenceLengthRelation
+	requirements [3]integerSequenceRequirements
+	assigned     [3]IntegerSequenceValue
+	hasAssigned  [3]bool
+	values       [3]IntegerSequenceValue
+	lengths      [3]int
+	states       int
+}
+
+func integerSequenceLengthRange(
+	requirements integerSequenceRequirements,
+	assigned IntegerSequenceValue,
+	hasAssigned bool,
+) (int, int, bool) {
+	if hasAssigned {
+		length := assigned.Len()
+		if requirements.hasMin && length < requirements.minLength ||
+			requirements.hasMax && length > requirements.maxLength ||
+			requirements.hasLength && length != requirements.exactLength {
+			return 0, 0, false
+		}
+		return length, length, true
+	}
+	start, end := 0, maximumConstructedIntegerSequenceLength
+	if requirements.hasPrefix && requirements.prefix.Len() > start {
+		start = requirements.prefix.Len()
+	}
+	if requirements.hasSuffix && requirements.suffix.Len() > start {
+		start = requirements.suffix.Len()
+	}
+	for index := 0; index < requirements.containment; index++ {
+		if length := requirements.containmentAt(index).Len(); length > start {
+			start = length
+		}
+	}
+	if requirements.hasMin {
+		if requirements.minLength > start {
+			start = requirements.minLength
+		}
+	}
+	if requirements.hasMax {
+		end = requirements.maxLength
+	}
+	if requirements.hasLength {
+		start, end = requirements.exactLength, requirements.exactLength
+	}
+	return start, end, start <= end
+}
+
+func (search *integerSequenceLengthSearch) buildCandidate() (bool, bool) {
+	for index := 0; index < search.relation.count; index++ {
+		if search.hasAssigned[index] {
+			search.values[index] = search.assigned[index]
+			continue
+		}
+		value, consistent, supported := buildIntegerSequenceAtLength(
+			search.requirements[index], search.lengths[index],
+		)
+		if !supported {
+			return false, false
+		}
+		if !consistent {
+			return false, true
+		}
+		search.values[index] = value
+	}
+	return true, true
+}
+
+func (search *integerSequenceLengthSearch) solve(
+	index int,
+	sum IntegerValue,
+) (bool, bool) {
+	if index == search.relation.count-1 {
+		search.states++
+		if search.states > maximumConstructedIntegerSequenceLength {
+			return false, false
+		}
+		right := NegateIntegerValue(AddIntegerValue(sum, search.relation.constant))
+		lengthValue, remainder, ok := DivModIntegerValue(
+			right, search.relation.coefficients[index],
+		)
+		if !ok || CompareIntegerValue(remainder, IntegerValue{}) != 0 {
+			return false, true
+		}
+		length, fits := lengthValue.Int64()
+		if !fits || length < 0 || length > maximumConstructedIntegerSequenceLength {
+			return false, true
+		}
+		start, end, admissible := integerSequenceLengthRange(
+			search.requirements[index],
+			search.assigned[index],
+			search.hasAssigned[index],
+		)
+		if !admissible || int(length) < start || int(length) > end {
+			return false, true
+		}
+		search.lengths[index] = int(length)
+		return search.buildCandidate()
+	}
+	start, end, admissible := integerSequenceLengthRange(
+		search.requirements[index],
+		search.assigned[index],
+		search.hasAssigned[index],
+	)
+	if !admissible {
+		return false, true
+	}
+	for length := start; length <= end; length++ {
+		search.lengths[index] = length
+		term := MultiplyIntegerValue(
+			search.relation.coefficients[index],
+			NewIntegerValue(int64(length)),
+		)
+		found, complete := search.solve(index+1, AddIntegerValue(sum, term))
+		if found || !complete {
+			return found, complete
+		}
+	}
+	return false, true
+}
+
 func solveIntegerSequenceLengthRelation(
 	relation integerSequenceLengthRelation,
 	requirements *integerSequenceRequirementSet,
 	model *integerSequenceModel,
 ) (bool, bool) {
-	firstRequirements := *requirements.forSymbol(relation.firstID)
-	secondRequirements := *requirements.forSymbol(relation.secondID)
-	firstAssigned, firstHasValue := model.lookup(relation.firstID)
-	secondAssigned, secondHasValue := model.lookup(relation.secondID)
-	firstStart, firstEnd := 0, maximumConstructedIntegerSequenceLength
-	if firstHasValue {
-		firstStart, firstEnd = firstAssigned.Len(), firstAssigned.Len()
+	search := integerSequenceLengthSearch{relation: relation}
+	for index := 0; index < relation.count; index++ {
+		search.requirements[index] = *requirements.forSymbol(relation.ids[index])
+		search.assigned[index], search.hasAssigned[index] =
+			model.lookup(relation.ids[index])
 	}
-	for firstLength := firstStart; firstLength <= firstEnd; firstLength++ {
-		firstTerm := MultiplyIntegerValue(
-			relation.firstCoefficient, NewIntegerValue(int64(firstLength)),
-		)
-		right := NegateIntegerValue(
-			AddIntegerValue(firstTerm, relation.constant),
-		)
-		secondLengthValue, remainder, ok := DivModIntegerValue(
-			right, relation.secondCoefficient,
-		)
-		if !ok || CompareIntegerValue(remainder, IntegerValue{}) != 0 {
-			continue
-		}
-		secondLength, fits := secondLengthValue.Int64()
-		if !fits || secondLength < 0 ||
-			secondLength > maximumConstructedIntegerSequenceLength {
-			continue
-		}
-		if secondHasValue && int64(secondAssigned.Len()) != secondLength {
-			continue
-		}
-		firstValue := firstAssigned
-		if !firstHasValue {
-			var consistent, supported bool
-			firstValue, consistent, supported = buildIntegerSequenceAtLength(
-				firstRequirements, firstLength,
-			)
-			if !supported {
-				return true, false
-			}
-			if !consistent {
-				continue
-			}
-		}
-		secondValue := secondAssigned
-		if !secondHasValue {
-			var consistent, supported bool
-			secondValue, consistent, supported = buildIntegerSequenceAtLength(
-				secondRequirements, int(secondLength),
-			)
-			if !supported {
-				return true, false
-			}
-			if !consistent {
-				continue
-			}
-		}
-		if !model.set(relation.firstID, firstValue) ||
-			!model.set(relation.secondID, secondValue) {
+	found, complete := search.solve(0, IntegerValue{})
+	if !complete {
+		return true, false
+	}
+	if !found {
+		return false, true
+	}
+	for index := 0; index < relation.count; index++ {
+		if !model.set(relation.ids[index], search.values[index]) {
 			return false, true
 		}
-		return true, true
 	}
-	return false, true
+	return true, true
 }
 
 func bindPositiveIntegerSequenceWitnesses(

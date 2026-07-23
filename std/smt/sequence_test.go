@@ -493,6 +493,93 @@ func TestAffineLengthSymbolicIntegerSequenceWitness(t *testing.T) {
 	}
 }
 
+func TestThreeSymbolAffineLengthIntegerSequenceWitness(t *testing.T) {
+	unit := func(value int64) Term[SequenceSort[IntSort]] {
+		return SequenceUnit[IntSort](Integer{Value: value})
+	}
+	x := SequenceConst[IntSort](43, "x")
+	y := SequenceConst[IntSort](44, "y")
+	z := SequenceConst[IntSort](45, "z")
+	relation := Equal{
+		Left: Add{Values: []Term[IntSort]{
+			IntegerScale{
+				Coefficient: NewIntegerValue(2),
+				Value:       SequenceLength(x),
+			},
+			SequenceLength(y),
+			SequenceLength(z),
+		}},
+		Right: Integer{Value: 7},
+	}
+	formula := And{Values: []Term[BoolSort]{
+		relation,
+		SequenceHasPrefix(x, SequenceConcat(unit(1), unit(2))),
+		SequenceContains(y, unit(3)),
+		SequenceHasSuffix(z, SequenceConcat(unit(4), unit(5))),
+	}}
+	checked := Check(Assert(26, New(), formula))
+	result, ok := checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("result=%T", checked)
+	}
+	xValue, xFound := IntegerSequenceModelValue(result.Value, x)
+	yValue, yFound := IntegerSequenceModelValue(result.Value, y)
+	zValue, zFound := IntegerSequenceModelValue(result.Value, z)
+	if !xFound || !yFound || !zFound ||
+		2*xValue.Len()+yValue.Len()+zValue.Len() != 7 {
+		t.Fatalf(
+			"lengths=(%d,%v)/(%d,%v)/(%d,%v)",
+			xValue.Len(), xFound, yValue.Len(), yFound, zValue.Len(), zFound,
+		)
+	}
+	if valid, found := BoolValue(result.Value, formula); !found || !valid {
+		t.Fatalf("formula=(%v,%v)", valid, found)
+	}
+
+	conflicting := And{Values: []Term[BoolSort]{
+		relation,
+		Equal{Left: SequenceLength(x), Right: Integer{Value: 2}},
+		Equal{Left: SequenceLength(y), Right: Integer{Value: 1}},
+		Equal{Left: SequenceLength(z), Right: Integer{Value: 1}},
+	}}
+	if checked := Check(Assert(27, New(), conflicting)); func() bool {
+		_, ok := checked.(Unsatisfiable)
+		return ok
+	}() == false {
+		t.Fatalf("conflicting result=%T", checked)
+	}
+
+	alias := SequenceConst[IntSort](46, "alias")
+	aliased := And{Values: []Term[BoolSort]{
+		Equal{Left: z, Right: alias},
+		Equal{
+			Left: Add{Values: []Term[IntSort]{
+				SequenceLength(x),
+				SequenceLength(y),
+				SequenceLength(z),
+				SequenceLength(alias),
+			}},
+			Right: Integer{Value: 6},
+		},
+		SequenceHasPrefix(x, unit(1)),
+		SequenceHasPrefix(y, unit(2)),
+		SequenceHasPrefix(z, SequenceConcat(unit(3), unit(4))),
+	}}
+	aliasedResult, ok := Check(Assert(28, New(), aliased)).(Satisfiable)
+	if !ok {
+		t.Fatal("alias-canonicalized affine lengths must be satisfiable")
+	}
+	zValue, zFound = IntegerSequenceModelValue(aliasedResult.Value, z)
+	aliasValue, aliasFound := IntegerSequenceModelValue(aliasedResult.Value, alias)
+	if !zFound || !aliasFound || zValue.Len() != 2 ||
+		aliasValue.Len() != zValue.Len() {
+		t.Fatalf(
+			"alias lengths=(%d,%v)/(%d,%v)",
+			zValue.Len(), zFound, aliasValue.Len(), aliasFound,
+		)
+	}
+}
+
 func TestSymbolicIntegerSequenceEqualityClasses(t *testing.T) {
 	unit := func(value int64) Term[SequenceSort[IntSort]] {
 		return SequenceUnit[IntSort](Integer{Value: value})
