@@ -37,6 +37,17 @@ type CompactStringRelation struct {
 	Integer int64
 }
 
+// CompactStringLengthRelation compares the code-point lengths of two compact
+// string expressions. Order is 0 for equality, 1 for strict less-than, and 2
+// for less-than-or-equal.
+type CompactStringLengthRelation struct {
+	Left  CompactStringTerm
+	Right CompactStringTerm
+	Order uint8
+}
+
+func (CompactStringLengthRelation) isTerm(BoolSort) {}
+
 type CompactStringSystem struct {
 	Count    int
 	Inline   [8]CompactStringRelation
@@ -355,7 +366,7 @@ func evaluateBoolWithStringsAndDatatypes(term Term[BoolSort], booleans booleanMo
 func containsStringTheory(term Term[BoolSort]) bool {
 	switch value := term.(type) {
 	case stringContains, stringPrefix, stringSuffix, stringIsDigit, stringInRegex, stringSystem,
-		CompactStringBooleanFormula, CompactStringWordEquation:
+		CompactStringBooleanFormula, CompactStringWordEquation, CompactStringLengthRelation:
 		return true
 	case Equal:
 		return isStringTerm(value.Left) || isStringTerm(value.Right) || isStringIntegerTerm(value.Left) || isStringIntegerTerm(value.Right)
@@ -771,6 +782,13 @@ func compactSingleSymbolConcatMatches(term CompactStringTerm, value, target stri
 
 func collectStringSymbolsBoolean(term Term[BoolSort], symbols *stringSymbols) {
 	switch value := term.(type) {
+	case CompactStringLengthRelation:
+		if value.Left.Kind == compactStringSymbol || value.Left.Kind == compactStringSingleSymbolConcat {
+			symbols.add(value.Left.ID)
+		}
+		if value.Right.Kind == compactStringSymbol || value.Right.Kind == compactStringSingleSymbolConcat {
+			symbols.add(value.Right.ID)
+		}
 	case CompactStringWordEquation:
 		for index := 0; index < value.Pattern.Count; index++ {
 			symbols.add(value.Pattern.SymbolIDs[index])
@@ -1164,6 +1182,24 @@ func integerConstant(term any) (int64, bool) {
 
 func evaluateStringBoolean(term Term[BoolSort], model stringModel, integers integerModel) (bool, bool) {
 	switch value := term.(type) {
+	case CompactStringLengthRelation:
+		left, leftOK := evaluateCompactString(value.Left, model)
+		right, rightOK := evaluateCompactString(value.Right, model)
+		if !leftOK || !rightOK {
+			return false, false
+		}
+		leftLength := stringCodePointCount(left)
+		rightLength := stringCodePointCount(right)
+		switch value.Order {
+		case 0:
+			return leftLength == rightLength, true
+		case 1:
+			return leftLength < rightLength, true
+		case 2:
+			return leftLength <= rightLength, true
+		default:
+			return false, false
+		}
 	case CompactStringWordEquation:
 		return evaluateCompactStringWordEquation(value, model)
 	case CompactStringBooleanFormula:

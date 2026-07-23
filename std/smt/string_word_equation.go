@@ -327,6 +327,9 @@ func bindBoundedWordEquationGroundConjunct(term Term[BoolSort], constraints *bou
 		if id, length, ok := boundedWordEquationLengthEquality(value); ok {
 			return assignBoundedWordEquationLength(constraints, id, length)
 		}
+		if isBoundedWordEquationLengthRelation(value.Left, value.Right) {
+			return appendBoundedWordEquationPredicate(constraints, value)
+		}
 		if !isStringTerm(value.Left) || !isStringTerm(value.Right) {
 			return false, false
 		}
@@ -344,12 +347,18 @@ func bindBoundedWordEquationGroundConjunct(term Term[BoolSort], constraints *bou
 	case Less:
 		id, minimum, maximum, hasMaximum, ok := boundedWordEquationLengthComparison(value.Left, value.Right, true)
 		if !ok {
+			if isBoundedWordEquationLengthRelation(value.Left, value.Right) {
+				return appendBoundedWordEquationPredicate(constraints, value)
+			}
 			return false, false
 		}
 		return assignBoundedWordEquationLengthRange(constraints, id, minimum, maximum, hasMaximum)
 	case LessEqual:
 		id, minimum, maximum, hasMaximum, ok := boundedWordEquationLengthComparison(value.Left, value.Right, false)
 		if !ok {
+			if isBoundedWordEquationLengthRelation(value.Left, value.Right) {
+				return appendBoundedWordEquationPredicate(constraints, value)
+			}
 			return false, false
 		}
 		return assignBoundedWordEquationLengthRange(constraints, id, minimum, maximum, hasMaximum)
@@ -361,6 +370,8 @@ func bindBoundedWordEquationGroundConjunct(term Term[BoolSort], constraints *bou
 		}
 		return appendBoundedWordEquationPredicate(constraints, value)
 	case CompactStringBooleanFormula:
+		return appendBoundedWordEquationPredicate(constraints, value)
+	case CompactStringLengthRelation:
 		return appendBoundedWordEquationPredicate(constraints, value)
 	case stringContains, stringPrefix, stringSuffix, stringIsDigit:
 		return appendBoundedWordEquationPredicate(constraints, value)
@@ -435,10 +446,15 @@ func appendBoundedWordEquationPredicate(
 func isBoundedWordEquationPredicate(term Term[BoolSort]) bool {
 	switch value := term.(type) {
 	case Bool, stringContains, stringPrefix, stringSuffix, stringIsDigit,
-		stringInRegex, CompactStringBooleanFormula:
+		stringInRegex, CompactStringBooleanFormula, CompactStringLengthRelation:
 		return true
 	case Equal:
-		return isStringTerm(value.Left) && isStringTerm(value.Right)
+		return isStringTerm(value.Left) && isStringTerm(value.Right) ||
+			isBoundedWordEquationLengthRelation(value.Left, value.Right)
+	case Less:
+		return isBoundedWordEquationLengthRelation(value.Left, value.Right)
+	case LessEqual:
+		return isBoundedWordEquationLengthRelation(value.Left, value.Right)
 	case stringSystem:
 		for _, relation := range value.system.relations() {
 			if relation.Kind > CompactStringSuffix {
@@ -483,6 +499,14 @@ func isBoundedWordEquationPredicate(term Term[BoolSort]) bool {
 	default:
 		return false
 	}
+}
+
+func isBoundedWordEquationLengthRelation(left, right any) bool {
+	leftLength, leftOK := left.(stringLength)
+	rightLength, rightOK := right.(stringLength)
+	return leftOK && rightOK &&
+		isStringTerm(leftLength.value) &&
+		isStringTerm(rightLength.value)
 }
 
 func assignBoundedWordEquationRegex(
