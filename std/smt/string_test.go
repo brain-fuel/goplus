@@ -447,6 +447,52 @@ func TestRepeatedSymbolWordEquationSearchLimit(t *testing.T) {
 	}
 }
 
+func TestWordEquationLengthInteraction(t *testing.T) {
+	x := StringConst(1, "x")
+	y := StringConst(2, "y")
+	equation := Equal{Left: StringConcat(x, y), Right: StringVal("forge")}
+	formula := And{Values: []Term[BoolSort]{
+		equation,
+		Equal{Left: StringLength(x), Right: Integer{Value: 3}},
+	}}
+	checked := Check(Assert(28, New(), formula))
+	result, ok := checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("result=%T", checked)
+	}
+	if actual, found := StringModelValue(result.Value, x); !found || actual != "for" {
+		t.Fatalf("x=(%q,%v)", actual, found)
+	}
+	if actual, found := StringModelValue(result.Value, y); !found || actual != "ge" {
+		t.Fatalf("y=(%q,%v)", actual, found)
+	}
+	if valid, found := BoolValue(result.Value, formula); !found || !valid {
+		t.Fatalf("formula=(%v,%v)", valid, found)
+	}
+
+	unicode := And{Values: []Term[BoolSort]{
+		Equal{Left: StringConcat(x, y), Right: StringVal("🙂a")},
+		Equal{Left: StringLength(x), Right: Integer{Value: 1}},
+	}}
+	checked = Check(Assert(29, New(), unicode))
+	result, ok = checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("unicode result=%T", checked)
+	}
+	if actual, found := StringModelValue(result.Value, x); !found || actual != "🙂" {
+		t.Fatalf("unicode x=(%q,%v)", actual, found)
+	}
+
+	impossible := And{Values: []Term[BoolSort]{
+		equation,
+		Equal{Left: StringLength(x), Right: Integer{Value: 10}},
+	}}
+	checked = Check(Assert(30, New(), impossible))
+	if _, ok := checked.(Unsatisfiable); !ok {
+		t.Fatalf("impossible result=%T", checked)
+	}
+}
+
 func TestStringSymbolModel(t *testing.T) {
 	x := StringConst(1, "x")
 	formula := And{Values: []Term[BoolSort]{
