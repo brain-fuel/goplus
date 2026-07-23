@@ -506,6 +506,10 @@ func (executor *executor) instantiateParametricSort(expression SExpr) (dynamicDa
 	}
 	executor.nextSymbol++
 	datatype := dynamicDatatype{id: executor.nextSymbol, constructorCount: len(family.body.Values), sortCode: sortDatatypeBase - executor.nextSymbol}
+	// Publish the identity before resolving fields. Cross-family references in
+	// a mutually parametric group can then close a cycle without recursively
+	// allocating a second identity for the same concrete instantiation.
+	family.instances[key] = datatype
 	declarations := make([]datatypeConstructorDeclaration, len(family.body.Values))
 	seenConstructors := make(map[string]struct{}, len(family.body.Values))
 	seenSelectors := make(map[string]struct{})
@@ -566,7 +570,6 @@ func (executor *executor) instantiateParametricSort(expression SExpr) (dynamicDa
 	if !productive {
 		return dynamicDatatype{}, true, fmt.Errorf("parametric datatype %s is uninhabited", family.name)
 	}
-	family.instances[key] = datatype
 	executor.installParametricDatatypeConstructors(datatype, declarations)
 	return datatype, true, nil
 }
@@ -835,7 +838,7 @@ func (executor *executor) declareDatatypes(index int, declaration RawCommand) {
 		executor.fail(index, declaration.At, "declare-datatypes requires one constructor list per sort")
 		return
 	}
-	if len(sorts.Values) == 1 && executor.declareParametricDatatype(index, declaration.At, sorts.Values[0], bodies.Values[0]) {
+	if executor.declareParametricDatatypeGroup(index, declaration.At, sorts, bodies) {
 		return
 	}
 	names := make([]string, len(sorts.Values))
@@ -971,57 +974,151 @@ func (executor *executor) declareDatatypes(index int, declaration RawCommand) {
 	executor.acknowledge(index)
 }
 
-func (executor *executor) declareParametricDatatype(index int, at Span, sortExpression, bodyExpression SExpr) bool {
-	sortDeclaration, sortOK := sortExpression.(List)
-	if !sortOK || len(sortDeclaration.Values) != 2 {
+func (executor *executor) declareParametricDatatypeGroup(index int, at Span, sorts, bodies List) bool {
+	arities := make([]int, len(sorts.Values))
+	names := make([]string, len(sorts.Values))
+	parameterized := false
+	for sortIndex, expression := range sorts.Values {
+		declaration, ok := expression.(List)
+		if !ok || len(declaration.Values) != 2 {
+			return false
+		}
+		name, nameOK := atomText(declaration.Values[0])
+		arityText, arityOK := atomText(declaration.Values[1])
+		arity, err := strconv.Atoi(arityText)
+		if !nameOK || !arityOK || err != nil || arity < 0 {
+			return false
+		}
+		names[sortIndex], arities[sortIndex] = name, arity
+		parameterized = parameterized || arity > 0
+	}
+	if !parameterized {
 		return false
 	}
-	name, nameOK := atomText(sortDeclaration.Values[0])
-	arity, arityOK := atomText(sortDeclaration.Values[1])
-	parameterCount, arityErr := strconv.Atoi(arity)
-	if !nameOK || !arityOK || arityErr != nil || parameterCount <= 0 {
-		return false
+	for _, arity := range arities {
+		if arity == 0 {
+			executor.fail(index, at, "parametric datatype groups cannot mix zero-arity and parameterized sorts")
+			return true
+		}
 	}
+	groupNames := make(map[string]struct{}, len(names))
+	families := make([]*parametricDatatypeFamily, len(names))
+	for sortIndex, name := range names {
+		if _, duplicate := groupNames[name]; duplicate {
+			executor.fail(index, at, "duplicate sort declaration "+name)
+			return true
+		}
+		groupNames[name] = struct{}{}
+		if _, exists := executor.parametricFamilies[name]; exists {
+			executor.fail(index, at, "duplicate sort declaration "+name)
+			return true
+		}
+		if _, exists := executor.datatypes[name]; exists || name == "Bool" || name == "Int" || name == "Real" {
+			executor.fail(index, at, "duplicate sort declaration "+name)
+			return true
+		}
+		family, err := parseParametricDatatypeFamily(name, arities[sortIndex], bodies.Values[sortIndex])
+		if err != nil {
+			executor.fail(index, at, err.Error())
+			return true
+		}
+		families[sortIndex] = family
+	}
+	if len(names) > 1 {
+		if unproductive := unproductiveParametricFamily(names, families, groupNames); unproductive != "" {
+			executor.fail(index, at, "mutually parametric datatype group has an uninhabited sort "+unproductive)
+			return true
+		}
+	}
+	for index, name := range names {
+		executor.parametricFamilies[name] = families[index]
+	}
+	executor.acknowledge(index)
+	return true
+}
+
+func parseParametricDatatypeFamily(name string, parameterCount int, bodyExpression SExpr) (*parametricDatatypeFamily, error) {
 	body, bodyOK := bodyExpression.(List)
 	if !bodyOK || len(body.Values) != 3 {
-		executor.fail(index, at, "parametric datatype body must be (par (T ...) constructors)")
-		return true
+		return nil, fmt.Errorf("parametric datatype body must be (par (T ...) constructors)")
 	}
 	par, parOK := atomText(body.Values[0])
 	parameters, parametersOK := body.Values[1].(List)
 	constructors, constructorsOK := body.Values[2].(List)
 	if !parOK || par != "par" || !parametersOK || len(parameters.Values) != parameterCount || !constructorsOK || len(constructors.Values) == 0 {
-		executor.fail(index, at, "parametric datatype parameter count must match its declared arity")
-		return true
+		return nil, fmt.Errorf("parametric datatype parameter count must match its declared arity")
 	}
 	parameterNames := make([]string, parameterCount)
 	seenParameters := make(map[string]struct{}, parameterCount)
 	for parameterIndex, expression := range parameters.Values {
 		parameter, parameterOK := atomText(expression)
 		if !parameterOK {
-			executor.fail(index, at, "parametric datatype parameter must be a symbol")
-			return true
+			return nil, fmt.Errorf("parametric datatype parameter must be a symbol")
 		}
 		if _, duplicate := seenParameters[parameter]; duplicate {
-			executor.fail(index, at, "duplicate parametric datatype parameter "+parameter)
-			return true
+			return nil, fmt.Errorf("duplicate parametric datatype parameter %s", parameter)
 		}
 		seenParameters[parameter] = struct{}{}
 		parameterNames[parameterIndex] = parameter
 	}
-	if _, exists := executor.parametricFamilies[name]; exists {
-		executor.fail(index, at, "duplicate sort declaration "+name)
-		return true
-	}
-	if _, exists := executor.datatypes[name]; exists || name == "Bool" || name == "Int" || name == "Real" {
-		executor.fail(index, at, "duplicate sort declaration "+name)
-		return true
-	}
-	executor.parametricFamilies[name] = &parametricDatatypeFamily{
+	return &parametricDatatypeFamily{
 		name: name, parameters: parameterNames, body: constructors, instances: make(map[string]dynamicDatatype),
+	}, nil
+}
+
+func unproductiveParametricFamily(names []string, families []*parametricDatatypeFamily, groupNames map[string]struct{}) string {
+	productive := make(map[string]bool, len(names))
+	for changed := true; changed; {
+		changed = false
+		for familyIndex, family := range families {
+			if productive[names[familyIndex]] {
+				continue
+			}
+			for _, constructorExpression := range family.body.Values {
+				constructor, ok := constructorExpression.(List)
+				if !ok || len(constructor.Values) == 0 {
+					continue
+				}
+				ready := true
+				for _, fieldExpression := range constructor.Values[1:] {
+					field, ok := fieldExpression.(List)
+					if !ok || len(field.Values) != 2 {
+						ready = false
+						break
+					}
+					if dependency := parametricGroupDependency(field.Values[1], groupNames); dependency != "" && !productive[dependency] {
+						ready = false
+						break
+					}
+				}
+				if ready {
+					productive[names[familyIndex]], changed = true, true
+					break
+				}
+			}
+		}
 	}
-	executor.acknowledge(index)
-	return true
+	for _, name := range names {
+		if !productive[name] {
+			return name
+		}
+	}
+	return ""
+}
+
+func parametricGroupDependency(expression SExpr, groupNames map[string]struct{}) string {
+	application, ok := expression.(List)
+	if !ok || len(application.Values) == 0 {
+		return ""
+	}
+	name, ok := atomText(application.Values[0])
+	if !ok {
+		return ""
+	}
+	if _, dependency := groupNames[name]; dependency {
+		return name
+	}
+	return ""
 }
 
 func (executor *executor) installDatatypeConstructors(datatype dynamicDatatype, declarations []datatypeConstructorDeclaration) {

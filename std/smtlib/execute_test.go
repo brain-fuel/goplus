@@ -755,6 +755,65 @@ func TestExecuteNestedMultiParameterDatatypeField(t *testing.T) {
 	}
 }
 
+func TestExecuteMutuallyParametricDatatypeGroup(t *testing.T) {
+	script := `(declare-datatypes ((Tree 1) (Forest 1))
+	  ((par (T) ((leaf (value T)) (node (children (Forest T)))))
+	   (par (T) ((empty) (more (first (Tree T)) (rest (Forest T)))))))
+	(declare-const tree (Tree Int))
+	(assert (= tree (node (more (leaf 42) (as empty (Forest Int))))))
+	(assert (= (value (first (children tree))) 42))
+	(check-sat)
+	(get-value (tree (children tree) (first (children tree))))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[4].(Satisfiable); !ok {
+		t.Fatalf("expected sat, got %#v", result.Responses[4])
+	}
+	values := result.Responses[5].(ValuesAvailable).Values
+	tree, treeOK := values[0].(DatatypeValue)
+	forest, forestOK := values[1].(DatatypeValue)
+	leaf, leafOK := values[2].(DatatypeValue)
+	if !treeOK || tree.Value.ConstructorName != "node" || !forestOK || forest.Value.ConstructorName != "more" || !leafOK || leaf.Value.ConstructorName != "leaf" {
+		t.Fatalf("unexpected mutually parametric values: %#v", values)
+	}
+}
+
+func TestExecuteMutuallyParametricDatatypeGroupWithDifferentArities(t *testing.T) {
+	script := `(declare-datatypes ((Left 1) (Right 2))
+	  ((par (A) ((wrap-left (right-value (Right A Bool)))))
+	   (par (X Y) ((stop-right (payload Y)) (wrap-right (left-value (Left X)))))))
+	(declare-const value (Left Int))
+	(assert (= value (wrap-left (stop-right true))))
+	(assert (= (payload (right-value value)) true))
+	(check-sat)
+	(get-value (value (right-value value)))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[4].(Satisfiable); !ok {
+		t.Fatalf("expected sat, got %#v", result.Responses[4])
+	}
+	values := result.Responses[5].(ValuesAvailable).Values
+	left, leftOK := values[0].(DatatypeValue)
+	right, rightOK := values[1].(DatatypeValue)
+	if !leftOK || left.Value.ConstructorName != "wrap-left" || !rightOK || right.Value.ConstructorName != "stop-right" {
+		t.Fatalf("unexpected different-arity mutually parametric values: %#v", values)
+	}
+}
+
+func TestExecuteRejectsUnproductiveMutuallyParametricDatatypeGroup(t *testing.T) {
+	script := `(declare-datatypes ((Left 1) (Right 1))
+	  ((par (T) ((left (to-right (Right T)))))
+	   (par (T) ((right (to-left (Left T)))))))`
+	failed, ok := Execute(script).(ExecutionFailed)
+	if !ok || len(failed.Errors) != 1 || !strings.Contains(failed.Errors[0].Message, "uninhabited sort Left") {
+		t.Fatalf("unproductive mutually parametric result=%#v", Execute(script))
+	}
+}
+
 func TestExecuteRejectsInvalidMultiParameterDatatypeInstances(t *testing.T) {
 	wrongArity := `(declare-datatypes ((Pair 2))
 	  ((par (A B) ((pair (first A) (second B))))))
