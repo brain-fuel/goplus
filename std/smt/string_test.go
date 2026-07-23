@@ -493,6 +493,54 @@ func TestWordEquationLengthInteraction(t *testing.T) {
 	}
 }
 
+func TestWordEquationLengthInequalityInteraction(t *testing.T) {
+	x := StringConst(1, "x")
+	y := StringConst(2, "y")
+	equation := Equal{Left: StringConcat(x, y), Right: StringVal("forge")}
+	formula := And{Values: []Term[BoolSort]{
+		equation,
+		Less{Left: Integer{Value: 1}, Right: StringLength(x)},
+		LessEqual{Left: StringLength(x), Right: Integer{Value: 3}},
+	}}
+	checked := Check(Assert(31, New(), formula))
+	result, ok := checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("result=%T", checked)
+	}
+	if actual, found := StringModelValue(result.Value, x); !found || actual != "fo" {
+		t.Fatalf("x=(%q,%v)", actual, found)
+	}
+	if actual, found := StringModelValue(result.Value, y); !found || actual != "rge" {
+		t.Fatalf("y=(%q,%v)", actual, found)
+	}
+	if valid, found := BoolValue(result.Value, formula); !found || !valid {
+		t.Fatalf("formula=(%v,%v)", valid, found)
+	}
+
+	unicode := And{Values: []Term[BoolSort]{
+		Equal{Left: StringConcat(x, y), Right: StringVal("🙂a")},
+		Less{Left: Integer{Value: 0}, Right: StringLength(x)},
+		LessEqual{Left: StringLength(x), Right: Integer{Value: 1}},
+	}}
+	checked = Check(Assert(32, New(), unicode))
+	result, ok = checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("unicode result=%T", checked)
+	}
+	if actual, found := StringModelValue(result.Value, x); !found || actual != "🙂" {
+		t.Fatalf("unicode x=(%q,%v)", actual, found)
+	}
+
+	impossible := And{Values: []Term[BoolSort]{
+		equation,
+		Less{Left: Integer{Value: 5}, Right: StringLength(x)},
+	}}
+	checked = Check(Assert(33, New(), impossible))
+	if _, ok := checked.(Unsatisfiable); !ok {
+		t.Fatalf("impossible result=%T", checked)
+	}
+}
+
 func TestStringSymbolModel(t *testing.T) {
 	x := StringConst(1, "x")
 	formula := And{Values: []Term[BoolSort]{

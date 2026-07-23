@@ -23,8 +23,10 @@ type CompactStringWordEquation struct {
 func (CompactStringWordEquation) isTerm(BoolSort) {}
 
 type boundedWordEquationLength struct {
-	id     int
-	length int
+	id         int
+	minimum    int64
+	maximum    int64
+	hasMaximum bool
 }
 
 type boundedWordEquationConstraints struct {
@@ -164,9 +166,23 @@ func bindBoundedWordEquationGroundConjunct(term Term[BoolSort], constraints *bou
 			}
 		}
 		return false, false
+	case Less:
+		id, minimum, maximum, hasMaximum, ok := boundedWordEquationLengthComparison(value.Left, value.Right, true)
+		if !ok {
+			return false, false
+		}
+		return assignBoundedWordEquationLengthRange(constraints, id, minimum, maximum, hasMaximum)
+	case LessEqual:
+		id, minimum, maximum, hasMaximum, ok := boundedWordEquationLengthComparison(value.Left, value.Right, false)
+		if !ok {
+			return false, false
+		}
+		return assignBoundedWordEquationLengthRange(constraints, id, minimum, maximum, hasMaximum)
 	case stringSystem:
 		for _, relation := range value.system.relations() {
-			if relation.Negated {
+			if relation.Negated &&
+				relation.Kind != CompactStringLengthLess &&
+				relation.Kind != CompactStringLengthLessEqual {
 				return false, false
 			}
 			if relation.Kind == CompactStringEqual {
@@ -190,6 +206,16 @@ func bindBoundedWordEquationGroundConjunct(term Term[BoolSort], constraints *bou
 				}
 				continue
 			}
+			if (relation.Kind == CompactStringLengthLess || relation.Kind == CompactStringLengthLessEqual) &&
+				relation.Left.Kind == compactStringSymbol {
+				minimum, maximum, hasMaximum := compactStringLengthRange(relation)
+				if _, contradiction := assignBoundedWordEquationLengthRange(
+					constraints, relation.Left.ID, minimum, maximum, hasMaximum,
+				); contradiction {
+					return true, true
+				}
+				continue
+			}
 			return false, false
 		}
 		return true, false
@@ -198,11 +224,24 @@ func bindBoundedWordEquationGroundConjunct(term Term[BoolSort], constraints *bou
 	}
 }
 
+func compactStringLengthRange(relation CompactStringRelation) (minimum, maximum int64, hasMaximum bool) {
+	minimum, maximum, hasMaximum = 0, relation.Integer, true
+	if relation.Negated {
+		minimum, hasMaximum = relation.Integer, false
+		if relation.Kind == CompactStringLengthLessEqual && minimum < 1<<63-1 {
+			minimum++
+		}
+	} else if relation.Kind == CompactStringLengthLess && maximum > -1<<63 {
+		maximum--
+	}
+	return
+}
+
 func assignBoundedWordEquationGroundValue(constraints *boundedWordEquationConstraints, id int, value string) (bool, bool) {
 	if existing, found := constraints.model.lookup(id); found {
 		return true, existing != value
 	}
-	if length, found := constraints.length(id); found && stringCodePointCount(value) != length {
+	if length, found := constraints.length(id); found && !length.allows(int64(stringCodePointCount(value))) {
 		return true, true
 	}
 	constraints.model.set(id, value)
@@ -225,32 +264,106 @@ func boundedWordEquationLengthEquality(equality Equal) (int, int64, bool) {
 	return 0, 0, false
 }
 
+func boundedWordEquationLengthComparison(
+	left, right Term[IntSort],
+	strict bool,
+) (id int, minimum, maximum int64, hasMaximum, ok bool) {
+	if length, lengthOnLeft := left.(stringLength); lengthOnLeft {
+		if symbol, symbolic := length.value.(stringSymbol[StringSort]); symbolic {
+			if constant, ground := integerConstant(right); ground {
+				maximum = constant
+				if strict && maximum > -1<<63 {
+					maximum--
+				}
+				return symbol.iD, 0, maximum, true, true
+			}
+		}
+	}
+	if length, lengthOnRight := right.(stringLength); lengthOnRight {
+		if symbol, symbolic := length.value.(stringSymbol[StringSort]); symbolic {
+			if constant, ground := integerConstant(left); ground {
+				minimum = constant
+				if strict && minimum < 1<<63-1 {
+					minimum++
+				}
+				if minimum < 0 {
+					minimum = 0
+				}
+				return symbol.iD, minimum, 0, false, true
+			}
+		}
+	}
+	return 0, 0, 0, false, false
+}
+
 func assignBoundedWordEquationLength(constraints *boundedWordEquationConstraints, id int, length int64) (bool, bool) {
-	if length < 0 || length > int64(^uint(0)>>1) {
+	if length < 0 {
 		return true, true
 	}
-	converted := int(length)
-	if existing, found := constraints.length(id); found {
-		return true, existing != converted
+	return assignBoundedWordEquationLengthRange(constraints, id, length, length, true)
+}
+
+func assignBoundedWordEquationLengthRange(
+	constraints *boundedWordEquationConstraints,
+	id int,
+	minimum, maximum int64,
+	hasMaximum bool,
+) (bool, bool) {
+	if minimum < 0 {
+		minimum = 0
 	}
-	if value, found := constraints.model.lookup(id); found && stringCodePointCount(value) != converted {
+	if hasMaximum && maximum < minimum {
+		return true, true
+	}
+	if existing, found := constraints.length(id); found {
+		if existing.minimum > minimum {
+			minimum = existing.minimum
+		}
+		if existing.hasMaximum && (!hasMaximum || existing.maximum < maximum) {
+			maximum, hasMaximum = existing.maximum, true
+		}
+		if hasMaximum && maximum < minimum {
+			return true, true
+		}
+		for index := 0; index < constraints.lengthCount; index++ {
+			if constraints.lengths[index].id == id {
+				constraints.lengths[index] = boundedWordEquationLength{
+					id: id, minimum: minimum, maximum: maximum, hasMaximum: hasMaximum,
+				}
+				if value, bound := constraints.model.lookup(id); bound &&
+					!constraints.lengths[index].allows(int64(stringCodePointCount(value))) {
+					return true, true
+				}
+				return true, false
+			}
+		}
+	}
+	constraint := boundedWordEquationLength{
+		id: id, minimum: minimum, maximum: maximum, hasMaximum: hasMaximum,
+	}
+	if value, found := constraints.model.lookup(id); found &&
+		!constraint.allows(int64(stringCodePointCount(value))) {
 		return true, true
 	}
 	if constraints.lengthCount == len(constraints.lengths) {
 		return false, false
 	}
-	constraints.lengths[constraints.lengthCount] = boundedWordEquationLength{id: id, length: converted}
+	constraints.lengths[constraints.lengthCount] = constraint
 	constraints.lengthCount++
 	return true, false
 }
 
-func (constraints boundedWordEquationConstraints) length(id int) (int, bool) {
+func (constraints boundedWordEquationConstraints) length(id int) (boundedWordEquationLength, bool) {
 	for index := 0; index < constraints.lengthCount; index++ {
 		if constraints.lengths[index].id == id {
-			return constraints.lengths[index].length, true
+			return constraints.lengths[index], true
 		}
 	}
-	return 0, false
+	return boundedWordEquationLength{}, false
+}
+
+func (constraint boundedWordEquationLength) allows(length int64) bool {
+	return length >= constraint.minimum && (!constraint.hasMaximum || length <= constraint.maximum)
 }
 
 func compactStringPatternContainsID(pattern CompactStringPattern, id int) bool {
@@ -414,7 +527,8 @@ func searchCompactStringWordEquation(
 			continue
 		}
 		value := target[offset:end]
-		if length, constrained := constraints.length(id); constrained && stringCodePointCount(value) != length {
+		if length, constrained := constraints.length(id); constrained &&
+			!length.allows(int64(stringCodePointCount(value))) {
 			continue
 		}
 		candidate := constraints

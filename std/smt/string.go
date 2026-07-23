@@ -14,6 +14,8 @@ const (
 const (
 	CompactStringEqual = iota
 	CompactStringLengthEqual
+	CompactStringLengthLess
+	CompactStringLengthLessEqual
 	CompactStringContains
 	CompactStringPrefix
 	CompactStringSuffix
@@ -499,12 +501,18 @@ func solveCompactStringSystem(system CompactStringSystem) (checkOutcome, bool) {
 	var symbols stringSymbols
 	relations := system.relations()
 	for _, relation := range relations {
-		if relation.Left.Kind == compactStringLiteral && (relation.Kind == CompactStringLengthEqual || relation.Right.Kind == compactStringLiteral) {
+		if relation.Left.Kind == compactStringLiteral &&
+			(relation.Kind >= CompactStringLengthEqual && relation.Kind <= CompactStringLengthLessEqual ||
+				relation.Right.Kind == compactStringLiteral) {
 			if value, complete := evaluateCompactStringRelation(relation, stringModel{}); complete && !value {
 				return checkOutcome{status: checkUnsat}, true
 			}
 		}
 		if relation.Kind == CompactStringLengthEqual && !relation.Negated && relation.Integer < 0 {
+			return checkOutcome{status: checkUnsat}, true
+		}
+		if relation.Kind == CompactStringLengthLess && !relation.Negated && relation.Integer <= 0 ||
+			relation.Kind == CompactStringLengthLessEqual && !relation.Negated && relation.Integer < 0 {
 			return checkOutcome{status: checkUnsat}, true
 		}
 		if relation.Left.Kind == compactStringSymbol || relation.Left.Kind == compactStringSingleSymbolConcat {
@@ -603,13 +611,47 @@ func solveCompactStringSystem(system CompactStringSystem) (checkOutcome, bool) {
 		}
 		setExistingString(&model, relation.Left.ID, candidate)
 	}
+	var lengthConstraints boundedWordEquationConstraints
 	for _, relation := range relations {
-		if relation.Kind != CompactStringLengthEqual || relation.Negated || relation.Integer < 0 || relation.Left.Kind != compactStringSymbol {
+		if relation.Left.Kind != compactStringSymbol {
 			continue
 		}
-		if _, bound := model.lookup(relation.Left.ID); !bound {
-			setExistingString(&model, relation.Left.ID, strings.Repeat("a", int(relation.Integer)))
+		var recognized, contradiction bool
+		switch relation.Kind {
+		case CompactStringLengthEqual:
+			if relation.Negated {
+				continue
+			}
+			recognized, contradiction = assignBoundedWordEquationLength(
+				&lengthConstraints, relation.Left.ID, relation.Integer,
+			)
+		case CompactStringLengthLess, CompactStringLengthLessEqual:
+			minimum, maximum, hasMaximum := compactStringLengthRange(relation)
+			recognized, contradiction = assignBoundedWordEquationLengthRange(
+				&lengthConstraints, relation.Left.ID, minimum, maximum, hasMaximum,
+			)
+		default:
+			continue
 		}
+		if !recognized {
+			return checkOutcome{}, false
+		}
+		if contradiction {
+			return checkOutcome{status: checkUnsat}, true
+		}
+	}
+	for index := 0; index < lengthConstraints.lengthCount; index++ {
+		constraint := lengthConstraints.lengths[index]
+		if existing, bound := model.lookup(constraint.id); bound {
+			if !constraint.allows(int64(stringCodePointCount(existing))) {
+				return checkOutcome{status: checkUnsat}, true
+			}
+			continue
+		}
+		if constraint.minimum > int64(^uint(0)>>1) {
+			return checkOutcome{}, false
+		}
+		setExistingString(&model, constraint.id, strings.Repeat("a", int(constraint.minimum)))
 	}
 	defaultUnboundStrings(symbols, &model)
 	for _, relation := range relations {
@@ -665,6 +707,14 @@ func evaluateCompactStringRelation(relation CompactStringRelation, model stringM
 	case CompactStringLengthEqual:
 		left, leftOK := evaluateCompactString(relation.Left, model)
 		result = int64(len(DecodeStringCodePoints(left))) == relation.Integer
+		complete = leftOK
+	case CompactStringLengthLess:
+		left, leftOK := evaluateCompactString(relation.Left, model)
+		result = int64(len(DecodeStringCodePoints(left))) < relation.Integer
+		complete = leftOK
+	case CompactStringLengthLessEqual:
+		left, leftOK := evaluateCompactString(relation.Left, model)
+		result = int64(len(DecodeStringCodePoints(left))) <= relation.Integer
 		complete = leftOK
 	case CompactStringContains:
 		left, leftOK := evaluateCompactString(relation.Left, model)
@@ -1189,6 +1239,14 @@ func evaluateStringBoolean(term Term[BoolSort], model stringModel, integers inte
 		leftInteger, leftOK := evaluateStringIntegerExact(value.Left, model, integers)
 		rightInteger, rightOK := evaluateStringIntegerExact(value.Right, model, integers)
 		return CompareIntegerValue(leftInteger, rightInteger) == 0, leftOK && rightOK
+	case Less:
+		leftInteger, leftOK := evaluateStringIntegerExact(value.Left, model, integers)
+		rightInteger, rightOK := evaluateStringIntegerExact(value.Right, model, integers)
+		return CompareIntegerValue(leftInteger, rightInteger) < 0, leftOK && rightOK
+	case LessEqual:
+		leftInteger, leftOK := evaluateStringIntegerExact(value.Left, model, integers)
+		rightInteger, rightOK := evaluateStringIntegerExact(value.Right, model, integers)
+		return CompareIntegerValue(leftInteger, rightInteger) <= 0, leftOK && rightOK
 	case stringContains:
 		text, textOK := evaluateString(value.value, model, integers)
 		part, partOK := evaluateString(value.substring, model, integers)
