@@ -430,3 +430,62 @@ func TestRelationalLengthSymbolicIntegerSequenceWitness(t *testing.T) {
 		t.Fatalf("impossible result=%T", checked)
 	}
 }
+
+func TestAffineLengthSymbolicIntegerSequenceWitness(t *testing.T) {
+	x := SequenceConst[IntSort](40, "x")
+	length := SequenceLength(x)
+	twicePlusOne := Add{Values: []Term[IntSort]{
+		IntegerScale{Coefficient: NewIntegerValue(2), Value: length},
+		Integer{Value: 1},
+	}}
+	exact := Equal{Left: twicePlusOne, Right: Integer{Value: 7}}
+	result, ok := Check(Assert(22, New(), exact)).(Satisfiable)
+	if !ok {
+		t.Fatal("affine equality must be satisfiable")
+	}
+	if value, found := IntegerSequenceModelValue(result.Value, x); !found || value.Len() != 3 {
+		t.Fatalf("exact len=(%d,%v)", value.Len(), found)
+	}
+
+	nondivisible := Equal{
+		Left:  IntegerScale{Coefficient: NewIntegerValue(2), Value: length},
+		Right: Integer{Value: 3},
+	}
+	if checked := Check(Assert(23, New(), nondivisible)); func() bool {
+		_, ok := checked.(Unsatisfiable)
+		return ok
+	}() == false {
+		t.Fatalf("nondivisible result=%T", checked)
+	}
+
+	bounded := And{Values: []Term[BoolSort]{
+		LessEqual{Left: twicePlusOne, Right: Integer{Value: 9}},
+		Less{
+			Left: Add{Values: []Term[IntSort]{
+				IntegerScale{Coefficient: NewIntegerValue(-2), Value: length},
+				Integer{Value: 1},
+			}},
+			Right: Integer{Value: -4},
+		},
+	}}
+	boundedResult, ok := Check(Assert(24, New(), bounded)).(Satisfiable)
+	if !ok {
+		t.Fatal("affine bounds must be satisfiable")
+	}
+	if value, found := IntegerSequenceModelValue(boundedResult.Value, x); !found ||
+		value.Len() < 3 || value.Len() > 4 {
+		t.Fatalf("bounded len=(%d,%v)", value.Len(), found)
+	}
+
+	y := SequenceConst[IntSort](41, "y")
+	multiple := Equal{
+		Left:  Add{Values: []Term[IntSort]{SequenceLength(x), SequenceLength(y)}},
+		Right: Integer{Value: 3},
+	}
+	if checked := Check(Assert(25, New(), multiple)); func() bool {
+		_, ok := checked.(Unknown)
+		return ok
+	}() == false {
+		t.Fatalf("multiple-symbol result=%T", checked)
+	}
+}

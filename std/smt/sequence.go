@@ -915,77 +915,226 @@ func symbolicIntegerSequenceLength(term any) (int, bool) {
 	return integerSequenceSymbolID(sequence)
 }
 
-func collectIntegerSequenceLengthBound(
+type integerSequenceLengthAffine struct {
+	id          int
+	coefficient IntegerValue
+	constant    IntegerValue
+	hasSymbol   bool
+	valid       bool
+}
+
+func accumulateIntegerSequenceLengthAffine(
+	term Term[IntSort],
+	multiplier IntegerValue,
+	form *integerSequenceLengthAffine,
+) {
+	if !form.valid {
+		return
+	}
+	if id, ok := symbolicIntegerSequenceLength(term); ok {
+		if form.hasSymbol && form.id != id {
+			form.valid = false
+			return
+		}
+		form.id = id
+		form.hasSymbol = true
+		form.coefficient = AddIntegerValue(form.coefficient, multiplier)
+		return
+	}
+	if containsIntegerSequenceLength(term) {
+		if value, ok := evaluateIntegerWithSequences(
+			term,
+			booleanModel{},
+			integerModel{},
+			rationalModel{},
+			bitVectorModel{},
+			integerSequenceModel{},
+		); ok {
+			form.constant = AddIntegerValue(
+				form.constant,
+				MultiplyIntegerValue(multiplier, value),
+			)
+			return
+		}
+	}
+	switch value := term.(type) {
+	case Integer:
+		form.constant = AddIntegerValue(
+			form.constant,
+			MultiplyIntegerValue(multiplier, NewIntegerValue(value.Value)),
+		)
+	case integerExact[IntSort]:
+		form.constant = AddIntegerValue(
+			form.constant,
+			MultiplyIntegerValue(multiplier, value.value),
+		)
+	case Add:
+		for _, item := range value.Values {
+			accumulateIntegerSequenceLengthAffine(item, multiplier, form)
+		}
+	case Subtract:
+		accumulateIntegerSequenceLengthAffine(value.Left, multiplier, form)
+		accumulateIntegerSequenceLengthAffine(
+			value.Right, NegateIntegerValue(multiplier), form,
+		)
+	case IntegerScale:
+		accumulateIntegerSequenceLengthAffine(
+			value.Value,
+			MultiplyIntegerValue(multiplier, value.Coefficient),
+			form,
+		)
+	default:
+		form.valid = false
+	}
+}
+
+func normalizeIntegerSequenceLengthAffine(
 	left,
-	right any,
+	right Term[IntSort],
+) integerSequenceLengthAffine {
+	form := integerSequenceLengthAffine{valid: true}
+	accumulateIntegerSequenceLengthAffine(left, NewIntegerValue(1), &form)
+	accumulateIntegerSequenceLengthAffine(right, NewIntegerValue(-1), &form)
+	return form
+}
+
+func applyIntegerSequenceMinimumValue(
+	requirements *integerSequenceRequirements,
+	value IntegerValue,
+) (bool, bool) {
+	length, fits := value.Int64()
+	if !fits || length > maximumConstructedIntegerSequenceLength {
+		return true, false
+	}
+	return addIntegerSequenceMinimumLength(requirements, int(length)), true
+}
+
+func applyIntegerSequenceMaximumValue(
+	requirements *integerSequenceRequirements,
+	value IntegerValue,
+) (bool, bool) {
+	length, fits := value.Int64()
+	if !fits {
+		if CompareIntegerValue(value, IntegerValue{}) > 0 {
+			return true, true
+		}
+		return false, true
+	}
+	if length > maximumConstructedIntegerSequenceLength {
+		return true, true
+	}
+	return addIntegerSequenceMaximumLength(requirements, int(length)), true
+}
+
+func collectAffineIntegerSequenceLengthEquality(
+	value Equal,
+	model integerSequenceModel,
+	requirements *integerSequenceRequirementSet,
+) (bool, bool, bool) {
+	left, leftOK := value.Left.(Term[IntSort])
+	right, rightOK := value.Right.(Term[IntSort])
+	if !leftOK || !rightOK ||
+		(!containsIntegerSequenceLength(left) && !containsIntegerSequenceLength(right)) {
+		return true, true, false
+	}
+	form := normalizeIntegerSequenceLengthAffine(left, right)
+	if !form.valid {
+		return true, false, true
+	}
+	if !form.hasSymbol {
+		result, ok := evaluateBoolWithIntegerSequences(
+			value, booleanModel{}, integerModel{}, rationalModel{}, model,
+		)
+		return result, ok, true
+	}
+	if _, assigned := model.lookup(form.id); assigned {
+		result, ok := evaluateBoolWithIntegerSequences(
+			value, booleanModel{}, integerModel{}, rationalModel{}, model,
+		)
+		return result, ok, true
+	}
+	if CompareIntegerValue(form.coefficient, IntegerValue{}) == 0 {
+		consistent := CompareIntegerValue(form.constant, IntegerValue{}) == 0
+		if consistent {
+			requirements.forSymbol(form.id)
+		}
+		return consistent, true, true
+	}
+	quotient, remainder, ok := DivModIntegerValue(
+		NegateIntegerValue(form.constant), form.coefficient,
+	)
+	if !ok || CompareIntegerValue(remainder, IntegerValue{}) != 0 {
+		return false, true, true
+	}
+	length, fits := quotient.Int64()
+	if !fits || length > maximumConstructedIntegerSequenceLength {
+		return true, false, true
+	}
+	if length < 0 {
+		return false, true, true
+	}
+	return addIntegerSequenceExactLength(
+		requirements.forSymbol(form.id), int(length),
+	), true, true
+}
+
+func collectAffineIntegerSequenceLengthBound(
+	left,
+	right Term[IntSort],
 	strict bool,
 	model integerSequenceModel,
 	requirements *integerSequenceRequirementSet,
 ) (bool, bool, bool) {
-	id, leftLength := symbolicIntegerSequenceLength(left)
-	groundTerm := right
-	minimum := false
-	if !leftLength {
-		id, minimum = symbolicIntegerSequenceLength(right)
-		groundTerm = left
-		if !minimum {
-			return true, true, false
-		}
+	if !containsIntegerSequenceLength(left) && !containsIntegerSequenceLength(right) {
+		return true, true, false
 	}
-	if assigned, ok := model.lookup(id); ok {
-		ground, ok := groundTerm.(Term[IntSort])
-		if !ok {
-			return true, false, true
-		}
-		value, ok := evaluateInteger(ground, booleanModel{}, integerModel{}, rationalModel{})
-		if !ok {
-			return true, false, true
-		}
-		length := NewIntegerValue(int64(assigned.Len()))
-		comparison := CompareIntegerValue(length, value)
-		if minimum {
-			comparison = -comparison
-		}
+	form := normalizeIntegerSequenceLengthAffine(left, right)
+	if !form.valid {
+		return true, false, true
+	}
+	if !form.hasSymbol {
+		var term Term[BoolSort] = LessEqual{Left: left, Right: right}
 		if strict {
-			return comparison < 0, true, true
+			term = Less{Left: left, Right: right}
 		}
-		return comparison <= 0, true, true
+		result, ok := evaluateBoolWithIntegerSequences(
+			term, booleanModel{}, integerModel{}, rationalModel{}, model,
+		)
+		return result, ok, true
 	}
-	ground, ok := groundTerm.(Term[IntSort])
-	if !ok {
-		return true, false, true
-	}
-	value, ok := evaluateInteger(ground, booleanModel{}, integerModel{}, rationalModel{})
-	if !ok {
-		return true, false, true
-	}
-	bound, fits := value.Int64()
-	if !fits {
-		return true, false, true
-	}
-	target := requirements.forSymbol(id)
-	if minimum {
+	if _, assigned := model.lookup(form.id); assigned {
+		var term Term[BoolSort] = LessEqual{Left: left, Right: right}
 		if strict {
-			if bound == int64(^uint64(0)>>1) {
-				return true, false, true
-			}
-			bound++
+			term = Less{Left: left, Right: right}
 		}
-		if bound > maximumConstructedIntegerSequenceLength {
-			return true, false, true
-		}
-		return addIntegerSequenceMinimumLength(target, int(bound)), true, true
+		result, ok := evaluateBoolWithIntegerSequences(
+			term, booleanModel{}, integerModel{}, rationalModel{}, model,
+		)
+		return result, ok, true
 	}
+	coefficientSign := CompareIntegerValue(form.coefficient, IntegerValue{})
+	bound := NegateIntegerValue(form.constant)
 	if strict {
-		if bound == -int64(^uint64(0)>>1)-1 {
-			return false, true, true
+		bound = AddIntegerValue(bound, NewIntegerValue(-1))
+	}
+	if coefficientSign == 0 {
+		consistent := CompareIntegerValue(IntegerValue{}, bound) <= 0
+		if consistent {
+			requirements.forSymbol(form.id)
 		}
-		bound--
+		return consistent, true, true
 	}
-	if bound > maximumConstructedIntegerSequenceLength {
-		return true, true, true
+	quotient, _, ok := DivModIntegerValue(bound, form.coefficient)
+	if !ok {
+		return true, false, true
 	}
-	return addIntegerSequenceMaximumLength(target, int(bound)), true, true
+	target := requirements.forSymbol(form.id)
+	if coefficientSign > 0 {
+		consistent, supported := applyIntegerSequenceMaximumValue(target, quotient)
+		return consistent, supported, true
+	}
+	consistent, supported := applyIntegerSequenceMinimumValue(target, quotient)
+	return consistent, supported, true
 }
 
 func collectPositiveIntegerSequenceRequirements(
@@ -1027,6 +1176,12 @@ func collectPositiveIntegerSequenceRequirements(
 		}
 		return true, true
 	case Equal:
+		consistent, supported, recognized := collectAffineIntegerSequenceLengthEquality(
+			value, model, requirements,
+		)
+		if recognized {
+			return consistent, supported
+		}
 		lengthID, leftLength := symbolicIntegerSequenceLength(value.Left)
 		lengthTerm := value.Right
 		if !leftLength {
@@ -1082,9 +1237,14 @@ func collectPositiveIntegerSequenceRequirements(
 		}
 		return true, true
 	case Less:
-		consistent, supported, recognized := collectIntegerSequenceLengthBound(
-			value.Left, value.Right, true, model, requirements,
-		)
+		left, leftOK := value.Left.(Term[IntSort])
+		right, rightOK := value.Right.(Term[IntSort])
+		consistent, supported, recognized := true, true, false
+		if leftOK && rightOK {
+			consistent, supported, recognized = collectAffineIntegerSequenceLengthBound(
+				left, right, true, model, requirements,
+			)
+		}
 		if recognized {
 			return consistent, supported
 		}
@@ -1096,9 +1256,14 @@ func collectPositiveIntegerSequenceRequirements(
 		}
 		return true, true
 	case LessEqual:
-		consistent, supported, recognized := collectIntegerSequenceLengthBound(
-			value.Left, value.Right, false, model, requirements,
-		)
+		left, leftOK := value.Left.(Term[IntSort])
+		right, rightOK := value.Right.(Term[IntSort])
+		consistent, supported, recognized := true, true, false
+		if leftOK && rightOK {
+			consistent, supported, recognized = collectAffineIntegerSequenceLengthBound(
+				left, right, false, model, requirements,
+			)
+		}
 		if recognized {
 			return consistent, supported
 		}
