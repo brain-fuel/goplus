@@ -1195,6 +1195,7 @@ func (executor *executor) term(expression SExpr) (dynamicTerm, error) {
 	var indexedParameters []int
 	constantIntArray := false
 	constantBitVecArray := false
+	updateSelector := ""
 	constantArrayIndexWidth, constantArrayElementWidth := 0, 0
 	if !ok {
 		if intIntConstArrayOperator(list.Values[0]) {
@@ -1204,6 +1205,8 @@ func (executor *executor) term(expression SExpr) (dynamicTerm, error) {
 			constantArrayIndexWidth, constantArrayElementWidth = iw, ew
 		} else if constructor, recognizerOK := indexedDatatypeRecognizerOperator(list.Values[0]); recognizerOK {
 			operator, ok = "is-"+constructor, true
+		} else if selector, updateOK := indexedDatatypeUpdateOperator(list.Values[0]); updateOK {
+			operator, ok, updateSelector = "update-field", true, selector
 		} else {
 			operator, indexedParameters, ok = indexedBitVectorOperator(list.Values[0])
 			if !ok {
@@ -1222,6 +1225,20 @@ func (executor *executor) term(expression SExpr) (dynamicTerm, error) {
 	}
 	if indexedParameters != nil {
 		return buildIndexedBitVectorApplication(operator, indexedParameters, terms)
+	}
+	if updateSelector != "" {
+		if len(terms) != 2 || terms[0].datatype == nil {
+			return dynamicTerm{}, fmt.Errorf("ill-sorted datatype update-field %s", updateSelector)
+		}
+		if selector, found := executor.datatypeSelectors[updateSelector]; found && selector.sortCode == terms[0].sort {
+			return updateDynamicMixedDatatypeField(selector, terms[0], terms[1])
+		}
+		for _, selector := range executor.parametricSelectors[updateSelector] {
+			if selector.sortCode == terms[0].sort {
+				return updateDynamicMixedDatatypeField(selector, terms[0], terms[1])
+			}
+		}
+		return dynamicTerm{}, fmt.Errorf("unknown datatype update-field selector %s", updateSelector)
 	}
 	if constantIntArray {
 		if len(terms) == 1 && (terms[0].sort == sortInt || terms[0].sort == sortNumber && terms[0].integer != nil) {
@@ -1529,6 +1546,17 @@ func indexedDatatypeRecognizerOperator(expression SExpr) (string, bool) {
 	return constructor, markerOK && recognizerOK && constructorOK && marker == "_" && recognizer == "is"
 }
 
+func indexedDatatypeUpdateOperator(expression SExpr) (string, bool) {
+	indexed, ok := expression.(List)
+	if !ok || len(indexed.Values) != 3 {
+		return "", false
+	}
+	marker, markerOK := atomText(indexed.Values[0])
+	update, updateOK := atomText(indexed.Values[1])
+	selector, selectorOK := atomText(indexed.Values[2])
+	return selector, markerOK && updateOK && selectorOK && marker == "_" && update == "update-field"
+}
+
 func compactDatatypeSelectors(values []string) smt.NaryDatatypeSelectors {
 	var result smt.NaryDatatypeSelectors
 	for _, value := range values {
@@ -1660,6 +1688,36 @@ func selectDynamicMixedDatatypeField(selector dynamicRecursiveDatatypeConstructo
 		}
 		return dynamicTerm{sort: selected.sort, datatypeID: selected.datatypeID, constructorCount: selected.constructors, datatype: smt.SelectMixedDatatypeReferenceField(selected.datatypeID, selected.constructors, cursor, target.datatype)}, nil
 	}
+}
+
+func updateDynamicMixedDatatypeField(selector dynamicRecursiveDatatypeConstructor, target, replacement dynamicTerm) (dynamicTerm, error) {
+	if selector.field < 0 || selector.field >= len(selector.fieldSorts) || !datatypeFieldAccepts(selector.fieldSorts, selector.field, selector.sortCode, replacement) {
+		return dynamicTerm{}, fmt.Errorf("ill-sorted datatype update-field")
+	}
+	cursor := smt.MixedDatatypeFields(selector.mixedWitness)
+	for field := 0; field < selector.field; field++ {
+		cursor = smt.NextMixedDatatypeField(cursor)
+	}
+	selected := selector.fieldSorts[selector.field]
+	var updated smt.Term[smt.DatatypeSort]
+	switch selected.sort {
+	case sortBool:
+		updated = smt.UpdateMixedBoolDatatypeField(cursor, target.datatype, replacement.boolean)
+	case sortInt:
+		updated = smt.UpdateMixedIntDatatypeField(cursor, target.datatype, replacement.integer)
+	case sortReal:
+		updated = smt.UpdateMixedRealDatatypeField(cursor, target.datatype, replacement.real)
+	case sortBitVector:
+		updated = smt.UpdateMixedBitVecDatatypeField(selected.width, cursor, target.datatype, replacement.bitVector)
+	case sortDatatypeSelf:
+		updated = smt.UpdateMixedSelfDatatypeField(cursor, target.datatype, replacement.datatype)
+	default:
+		updated = smt.UpdateMixedDatatypeReferenceField(selected.datatypeID, selected.constructors, cursor, target.datatype, replacement.datatype)
+	}
+	return dynamicTerm{
+		sort: selector.sortCode, datatypeID: selector.datatypeID,
+		constructorCount: selector.constructors, datatype: updated,
+	}, nil
 }
 
 func compactDatatypeTerms(values []dynamicTerm) smt.NaryDatatypeTerms {

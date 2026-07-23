@@ -122,4 +122,18 @@ func TestSortedTermsAcrossPackageBoundary(t *testing.T) {
 		t.Fatalf("unexpected mutual datatype diagnostic: %s", out)
 	}
 
+	updatePositive := "package main\nimport \"goforge.dev/goplus/std/smt\"\nfunc main() { signature := smt.IntDatatypeField(\"head\", smt.SelfDatatypeField(\"tail\", smt.EmptyMixedDatatypeSignature())); cons := smt.DeclareMixedRecursiveDatatypeConstructor(4, 2, 1, \"cons\", signature); value := smt.DatatypeConst(4, 2, 1, \"value\"); _ = smt.UpdateMixedIntDatatypeField(smt.MixedDatatypeFields(cons), value, smt.Integer(7)) }\n"
+	if out, err := compile(t, updatePositive); err != nil {
+		t.Fatalf("well-indexed datatype update failed: %v\n%s", err, out)
+	}
+
+	updateNegative := "package main\nimport \"goforge.dev/goplus/std/smt\"\nfunc main() { signature := smt.IntDatatypeField(\"head\", smt.SelfDatatypeField(\"tail\", smt.EmptyMixedDatatypeSignature())); cons := smt.DeclareMixedRecursiveDatatypeConstructor(4, 2, 1, \"cons\", signature); value := smt.DatatypeConst(4, 2, 1, \"value\"); _ = smt.UpdateMixedIntDatatypeField(smt.MixedDatatypeFields(cons), value, smt.Bool(true)) }\n"
+	out, err = compile(t, updateNegative)
+	if err == nil {
+		t.Fatalf("wrong datatype update replacement unexpectedly compiled:\n%s", out)
+	}
+	if !strings.Contains(out, "type mismatch") && !strings.Contains(out, "cannot use") {
+		t.Fatalf("unexpected datatype update diagnostic: %s", out)
+	}
+
 }

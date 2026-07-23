@@ -692,6 +692,53 @@ func TestExecuteRejectsNonExhaustiveParametricDatatypeMatch(t *testing.T) {
 	}
 }
 
+func TestExecuteParametricDatatypeUpdateField(t *testing.T) {
+	script := `(declare-datatypes ((PList 1))
+	  ((par (T) ((nil) (cons (head T) (tail (PList T)))))))
+	(declare-const xs (PList Int))
+	(assert (= xs (cons 42 (as nil (PList Int)))))
+	(assert (= ((_ update-field head) xs 7) (cons 7 (as nil (PList Int)))))
+	(assert (= ((_ update-field head) (as nil (PList Int)) 9) (as nil (PList Int))))
+	(check-sat)
+	(get-value (((_ update-field head) xs 7)))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[5].(Satisfiable); !ok {
+		t.Fatalf("expected sat, got %#v", result.Responses[5])
+	}
+	value, ok := result.Responses[6].(ValuesAvailable).Values[0].(DatatypeValue)
+	field, fieldOK := value.Value.Fields.At(0)
+	integer, integerOK := field.Integer.Int64()
+	if !ok || value.Value.ConstructorName != "cons" || !fieldOK || !integerOK || integer != 7 {
+		t.Fatalf("unexpected update-field value: %#v", result.Responses[6])
+	}
+}
+
+func TestExecuteSymbolicParametricDatatypeUpdateField(t *testing.T) {
+	script := `(declare-datatypes ((PList 1))
+	  ((par (T) ((nil) (cons (head T) (tail (PList T)))))))
+	(declare-const xs (PList Int))
+	(assert ((_ is cons) xs))
+	(assert (= (head ((_ update-field head) xs 13)) 13))
+	(check-sat)
+	(get-value (((_ update-field head) xs 13)))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[4].(Satisfiable); !ok {
+		t.Fatalf("expected sat, got %#v", result.Responses[4])
+	}
+	value, ok := result.Responses[5].(ValuesAvailable).Values[0].(DatatypeValue)
+	field, fieldOK := value.Value.Fields.At(0)
+	integer, integerOK := field.Integer.Int64()
+	if !ok || value.Value.ConstructorName != "cons" || !fieldOK || !integerOK || integer != 13 {
+		t.Fatalf("unexpected symbolic update-field value: %#v", result.Responses[5])
+	}
+}
+
 func TestExecuteAssumptionCore(t *testing.T) {
 	script := `(declare-const a Bool)
 (declare-const b Bool)

@@ -1075,6 +1075,52 @@ func TestMixedRecursiveDatatypeScalarConditional(t *testing.T) {
 	}
 }
 
+func TestMixedRecursiveDatatypeUpdateField(t *testing.T) {
+	leaf := DatatypeConstructor(93, 2, 0, "nil")
+	cons := DeclareMixedRecursiveDatatypeConstructor(93, 2, 1, "cons", mixedIntSelfSignature())
+	x := DatatypeConst(93, 2, 1, "x")
+	fields := MixedDatatypeFields(cons)
+	updated := UpdateMixedIntDatatypeField(fields, x, Integer{Value: 7})
+	want := ApplyMixedRecursiveDatatypeConstructor(cons, mixedIntSelfArguments(Integer{Value: 7}, leaf))
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: ApplyMixedRecursiveDatatypeConstructor(cons, mixedIntSelfArguments(Integer{Value: 42}, leaf))},
+		Equal{Left: updated, Right: want},
+	}}
+	if result := Check(Assert(1, New(), formula)); func() bool { _, ok := result.(Satisfiable); return ok }() == false {
+		t.Fatalf("matching update-field result=%#v", result)
+	}
+
+	identity := Equal{Left: UpdateMixedIntDatatypeField(fields, leaf, Integer{Value: 9}), Right: leaf}
+	if result := Check(Assert(2, New(), identity)); func() bool { _, ok := result.(Satisfiable); return ok }() == false {
+		t.Fatalf("nonmatching update-field identity result=%#v", result)
+	}
+
+	contradiction := And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: ApplyMixedRecursiveDatatypeConstructor(cons, mixedIntSelfArguments(Integer{Value: 42}, leaf))},
+		Not{Value: Equal{Left: updated, Right: want}},
+	}}
+	if result := Check(Assert(3, New(), contradiction)); func() bool { _, ok := result.(Unsatisfiable); return ok }() == false {
+		t.Fatalf("update-field contradiction result=%#v", result)
+	}
+
+	symbolic := DatatypeConst(93, 2, 2, "symbolic")
+	symbolicUpdate := UpdateMixedIntDatatypeField(fields, symbolic, Integer{Value: 11})
+	symbolicFormula := And{Values: []Term[BoolSort]{
+		IsMixedRecursiveDatatypeConstructor(cons, symbolic),
+		Equal{Left: SelectMixedIntDatatypeField(fields, symbolicUpdate), Right: Integer{Value: 11}},
+	}}
+	symbolicResult, ok := Check(Assert(4, New(), symbolicFormula)).(Satisfiable)
+	if !ok {
+		t.Fatalf("symbolic update-field result=%#v", Check(Assert(4, New(), symbolicFormula)))
+	}
+	symbolicValue, found := DatatypeModelValue(93, 2, symbolicResult.Value, symbolicUpdate)
+	payload, payloadOK := symbolicValue.Fields.At(0)
+	payloadInteger, payloadFits := payload.Integer.Int64()
+	if !found || symbolicValue.ConstructorID != 1 || !payloadOK || !payloadFits || payloadInteger != 11 {
+		t.Fatalf("symbolic updated value=%+v found=%v", symbolicValue, found)
+	}
+}
+
 func TestMixedRecursiveDatatypeInjectivityAndAcyclicity(t *testing.T) {
 	leaf := DatatypeConstructor(91, 2, 0, "leaf")
 	node := DeclareMixedRecursiveDatatypeConstructor(91, 2, 1, "node", mixedIntSelfSignature())

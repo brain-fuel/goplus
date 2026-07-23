@@ -413,8 +413,65 @@ func evaluateDatatype(term Term[DatatypeSort], model *datatypeModel) (DatatypeVa
 			return DatatypeValue{}, false
 		}
 		return *field.Datatype, true
+	case datatypeMixedUpdate[DatatypeSort]:
+		target, ok := value.value.(Term[DatatypeSort])
+		if !ok {
+			return DatatypeValue{}, false
+		}
+		modelValue, found := evaluateDatatype(target, model)
+		if !found || modelValue.ConstructorID != value.constructorID {
+			return modelValue, found
+		}
+		if modelValue.Fields == nil || value.field < 0 || value.field >= modelValue.Fields.Len() {
+			return DatatypeValue{}, false
+		}
+		replacement, replacementOK := evaluateMixedUpdateReplacement(value.fieldKind, value.width, value.replacement, model)
+		if !replacementOK {
+			return DatatypeValue{}, false
+		}
+		fields := *modelValue.Fields
+		if fields.Overflow != nil {
+			fields.Overflow = append([]DatatypeFieldValue(nil), fields.Overflow...)
+			fields.Overflow[value.field] = replacement
+		} else {
+			fields.Inline[value.field] = replacement
+		}
+		modelValue.Fields = &fields
+		return modelValue, true
 	default:
 		return DatatypeValue{}, false
+	}
+}
+
+func evaluateMixedUpdateReplacement(kind, width int, replacement any, datatypes *datatypeModel) (DatatypeFieldValue, bool) {
+	result := DatatypeFieldValue{Kind: kind, Width: width}
+	switch kind {
+	case mixedDatatypeFieldBool:
+		value, ok := evaluateBool(replacement.(Term[BoolSort]), booleanModel{}, integerModel{}, rationalModel{})
+		result.Boolean = value
+		return result, ok
+	case mixedDatatypeFieldInt:
+		value, ok := evaluateIntegerWithBitVectors(replacement.(Term[IntSort]), booleanModel{}, integerModel{}, rationalModel{}, bitVectorModel{})
+		result.Integer = value
+		return result, ok
+	case mixedDatatypeFieldReal:
+		value, ok := evaluateReal(replacement.(Term[RealSort]), booleanModel{}, integerModel{}, rationalModel{})
+		result.Real = value
+		return result, ok
+	case mixedDatatypeFieldBitVec:
+		value, ok := evaluateBitVector(replacement, bitVectorModel{}, integerModel{})
+		result.BitVector = value
+		return result, ok
+	case mixedDatatypeFieldSelf, mixedDatatypeFieldReference:
+		term, ok := replacement.(Term[DatatypeSort])
+		if !ok {
+			return DatatypeFieldValue{}, false
+		}
+		value, found := evaluateDatatype(term, datatypes)
+		result.Datatype = &value
+		return result, found
+	default:
+		return DatatypeFieldValue{}, false
 	}
 }
 
@@ -566,6 +623,7 @@ type datatypeNode struct {
 	mixedSpecs       MixedDatatypeFieldSpecs
 	mixedValues      MixedDatatypeTermValues
 	mixedChildren    datatypeNodeChildren
+	mixedReplacement MixedDatatypeTermValue
 }
 
 type datatypeNodeChildren struct {
@@ -655,7 +713,7 @@ func containsDatatypeTheory(term Term[BoolSort]) bool {
 
 func isDatatypeTerm(term any) bool {
 	switch term.(type) {
-	case datatypeSymbol[DatatypeSort], datatypeConstructor[DatatypeSort], datatypeRecursiveApplication[DatatypeSort], datatypeRecursiveSelector[DatatypeSort], datatypeBinaryRecursiveApplication[DatatypeSort], datatypeBinaryRecursiveSelector[DatatypeSort], datatypeNaryRecursiveApplication[DatatypeSort], datatypeNaryRecursiveSelector[DatatypeSort], datatypeMixedApplication[DatatypeSort], datatypeMixedSelector[DatatypeSort]:
+	case datatypeSymbol[DatatypeSort], datatypeConstructor[DatatypeSort], datatypeRecursiveApplication[DatatypeSort], datatypeRecursiveSelector[DatatypeSort], datatypeBinaryRecursiveApplication[DatatypeSort], datatypeBinaryRecursiveSelector[DatatypeSort], datatypeNaryRecursiveApplication[DatatypeSort], datatypeNaryRecursiveSelector[DatatypeSort], datatypeMixedApplication[DatatypeSort], datatypeMixedSelector[DatatypeSort], datatypeMixedUpdate[DatatypeSort]:
 		return true
 	default:
 		return false
@@ -1003,6 +1061,37 @@ func (problem *datatypeProblem) term(term any) (int, bool) {
 			resultDatatype, resultConstructors = value.targetDatatypeID, value.targetConstructorCount
 		}
 		return problem.ensure(datatypeNode{datatypeID: resultDatatype, constructorCount: resultConstructors, kind: 9, id: value.constructorID, name: value.selectorName, child: target, field: value.field}), true
+	case datatypeMixedUpdate[DatatypeSort]:
+		if value.constructorID < 0 || value.constructorID >= value.constructorCount || value.field < 0 || value.field >= value.specs.Len() {
+			return 0, false
+		}
+		spec := value.specs.At(value.field)
+		if spec.Kind != value.fieldKind || spec.Width != value.width || spec.DatatypeID != value.targetDatatypeID || spec.ConstructorCount != value.targetConstructorCount {
+			return 0, false
+		}
+		target, ok := problem.term(value.value)
+		if !ok || problem.nodes[target].datatypeID != value.datatypeID || problem.nodes[target].constructorCount != value.constructorCount {
+			return 0, false
+		}
+		replacement := MixedDatatypeTermValue{
+			Kind: value.fieldKind, Width: value.width, Term: value.replacement,
+			DatatypeID: value.targetDatatypeID, ConstructorCount: value.targetConstructorCount,
+		}
+		if value.fieldKind == mixedDatatypeFieldSelf || value.fieldKind == mixedDatatypeFieldReference {
+			child, childOK := problem.term(value.replacement)
+			expectedDatatype, expectedConstructors := value.datatypeID, value.constructorCount
+			if value.fieldKind == mixedDatatypeFieldReference {
+				expectedDatatype, expectedConstructors = value.targetDatatypeID, value.targetConstructorCount
+			}
+			if !childOK || problem.nodes[child].datatypeID != expectedDatatype || problem.nodes[child].constructorCount != expectedConstructors {
+				return 0, false
+			}
+		}
+		return problem.ensure(datatypeNode{
+			datatypeID: value.datatypeID, constructorCount: value.constructorCount, kind: 10,
+			id: value.constructorID, child: target, field: value.field, mixedSpecs: value.specs,
+			mixedReplacement: replacement,
+		}), true
 	default:
 		return 0, false
 	}
@@ -1034,6 +1123,9 @@ func (problem *datatypeProblem) ensure(node datatypeNode) int {
 			samePayload = sameMixedDatatypeFields(existing.mixedSpecs, node.mixedSpecs, existing.mixedValues, node.mixedValues)
 		case 9:
 			samePayload = existing.child == node.child && existing.field == node.field
+		case 10:
+			samePayload = existing.child == node.child && existing.field == node.field &&
+				reflect.DeepEqual(existing.mixedReplacement, node.mixedReplacement)
 		}
 		if existing.datatypeID == node.datatypeID && existing.constructorCount == node.constructorCount && existing.kind == node.kind && existing.id == node.id && samePayload {
 			if problem.nodes[index].name == "" {
@@ -1163,6 +1255,9 @@ func (problem *datatypeProblem) solve() (checkOutcome, bool) {
 	}
 	for {
 		changed := false
+		if problem.materializeMixedUpdates() {
+			changed = true
+		}
 		for selector, selectorNode := range problem.nodes {
 			if selectorNode.kind != 3 && selectorNode.kind != 5 && selectorNode.kind != 7 && selectorNode.kind != 9 {
 				continue
@@ -1303,6 +1398,107 @@ func (problem *datatypeProblem) solve() (checkOutcome, bool) {
 		model.set(node.datatypeID, node.id, value)
 	}
 	return checkOutcome{status: checkSat, booleans: problem.scalarOutcome.booleans, integers: problem.scalarOutcome.integers, reals: problem.scalarOutcome.reals, bitVectors: problem.scalarOutcome.bitVectors, datatypes: model}, true
+}
+
+func (problem *datatypeProblem) materializeMixedUpdates() bool {
+	changed := false
+	updateCount := len(problem.nodes)
+	for update := 0; update < updateCount; update++ {
+		updateNode := problem.nodes[update]
+		if updateNode.kind != 10 {
+			continue
+		}
+		targetRoot := problem.find(updateNode.child)
+		materialized := false
+		for application := 0; application < len(problem.nodes); application++ {
+			applicationNode := problem.nodes[application]
+			if !isDatatypeConstructorNode(applicationNode) || problem.find(application) != targetRoot {
+				continue
+			}
+			if applicationNode.id != updateNode.id {
+				if problem.find(update) != targetRoot {
+					problem.union(update, updateNode.child)
+					changed = true
+				}
+				materialized = true
+				break
+			}
+			if applicationNode.kind != 8 || applicationNode.mixedSpecs.Len() != updateNode.mixedSpecs.Len() {
+				problem.unsat = true
+				return true
+			}
+			values := replaceMixedDatatypeTerm(applicationNode.mixedValues, updateNode.field, updateNode.mixedReplacement)
+			rebuilt, ok := problem.term(datatypeMixedApplication[DatatypeSort]{
+				datatypeID: updateNode.datatypeID, constructorCount: updateNode.constructorCount,
+				constructorID: updateNode.id, name: applicationNode.name, specs: updateNode.mixedSpecs, values: values,
+			})
+			if !ok {
+				problem.unsat = true
+				return true
+			}
+			if problem.find(update) != problem.find(rebuilt) {
+				problem.union(update, rebuilt)
+				changed = true
+			}
+			materialized = true
+			break
+		}
+		if materialized {
+			continue
+		}
+		for _, tag := range problem.tags {
+			if tag.negated || problem.find(tag.node) != targetRoot {
+				continue
+			}
+			if tag.constructor != updateNode.id {
+				if problem.find(update) != targetRoot {
+					problem.union(update, updateNode.child)
+					changed = true
+				}
+				break
+			}
+			if tag.mixedSpecs.Len() == 0 {
+				continue
+			}
+			values := problem.syntheticMixedValues(targetRoot, updateNode.datatypeID, updateNode.constructorCount, tag.mixedSpecs)
+			application, ok := problem.term(datatypeMixedApplication[DatatypeSort]{
+				datatypeID: updateNode.datatypeID, constructorCount: updateNode.constructorCount,
+				constructorID: updateNode.id, name: tag.name, specs: tag.mixedSpecs, values: values,
+			})
+			if !ok {
+				problem.unsat = true
+				return true
+			}
+			if problem.find(tag.node) != problem.find(application) {
+				problem.union(tag.node, application)
+				changed = true
+			}
+			break
+		}
+	}
+	return changed
+}
+
+func (problem *datatypeProblem) syntheticMixedValues(root, datatypeID, constructorCount int, specs MixedDatatypeFieldSpecs) MixedDatatypeTermValues {
+	var values MixedDatatypeTermValues
+	for field := 0; field < specs.Len(); field++ {
+		spec := specs.At(field)
+		value := MixedDatatypeTermValue{
+			Kind: spec.Kind, Width: spec.Width, DatatypeID: spec.DatatypeID,
+			ConstructorCount: spec.ConstructorCount,
+		}
+		if spec.Kind == mixedDatatypeFieldSelf || spec.Kind == mixedDatatypeFieldReference {
+			targetDatatype, targetConstructors := datatypeID, constructorCount
+			if spec.Kind == mixedDatatypeFieldReference {
+				targetDatatype, targetConstructors = spec.DatatypeID, spec.ConstructorCount
+			}
+			value.Term = DatatypeConstructor(targetDatatype, targetConstructors, 0, "@datatype-child-"+strconv.Itoa(root)+"-"+strconv.Itoa(field))
+		} else {
+			value.Term = mixedSyntheticScalar(root, field, spec)
+		}
+		values.append(value)
+	}
+	return values
 }
 
 func (problem *datatypeProblem) propagateMixedConstructorFields() {
@@ -1636,12 +1832,24 @@ func (problem *datatypeProblem) valueForRoot(root int, assignment []int, visitin
 				switch spec.Kind {
 				case mixedDatatypeFieldBool:
 					modelField.Boolean, ok = evaluateBool(argument.Term.(Term[BoolSort]), problem.scalarOutcome.booleans, problem.scalarOutcome.integers, problem.scalarOutcome.reals)
+					if !ok {
+						modelField.Boolean, ok = false, true
+					}
 				case mixedDatatypeFieldInt:
 					modelField.Integer, ok = evaluateIntegerWithBitVectors(argument.Term.(Term[IntSort]), problem.scalarOutcome.booleans, problem.scalarOutcome.integers, problem.scalarOutcome.reals, problem.scalarOutcome.bitVectors)
+					if !ok {
+						modelField.Integer, ok = NewIntegerValue(0), true
+					}
 				case mixedDatatypeFieldReal:
 					modelField.Real, ok = evaluateReal(argument.Term.(Term[RealSort]), problem.scalarOutcome.booleans, problem.scalarOutcome.integers, problem.scalarOutcome.reals)
+					if !ok {
+						modelField.Real, ok = NewRational(0, 1), true
+					}
 				case mixedDatatypeFieldBitVec:
 					modelField.BitVector, ok = evaluateBitVector(argument.Term, problem.scalarOutcome.bitVectors, problem.scalarOutcome.integers)
+					if !ok {
+						modelField.BitVector, ok = NewBitVectorUint64(spec.Width, 0), true
+					}
 				case mixedDatatypeFieldSelf, mixedDatatypeFieldReference:
 					child, childOK := problem.valueForRoot(problem.find(node.mixedChildren.at(self)), assignment, visiting, model)
 					self++

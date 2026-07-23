@@ -166,6 +166,33 @@ func (values MixedDatatypeTermValues) At(index int) MixedDatatypeTermValue {
 	return values.Inline[index]
 }
 
+func replaceMixedDatatypeTerm(values MixedDatatypeTermValues, index int, replacement MixedDatatypeTermValue) MixedDatatypeTermValues {
+	if index < 0 || index >= values.Count {
+		panic("smt: mixed datatype update outside signature")
+	}
+	result := values
+	if values.Overflow != nil {
+		result.Overflow = append([]MixedDatatypeTermValue(nil), values.Overflow...)
+		result.Overflow[index] = replacement
+	} else {
+		result.Inline[index] = replacement
+	}
+	return result
+}
+
+func (values *MixedDatatypeTermValues) append(value MixedDatatypeTermValue) {
+	if values.Count < len(values.Inline) && values.Overflow == nil {
+		values.Inline[values.Count] = value
+		values.Count++
+		return
+	}
+	if values.Overflow == nil {
+		values.Overflow = append(make([]MixedDatatypeTermValue, 0, values.Count+4), values.Inline[:]...)
+	}
+	values.Overflow = append(values.Overflow, value)
+	values.Count++
+}
+
 func prependMixedDatatypeTerm(kind, width int, term any, tail MixedDatatypeTermValues) MixedDatatypeTermValues {
 	var result MixedDatatypeTermValues
 	result.Count = tail.Count + 1
