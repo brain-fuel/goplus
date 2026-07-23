@@ -301,6 +301,12 @@ func groundStringReplacePreimage(
 		}
 		return candidate, true, true
 	}
+	if forced, found := forcedGroundStringReplaceValue(constraint); found {
+		if !compactStringReplacementEquals(forced, anchor) {
+			return "", false, true
+		}
+		return try(forced)
+	}
 	if anchor.All {
 		return groundStringReplaceAllPreimage(anchor, try)
 	}
@@ -347,6 +353,70 @@ func groundStringReplacePreimage(
 		search = offset + 1
 	}
 	return "", false, true
+}
+
+func forcedGroundStringReplaceValue(
+	constraint *groundStringReplaceConstraint,
+) (string, bool) {
+	for index := 0; index < constraint.predicateCount; index++ {
+		predicate := constraint.predicateAt(index)
+		switch value := predicate.(type) {
+		case Equal:
+			if candidate, found := forcedGroundStringEqualitySides(
+				constraint.id, value.Left, value.Right,
+			); found {
+				return candidate, true
+			}
+			if candidate, found := forcedGroundStringEqualitySides(
+				constraint.id, value.Right, value.Left,
+			); found {
+				return candidate, true
+			}
+		case stringSystem:
+			for _, relation := range value.system.relations() {
+				if relation.Kind != CompactStringEqual || relation.Negated {
+					continue
+				}
+				if candidate, found := forcedCompactStringRelationValue(
+					constraint.id, relation.Left, relation.Right,
+				); found {
+					return candidate, true
+				}
+				if candidate, found := forcedCompactStringRelationValue(
+					constraint.id, relation.Right, relation.Left,
+				); found {
+					return candidate, true
+				}
+			}
+		}
+	}
+	return "", false
+}
+
+func forcedGroundStringEqualitySides(id int, symbol any, ground any) (string, bool) {
+	symbolTerm, ok := symbol.(Term[StringSort])
+	if !ok {
+		return "", false
+	}
+	symbolID, direct := stringSymbolID(symbolTerm)
+	if !direct || symbolID != id {
+		return "", false
+	}
+	groundTerm, ok := ground.(Term[StringSort])
+	if !ok {
+		return "", false
+	}
+	return evaluateString(groundTerm, stringModel{}, integerModel{})
+}
+
+func forcedCompactStringRelationValue(
+	id int, symbol CompactStringTerm, ground CompactStringTerm,
+) (string, bool) {
+	if symbol.Kind != compactStringSymbol || symbol.ID != id ||
+		ground.Kind != compactStringLiteral {
+		return "", false
+	}
+	return ground.Value, true
 }
 
 func compactStringReplacementEquals(
@@ -418,10 +488,9 @@ func groundStringReplaceAllPreimage(
 		if result, accepted, evaluated := accept(candidate); accepted || !evaluated {
 			return result, accepted, evaluated
 		}
-		// The deletion inverse may contain cycles. A rejected shortest
-		// candidate does not prove that no longer candidate can satisfy a
-		// second equality or predicate.
-		return "", false, false
+		return enumerateFilteredStringDeletionPreimages(
+			anchor.Target, anchor.Source, candidate, accept,
+		)
 	}
 	// Replacing every visible output occurrence is the common inverse and
 	// avoids constructing the search tree when it is already exact.
@@ -434,6 +503,153 @@ func groundStringReplaceAllPreimage(
 	}
 	states := 0
 	return enumerateStringReplaceAllPreimages(anchor, accept, 0, "", &states)
+}
+
+type stringDeletionPath struct {
+	previous int
+	prefix   int
+	output   int
+	input    rune
+}
+
+func enumerateFilteredStringDeletionPreimages(
+	target string,
+	source string,
+	skipCandidate string,
+	try func(string) (string, bool, bool),
+) (string, bool, bool) {
+	var targetInline [16]rune
+	var sourceInline [16]rune
+	targetCodes, targetASCII := inlineASCIIStringCodePoints(target, targetInline[:])
+	if !targetASCII {
+		targetCodes = DecodeStringCodePoints(target)
+	}
+	sourceCodes, sourceASCII := inlineASCIIStringCodePoints(source, sourceInline[:])
+	if !sourceASCII {
+		sourceCodes = DecodeStringCodePoints(source)
+	}
+	if len(sourceCodes) == 0 {
+		return try(target)
+	}
+	const inlineDeletionPaths = 32
+	var inline [inlineDeletionPaths]stringDeletionPath
+	paths := inline[:1]
+	paths[0].previous = -1
+	truncated := false
+	for head := 0; head < len(paths); head++ {
+		path := paths[head]
+		if stringDeletionAcceptsEOF(
+			sourceCodes, targetCodes, path.prefix, path.output,
+		) {
+			if stringDeletionASCIIPathEquals(paths, head, skipCandidate) {
+				continue
+			}
+			candidate := stringDeletionPathCandidate(paths, head)
+			if result, found, complete := try(candidate); found || !complete {
+				return result, found, complete
+			}
+		}
+		appendTransition := func(code rune) {
+			nextPrefix, nextOutput, ok := stringDeletionTransition(
+				sourceCodes, targetCodes, path.prefix, path.output, code,
+			)
+			if !ok {
+				return
+			}
+			if len(paths) == compactStringWordEquationSearchLimit {
+				truncated = true
+				return
+			}
+			if len(paths) == cap(paths) {
+				nextCapacity := cap(paths) * 2
+				if nextCapacity > compactStringWordEquationSearchLimit {
+					nextCapacity = compactStringWordEquationSearchLimit
+				}
+				overflow := make([]stringDeletionPath, len(paths), nextCapacity)
+				copy(overflow, paths)
+				paths = overflow
+			}
+			paths = append(paths, stringDeletionPath{
+				previous: head,
+				prefix:   nextPrefix,
+				output:   nextOutput,
+				input:    code,
+			})
+		}
+		for index, code := range sourceCodes {
+			if stringCodePointSeen(sourceCodes[:index], code) {
+				continue
+			}
+			appendTransition(code)
+		}
+		for index, code := range targetCodes {
+			if stringCodePointSeen(sourceCodes, code) ||
+				stringCodePointSeen(targetCodes[:index], code) {
+				continue
+			}
+			appendTransition(code)
+		}
+	}
+	return "", false, !truncated
+}
+
+func stringDeletionASCIIPathEquals(
+	paths []stringDeletionPath, index int, candidate string,
+) bool {
+	length := 0
+	for current := index; current > 0; current = paths[current].previous {
+		if paths[current].input >= 0x80 {
+			return false
+		}
+		length++
+	}
+	if length != len(candidate) {
+		return false
+	}
+	for offset := length - 1; offset >= 0; offset-- {
+		if byte(paths[index].input) != candidate[offset] {
+			return false
+		}
+		index = paths[index].previous
+	}
+	return true
+}
+
+func stringCodePointSeen(values []rune, target rune) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func stringDeletionPathCandidate(paths []stringDeletionPath, index int) string {
+	length := 0
+	ascii := true
+	for current := index; current > 0; current = paths[current].previous {
+		length++
+		ascii = ascii && paths[current].input < 0x80
+	}
+	if ascii && length <= 64 {
+		var inline [64]byte
+		for offset := length - 1; offset >= 0; offset-- {
+			inline[offset] = byte(paths[index].input)
+			index = paths[index].previous
+		}
+		return string(inline[:length])
+	}
+	codes := make([]rune, length)
+	for offset := length - 1; offset >= 0; offset-- {
+		codes[offset] = paths[index].input
+		index = paths[index].previous
+	}
+	var candidate strings.Builder
+	for _, code := range codes {
+		encoded, _ := EncodeStringCodePoint(int64(code))
+		candidate.WriteString(encoded)
+	}
+	return candidate.String()
 }
 
 func shortestStringDeletionPreimage(
@@ -486,17 +702,7 @@ func shortestStringDeletionPreimage(
 		output := state / len(sourceCodes)
 		prefix := state % len(sourceCodes)
 		if stringDeletionAcceptsEOF(sourceCodes, targetCodes, prefix, output) {
-			codes := make([]rune, 0, head)
-			for state != 0 {
-				codes = append(codes, input[state])
-				state = previous[state]
-			}
-			var candidate strings.Builder
-			for index := len(codes) - 1; index >= 0; index-- {
-				encoded, _ := EncodeStringCodePoint(int64(codes[index]))
-				candidate.WriteString(encoded)
-			}
-			return candidate.String(), true, true
+			return stringDeletionStateCandidate(previous, input, state), true, true
 		}
 		appendTransition := func(code rune) {
 			nextPrefix, nextOutput, ok := stringDeletionTransition(
@@ -522,6 +728,34 @@ func shortestStringDeletionPreimage(
 		}
 	}
 	return "", false, true
+}
+
+func stringDeletionStateCandidate(previous []int, input []rune, state int) string {
+	length := 0
+	ascii := true
+	for current := state; current != 0; current = previous[current] {
+		length++
+		ascii = ascii && input[current] < 0x80
+	}
+	if ascii && length <= 64 {
+		var inline [64]byte
+		for offset := length - 1; offset >= 0; offset-- {
+			inline[offset] = byte(input[state])
+			state = previous[state]
+		}
+		return string(inline[:length])
+	}
+	codes := make([]rune, length)
+	for offset := length - 1; offset >= 0; offset-- {
+		codes[offset] = input[state]
+		state = previous[state]
+	}
+	var candidate strings.Builder
+	for _, code := range codes {
+		encoded, _ := EncodeStringCodePoint(int64(code))
+		candidate.WriteString(encoded)
+	}
+	return candidate.String()
 }
 
 func inlineASCIIStringCodePoints(value string, storage []rune) ([]rune, bool) {

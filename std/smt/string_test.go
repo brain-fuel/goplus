@@ -1044,16 +1044,34 @@ func TestGroundStringReplaceEqualities(t *testing.T) {
 		}
 	})
 
-	t.Run("filtered cyclic deletion remains explicit", func(t *testing.T) {
+	t.Run("filtered cyclic deletion selects longer preimage", func(t *testing.T) {
 		formula := And{Values: []Term[BoolSort]{
 			Equal{
 				Left:  StringReplaceAll(x, StringVal("ab"), StringVal("")),
 				Right: StringVal("ab"),
 			},
-			Equal{Left: x, Right: StringVal("abaabb")},
+			Equal{Left: StringLength(x), Right: Integer{Value: 6}},
 		}}
 		checked := Check(Assert(77, New(), formula))
-		if _, ok := checked.(Unknown); !ok {
+		result, ok := checked.(Satisfiable)
+		if !ok {
+			t.Fatalf("result=%T", checked)
+		}
+		if actual, found := StringModelValue(result.Value, x); !found || actual != "aababb" {
+			t.Fatalf("x=(%q,%v)", actual, found)
+		}
+	})
+
+	t.Run("forced cyclic deletion contradiction", func(t *testing.T) {
+		formula := And{Values: []Term[BoolSort]{
+			Equal{
+				Left:  StringReplaceAll(x, StringVal("ab"), StringVal("")),
+				Right: StringVal("ab"),
+			},
+			Equal{Left: x, Right: StringVal("q")},
+		}}
+		checked := Check(Assert(79, New(), formula))
+		if _, ok := checked.(Unsatisfiable); !ok {
 			t.Fatalf("result=%T", checked)
 		}
 	})
