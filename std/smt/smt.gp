@@ -175,6 +175,12 @@ type Term[S any] enum {
 	stringSubstring(Value Term[StringSort], Offset Term[IntSort], Length Term[IntSort]) Term[S]
 	stringIndexOf(Value Term[StringSort], Substring Term[StringSort], Offset Term[IntSort]) Term[IntSort]
 	stringReplace(Value Term[StringSort], Source Term[StringSort], Replacement Term[StringSort]) Term[S]
+	stringReplaceAll(Value Term[StringSort], Source Term[StringSort], Replacement Term[StringSort]) Term[S]
+	stringToInteger(Value Term[StringSort]) Term[IntSort]
+	integerToString(Value Term[IntSort]) Term[S]
+	stringToCode(Value Term[StringSort]) Term[IntSort]
+	codeToString(Value Term[IntSort]) Term[S]
+	stringIsDigit(Value Term[StringSort]) Term[BoolSort]
 	stringSystem(System CompactStringSystem) Term[BoolSort]
 	sequenceEmpty() Term[S]
 	sequenceUnit(Value any) Term[S]
@@ -546,6 +552,12 @@ func StringAt(value Term[StringSort], index Term[IntSort]) Term[StringSort] { re
 func StringSubstring(value Term[StringSort], offset Term[IntSort], length Term[IntSort]) Term[StringSort] { return Term[StringSort].stringSubstring(value, offset, length) }
 func StringIndexOf(value Term[StringSort], substring Term[StringSort], offset Term[IntSort]) Term[IntSort] { return stringIndexOf(value, substring, offset) }
 func StringReplace(value Term[StringSort], source Term[StringSort], replacement Term[StringSort]) Term[StringSort] { return Term[StringSort].stringReplace(value, source, replacement) }
+func StringReplaceAll(value Term[StringSort], source Term[StringSort], replacement Term[StringSort]) Term[StringSort] { return Term[StringSort].stringReplaceAll(value, source, replacement) }
+func StringToInt(value Term[StringSort]) Term[IntSort] { return stringToInteger(value) }
+func IntToString(value Term[IntSort]) Term[StringSort] { return Term[StringSort].integerToString(value) }
+func StringToCode(value Term[StringSort]) Term[IntSort] { return stringToCode(value) }
+func StringFromCode(value Term[IntSort]) Term[StringSort] { return Term[StringSort].codeToString(value) }
+func StringIsDigit(value Term[StringSort]) Term[BoolSort] { return stringIsDigit(value) }
 func SequenceEmpty[E any]() Term[SequenceSort[E]] { return Term[SequenceSort[E]].sequenceEmpty() }
 func SequenceUnit[E any](value Term[E]) Term[SequenceSort[E]] { return Term[SequenceSort[E]].sequenceUnit(value) }
 func SequenceConcat[E any](values ...Term[SequenceSort[E]]) Term[SequenceSort[E]] { return Term[SequenceSort[E]].sequenceConcat(values) }
@@ -884,6 +896,10 @@ func StringModelValue(0 c nat, model Model[c], term Term[StringSort]) (string, b
 
 func StringIntegerModelValue(0 c nat, model Model[c], term Term[IntSort]) (int64, bool) {
 	match model { case modelValue(_, _, integers, _, _, strings, _, _, _): return evaluateStringInteger(term, strings, integers) }
+}
+
+func ExactStringIntegerModelValue(0 c nat, model Model[c], term Term[IntSort]) (IntegerValue, bool) {
+	match model { case modelValue(_, _, integers, _, _, strings, _, _, _): return evaluateStringIntegerExact(term, strings, integers) }
 }
 
 func IntegerArrayValue(0 c nat, model Model[c], array Term[ArraySort[IntSort, IntSort]], index IntegerValue) (IntegerValue, bool) {

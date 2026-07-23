@@ -108,6 +108,38 @@ func TestExecuteIndexedStringOperations(t *testing.T) {
 	}
 }
 
+func TestExecuteStringConversionsAndReplaceAll(t *testing.T) {
+	script := `(set-logic ALL)
+(assert (= (str.replace_all "aaaa" "aa" "b") "bb"))
+(assert (= (str.replace_all "ab" "" "x") "ab"))
+(assert (= (str.to_int "0012") 12))
+(assert (= (str.to_int "12x") (- 1)))
+(assert (= (str.from_int 12) "12"))
+(assert (= (str.from_int (- 1)) ""))
+(assert (= (str.to_code "\u{d800}") 55296))
+(assert (= (str.from_code 55296) "\u{d800}"))
+(assert (= (str.from_code 196608) ""))
+(assert (str.is_digit "7"))
+(assert (not (str.is_digit "٧")))
+(check-sat)
+(get-value ((str.to_int "123456789012345678901234567890") (str.from_code 55296)))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	check := result.Responses[len(result.Responses)-2]
+	if _, ok := check.(Satisfiable); !ok {
+		t.Fatalf("check response=%T", check)
+	}
+	values := result.Responses[len(result.Responses)-1].(ValuesAvailable).Values
+	if value, ok := values[0].(ArbitraryIntegerValue); !ok || value.Value.String() != "123456789012345678901234567890" {
+		t.Fatalf("to_int=%#v", values[0])
+	}
+	if value, ok := values[1].(StringValue); !ok || value.Value != string([]byte{0xed, 0xa0, 0x80}) {
+		t.Fatalf("from_code=%#v", values[1])
+	}
+}
+
 func TestExecuteDifferenceLogicPushPop(t *testing.T) {
 	script := `(set-logic QF_IDL)
 (declare-const x Int)

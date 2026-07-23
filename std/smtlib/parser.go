@@ -5,6 +5,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	smt "goforge.dev/goplus/std/smt"
 )
 
 const (
@@ -78,7 +80,8 @@ func lexSMTLib(source string) ([]token, []ParseError) {
 				next, nextSize := utf8.DecodeRuneInString(source[offset:])
 				if next == '\\' {
 					if escaped, end, ok := decodeUnicodeStringEscape(source, offset); ok {
-						value.WriteRune(escaped)
+						encoded, _ := smt.EncodeStringCodePoint(int64(escaped))
+						value.WriteString(encoded)
 						offset = end
 						continue
 					}
@@ -164,7 +167,7 @@ func decodeUnicodeStringEscape(source string, offset int) (rune, int, bool) {
 }
 
 func validStringCodePoint(value rune) bool {
-	return value >= 0 && value <= utf8.MaxRune && (value < 0xd800 || value > 0xdfff)
+	return value >= 0 && value <= 0x2ffff
 }
 
 func (parser *scriptParser) expression() (SExpr, bool) {

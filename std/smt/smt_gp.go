@@ -981,6 +981,50 @@ type stringReplace[S any] struct {
 
 func (stringReplace[S]) isTerm(S) {}
 
+//goplus:variant (Term[S]) stringReplaceAll(Value Term[StringSort], Source Term[StringSort], Replacement Term[StringSort]) Term[S]
+type stringReplaceAll[S any] struct {
+	value       Term[StringSort]
+	source      Term[StringSort]
+	replacement Term[StringSort]
+}
+
+func (stringReplaceAll[S]) isTerm(S) {}
+
+//goplus:variant (Term[S]) stringToInteger(Value Term[StringSort]) Term[IntSort]
+type stringToInteger struct {
+	value Term[StringSort]
+}
+
+func (stringToInteger) isTerm(IntSort) {}
+
+//goplus:variant (Term[S]) integerToString(Value Term[IntSort]) Term[S]
+type integerToString[S any] struct {
+	value Term[IntSort]
+}
+
+func (integerToString[S]) isTerm(S) {}
+
+//goplus:variant (Term[S]) stringToCode(Value Term[StringSort]) Term[IntSort]
+type stringToCode struct {
+	value Term[StringSort]
+}
+
+func (stringToCode) isTerm(IntSort) {}
+
+//goplus:variant (Term[S]) codeToString(Value Term[IntSort]) Term[S]
+type codeToString[S any] struct {
+	value Term[IntSort]
+}
+
+func (codeToString[S]) isTerm(S) {}
+
+//goplus:variant (Term[S]) stringIsDigit(Value Term[StringSort]) Term[BoolSort]
+type stringIsDigit struct {
+	value Term[StringSort]
+}
+
+func (stringIsDigit) isTerm(BoolSort) {}
+
 //goplus:variant (Term[S]) stringSystem(System CompactStringSystem) Term[BoolSort]
 type stringSystem struct {
 	system CompactStringSystem
@@ -1635,6 +1679,12 @@ type TermCases[S any, R any] struct {
 	stringSubstring                    func(Value Term[StringSort], Offset Term[IntSort], Length Term[IntSort]) R
 	stringIndexOf                      func(Value Term[StringSort], Substring Term[StringSort], Offset Term[IntSort]) R
 	stringReplace                      func(Value Term[StringSort], Source Term[StringSort], Replacement Term[StringSort]) R
+	stringReplaceAll                   func(Value Term[StringSort], Source Term[StringSort], Replacement Term[StringSort]) R
+	stringToInteger                    func(Value Term[StringSort]) R
+	integerToString                    func(Value Term[IntSort]) R
+	stringToCode                       func(Value Term[StringSort]) R
+	codeToString                       func(Value Term[IntSort]) R
+	stringIsDigit                      func(Value Term[StringSort]) R
 	stringSystem                       func(System CompactStringSystem) R
 	sequenceEmpty                      func() R
 	sequenceUnit                       func(Value any) R
@@ -1791,6 +1841,18 @@ func TermFold[S any, R any](t Term[S], cs TermCases[S, R]) R {
 		return cs.stringIndexOf(m.value, m.substring, m.offset)
 	case stringReplace[S]:
 		return cs.stringReplace(m.value, m.source, m.replacement)
+	case stringReplaceAll[S]:
+		return cs.stringReplaceAll(m.value, m.source, m.replacement)
+	case stringToInteger:
+		return cs.stringToInteger(m.value)
+	case integerToString[S]:
+		return cs.integerToString(m.value)
+	case stringToCode:
+		return cs.stringToCode(m.value)
+	case codeToString[S]:
+		return cs.codeToString(m.value)
+	case stringIsDigit:
+		return cs.stringIsDigit(m.value)
 	case stringSystem:
 		return cs.stringSystem(m.system)
 	case sequenceEmpty[S]:
@@ -2964,7 +3026,19 @@ func StringIndexOf(value Term[StringSort], substring Term[StringSort], offset Te
 func StringReplace(value Term[StringSort], source Term[StringSort], replacement Term[StringSort]) Term[StringSort] {
 	return stringReplace[StringSort]{value: value, source: source, replacement: replacement}
 }
-func SequenceEmpty[E any]() Term[SequenceSort[E]] { return sequenceEmpty[SequenceSort[E]]{} }
+func StringReplaceAll(value Term[StringSort], source Term[StringSort], replacement Term[StringSort]) Term[StringSort] {
+	return stringReplaceAll[StringSort]{value: value, source: source, replacement: replacement}
+}
+func StringToInt(value Term[StringSort]) Term[IntSort] { return stringToInteger{value: value} }
+func IntToString(value Term[IntSort]) Term[StringSort] {
+	return integerToString[StringSort]{value: value}
+}
+func StringToCode(value Term[StringSort]) Term[IntSort] { return stringToCode{value: value} }
+func StringFromCode(value Term[IntSort]) Term[StringSort] {
+	return codeToString[StringSort]{value: value}
+}
+func StringIsDigit(value Term[StringSort]) Term[BoolSort] { return stringIsDigit{value: value} }
+func SequenceEmpty[E any]() Term[SequenceSort[E]]         { return sequenceEmpty[SequenceSort[E]]{} }
 func SequenceUnit[E any](value Term[E]) Term[SequenceSort[E]] {
 	return sequenceUnit[SequenceSort[E]]{value: value}
 }
@@ -3531,12 +3605,24 @@ func StringIntegerModelValue(model Model, term Term[IntSort]) (int64, bool) {
 	}
 }
 
-//goplus:dep IntegerArrayValue(0 c nat, model Model[c], array Term[ArraySort[IntSort, IntSort]], index IntegerValue) (IntegerValue, bool)
-func IntegerArrayValue(model Model, array Term[ArraySort[IntSort, IntSort]], index IntegerValue) (IntegerValue, bool) {
+//goplus:dep ExactStringIntegerModelValue(0 c nat, model Model[c], term Term[IntSort]) (IntegerValue, bool)
+func ExactStringIntegerModelValue(model Model, term Term[IntSort]) (IntegerValue, bool) {
 	switch __gp_m50 := any(model).(type) {
 	case modelValue:
 		integers := __gp_m50.integers
-		arrays := __gp_m50.arrays
+		strings := __gp_m50.strings
+		return evaluateStringIntegerExact(term, strings, integers)
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+}
+
+//goplus:dep IntegerArrayValue(0 c nat, model Model[c], array Term[ArraySort[IntSort, IntSort]], index IntegerValue) (IntegerValue, bool)
+func IntegerArrayValue(model Model, array Term[ArraySort[IntSort, IntSort]], index IntegerValue) (IntegerValue, bool) {
+	switch __gp_m51 := any(model).(type) {
+	case modelValue:
+		integers := __gp_m51.integers
+		arrays := __gp_m51.arrays
 		return evaluateIntegerArray(array, index, integers, arrays)
 	default:
 		panic("goplus: impossible enum value in match")
@@ -3545,9 +3631,9 @@ func IntegerArrayValue(model Model, array Term[ArraySort[IntSort, IntSort]], ind
 
 //goplus:dep BitVectorArrayValue(0 c nat, 0 indexWidth nat, 0 elementWidth nat, model Model[c], array Term[ArraySort[BitVecSort[indexWidth], BitVecSort[elementWidth]]], index BitVectorValue) (BitVectorValue, bool)
 func BitVectorArrayValue(model Model, array Term[ArraySort[BitVecSort, BitVecSort]], index BitVectorValue) (BitVectorValue, bool) {
-	switch __gp_m51 := any(model).(type) {
+	switch __gp_m52 := any(model).(type) {
 	case modelValue:
-		arrays := __gp_m51.bitVectorArrays
+		arrays := __gp_m52.bitVectorArrays
 		return evaluateBitVectorArray(array, index, arrays)
 	default:
 		panic("goplus: impossible enum value in match")
@@ -3556,9 +3642,9 @@ func BitVectorArrayValue(model Model, array Term[ArraySort[BitVecSort, BitVecSor
 
 //goplus:dep DatatypeModelValue(datatype nat, constructors nat, 0 c nat, model Model[c], term Term[DatatypeSort[datatype, constructors]]) (DatatypeValue, bool)
 func DatatypeModelValue(datatype int, constructors int, model Model, term Term[DatatypeSort]) (DatatypeValue, bool) {
-	switch __gp_m52 := any(model).(type) {
+	switch __gp_m53 := any(model).(type) {
 	case modelValue:
-		datatypes := __gp_m52.datatypes
+		datatypes := __gp_m53.datatypes
 		return evaluateDatatype(term, datatypes)
 	default:
 		panic("goplus: impossible enum value in match")

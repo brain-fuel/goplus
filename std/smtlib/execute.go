@@ -366,8 +366,12 @@ func (executor *executor) command(index int, command Command) {
 			} else {
 				result, found := smt.IntegerModelValue(*executor.lastModel, term.integer)
 				if !found {
-					if stringResult, stringFound := smt.StringIntegerModelValue(*executor.lastModel, term.integer); stringFound {
-						values[valueIndex] = IntegerValue{Expression: expression, Value: stringResult}
+					if stringResult, stringFound := smt.ExactStringIntegerModelValue(*executor.lastModel, term.integer); stringFound {
+						if small, fits := stringResult.Int64(); fits {
+							values[valueIndex] = IntegerValue{Expression: expression, Value: small}
+						} else {
+							values[valueIndex] = ArbitraryIntegerValue{Expression: expression, Value: stringResult}
+						}
 						continue
 					}
 				}
@@ -2050,6 +2054,30 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 	case "str.replace":
 		if values, ok := stringTerms(); ok && len(values) == 3 {
 			return dynamicTerm{sort: sortString, stringValue: smt.StringReplace(values[0], values[1], values[2])}, nil
+		}
+	case "str.replace_all":
+		if values, ok := stringTerms(); ok && len(values) == 3 {
+			return dynamicTerm{sort: sortString, stringValue: smt.StringReplaceAll(values[0], values[1], values[2])}, nil
+		}
+	case "str.to_int":
+		if values, ok := stringTerms(); ok && len(values) == 1 {
+			return dynamicTerm{sort: sortInt, integer: smt.StringToInt(values[0])}, nil
+		}
+	case "str.from_int":
+		if values, ok := integers(); ok && len(values) == 1 {
+			return dynamicTerm{sort: sortString, stringValue: smt.IntToString(values[0])}, nil
+		}
+	case "str.to_code":
+		if values, ok := stringTerms(); ok && len(values) == 1 {
+			return dynamicTerm{sort: sortInt, integer: smt.StringToCode(values[0])}, nil
+		}
+	case "str.from_code":
+		if values, ok := integers(); ok && len(values) == 1 {
+			return dynamicTerm{sort: sortString, stringValue: smt.StringFromCode(values[0])}, nil
+		}
+	case "str.is_digit":
+		if values, ok := stringTerms(); ok && len(values) == 1 {
+			return dynamicTerm{sort: sortBool, boolean: smt.StringIsDigit(values[0])}, nil
 		}
 	case "ubv_to_int":
 		if len(terms) == 1 && terms[0].sort == sortBitVector {

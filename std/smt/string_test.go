@@ -41,6 +41,35 @@ func TestStringIndexedOperationsUseUnicodeCodePoints(t *testing.T) {
 	}
 }
 
+func TestStringConversionsAndReplaceAll(t *testing.T) {
+	huge, err := ParseIntegerValue("123456789012345678901234567890")
+	if err != nil {
+		t.Fatal(err)
+	}
+	surrogate, ok := EncodeStringCodePoint(0xd800)
+	if !ok {
+		t.Fatal("expected SMT surrogate code point")
+	}
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: StringReplaceAll(StringVal("aaaa"), StringVal("aa"), StringVal("b")), Right: StringVal("bb")},
+		Equal{Left: StringReplaceAll(StringVal("ab"), StringVal(""), StringVal("x")), Right: StringVal("ab")},
+		Equal{Left: StringToInt(StringVal("0012")), Right: Integer{Value: 12}},
+		Equal{Left: StringToInt(StringVal("-12")), Right: Integer{Value: -1}},
+		Equal{Left: StringToInt(StringVal(huge.String())), Right: IntegerTerm(huge)},
+		Equal{Left: IntToString(IntegerTerm(huge)), Right: StringVal(huge.String())},
+		Equal{Left: IntToString(Integer{Value: -1}), Right: StringVal("")},
+		Equal{Left: StringToCode(StringVal(surrogate)), Right: Integer{Value: 0xd800}},
+		Equal{Left: StringFromCode(Integer{Value: 0xd800}), Right: StringVal(surrogate)},
+		Equal{Left: StringFromCode(Integer{Value: 0x30000}), Right: StringVal("")},
+		StringIsDigit(StringVal("7")),
+		Not{Value: StringIsDigit(StringVal("٧"))},
+		Not{Value: StringIsDigit(StringVal("77"))},
+	}}
+	if _, ok := Check(Assert(7, New(), formula)).(Satisfiable); !ok {
+		t.Fatalf("result=%T", Check(Assert(7, New(), formula)))
+	}
+}
+
 func TestStringSymbolModel(t *testing.T) {
 	x := StringConst(1, "x")
 	formula := And{Values: []Term[BoolSort]{

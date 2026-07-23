@@ -107,6 +107,73 @@ func makeStringConcat(values []Term[StringSort]) Term[StringSort] {
 	return stringValue[StringSort]{value: result.String()}
 }
 
+// DecodeStringCodePoints decodes the SMT-LIB character domain, including
+// surrogate code points represented with their three-byte WTF-8 encoding.
+func DecodeStringCodePoints(value string) []rune {
+	result := make([]rune, 0, len(value))
+	for offset := 0; offset < len(value); {
+		first := value[offset]
+		if first < 0x80 {
+			result = append(result, rune(first))
+			offset++
+			continue
+		}
+		width := 0
+		var code rune
+		switch {
+		case first&0xe0 == 0xc0:
+			width, code = 2, rune(first&0x1f)
+		case first&0xf0 == 0xe0:
+			width, code = 3, rune(first&0x0f)
+		case first&0xf8 == 0xf0:
+			width, code = 4, rune(first&0x07)
+		default:
+			result = append(result, utf8.RuneError)
+			offset++
+			continue
+		}
+		if offset+width > len(value) {
+			result = append(result, utf8.RuneError)
+			offset++
+			continue
+		}
+		valid := true
+		for index := 1; index < width; index++ {
+			next := value[offset+index]
+			if next&0xc0 != 0x80 {
+				valid = false
+				break
+			}
+			code = code<<6 | rune(next&0x3f)
+		}
+		if !valid {
+			result = append(result, utf8.RuneError)
+			offset++
+			continue
+		}
+		result = append(result, code)
+		offset += width
+	}
+	return result
+}
+
+func EncodeStringCodePoint(value int64) (string, bool) {
+	if value < 0 || value > 0x2ffff {
+		return "", false
+	}
+	code := rune(value)
+	switch {
+	case value < 0x80:
+		return string([]byte{byte(value)}), true
+	case value < 0x800:
+		return string([]byte{0xc0 | byte(code>>6), 0x80 | byte(code&0x3f)}), true
+	case value < 0x10000:
+		return string([]byte{0xe0 | byte(code>>12), 0x80 | byte(code>>6&0x3f), 0x80 | byte(code&0x3f)}), true
+	default:
+		return string([]byte{0xf0 | byte(code>>18), 0x80 | byte(code>>12&0x3f), 0x80 | byte(code>>6&0x3f), 0x80 | byte(code&0x3f)}), true
+	}
+}
+
 type stringSymbols struct {
 	count    int
 	inline   [8]int
@@ -182,7 +249,7 @@ func evaluateString(term Term[StringSort], model stringModel, integers integerMo
 		if !textOK || !indexOK {
 			return "", false
 		}
-		runes := []rune(text)
+		runes := DecodeStringCodePoints(text)
 		if index < 0 || index >= int64(len(runes)) {
 			return "", true
 		}
@@ -194,7 +261,7 @@ func evaluateString(term Term[StringSort], model stringModel, integers integerMo
 		if !textOK || !offsetOK || !lengthOK {
 			return "", false
 		}
-		runes := []rune(text)
+		runes := DecodeStringCodePoints(text)
 		if offset < 0 || offset >= int64(len(runes)) || length <= 0 {
 			return "", true
 		}
@@ -211,6 +278,40 @@ func evaluateString(term Term[StringSort], model stringModel, integers integerMo
 			return "", false
 		}
 		return strings.Replace(text, source, replacement, 1), true
+	case stringReplaceAll[StringSort]:
+		text, textOK := evaluateString(value.value, model, integers)
+		source, sourceOK := evaluateString(value.source, model, integers)
+		replacement, replacementOK := evaluateString(value.replacement, model, integers)
+		if !textOK || !sourceOK || !replacementOK {
+			return "", false
+		}
+		if source == "" {
+			return text, true
+		}
+		return strings.ReplaceAll(text, source, replacement), true
+	case integerToString[StringSort]:
+		integer, ok := evaluateInteger(value.value, booleanModel{}, integers, rationalModel{})
+		if !ok {
+			return "", false
+		}
+		if CompareIntegerValue(integer, NewIntegerValue(0)) < 0 {
+			return "", true
+		}
+		return integer.String(), true
+	case codeToString[StringSort]:
+		integer, ok := evaluateInteger(value.value, booleanModel{}, integers, rationalModel{})
+		if !ok {
+			return "", false
+		}
+		small, fits := integer.Int64()
+		if !fits {
+			return "", true
+		}
+		encoded, valid := EncodeStringCodePoint(small)
+		if !valid {
+			return "", true
+		}
+		return encoded, true
 	default:
 		return "", false
 	}
@@ -225,7 +326,7 @@ func evaluateBoolWithStringsAndDatatypes(term Term[BoolSort], booleans booleanMo
 
 func containsStringTheory(term Term[BoolSort]) bool {
 	switch value := term.(type) {
-	case stringContains, stringPrefix, stringSuffix, stringSystem:
+	case stringContains, stringPrefix, stringSuffix, stringIsDigit, stringSystem:
 		return true
 	case Equal:
 		return isStringTerm(value.Left) || isStringTerm(value.Right) || isStringIntegerTerm(value.Left) || isStringIntegerTerm(value.Right)
@@ -250,7 +351,7 @@ func containsStringTheory(term Term[BoolSort]) bool {
 
 func isStringTerm(term any) bool {
 	switch term.(type) {
-	case stringValue[StringSort], stringSymbol[StringSort], stringConcat[StringSort], stringAt[StringSort], stringSubstring[StringSort], stringReplace[StringSort]:
+	case stringValue[StringSort], stringSymbol[StringSort], stringConcat[StringSort], stringAt[StringSort], stringSubstring[StringSort], stringReplace[StringSort], stringReplaceAll[StringSort], integerToString[StringSort], codeToString[StringSort]:
 		return true
 	default:
 		return false
@@ -259,7 +360,7 @@ func isStringTerm(term any) bool {
 
 func isStringIntegerTerm(term any) bool {
 	switch term.(type) {
-	case stringLength, stringIndexOf:
+	case stringLength, stringIndexOf, stringToInteger, stringToCode:
 		return true
 	default:
 		return false
@@ -428,7 +529,7 @@ func evaluateCompactStringRelation(relation CompactStringRelation, model stringM
 		right, rightOK := evaluateCompactString(relation.Right, model)
 		result, complete = left == right, leftOK && rightOK
 	case CompactStringLengthEqual:
-		result = int64(utf8.RuneCountInString(left)) == relation.Integer
+		result = int64(len(DecodeStringCodePoints(left))) == relation.Integer
 	case CompactStringContains:
 		right, rightOK := evaluateCompactString(relation.Right, model)
 		result, complete = strings.Contains(left, right), leftOK && rightOK
@@ -491,11 +592,21 @@ func collectStringSymbols(term any, symbols *stringSymbols) {
 		collectStringSymbols(value.value, symbols)
 		collectStringSymbols(value.source, symbols)
 		collectStringSymbols(value.replacement, symbols)
+	case stringReplaceAll[StringSort]:
+		collectStringSymbols(value.value, symbols)
+		collectStringSymbols(value.source, symbols)
+		collectStringSymbols(value.replacement, symbols)
+	case integerToString[StringSort], codeToString[StringSort]:
+		// Integer-valued children contain no string symbols.
 	case stringLength:
 		collectStringSymbols(value.value, symbols)
 	case stringIndexOf:
 		collectStringSymbols(value.value, symbols)
 		collectStringSymbols(value.substring, symbols)
+	case stringToInteger:
+		collectStringSymbols(value.value, symbols)
+	case stringToCode:
+		collectStringSymbols(value.value, symbols)
 	}
 }
 
@@ -704,9 +815,9 @@ func evaluateStringBoolean(term Term[BoolSort], model stringModel, integers inte
 			rightValue, rightValueOK := evaluateString(right, model, integers)
 			return leftValue == rightValue, leftOK && rightValueOK
 		}
-		leftLength, leftOK := evaluateStringInteger(value.Left, model, integers)
-		rightLength, rightOK := evaluateStringInteger(value.Right, model, integers)
-		return leftLength == rightLength, leftOK && rightOK
+		leftInteger, leftOK := evaluateStringIntegerExact(value.Left, model, integers)
+		rightInteger, rightOK := evaluateStringIntegerExact(value.Right, model, integers)
+		return CompareIntegerValue(leftInteger, rightInteger) == 0, leftOK && rightOK
 	case stringContains:
 		text, textOK := evaluateString(value.value, model, integers)
 		part, partOK := evaluateString(value.substring, model, integers)
@@ -719,29 +830,85 @@ func evaluateStringBoolean(term Term[BoolSort], model stringModel, integers inte
 		suffix, suffixOK := evaluateString(value.suffix, model, integers)
 		text, textOK := evaluateString(value.value, model, integers)
 		return strings.HasSuffix(text, suffix), suffixOK && textOK
+	case stringIsDigit:
+		text, ok := evaluateString(value.value, model, integers)
+		return len(text) == 1 && text[0] >= '0' && text[0] <= '9', ok
 	default:
 		return false, false
 	}
 }
 
 func evaluateStringInteger(term any, model stringModel, integers integerModel) (int64, bool) {
+	value, ok := evaluateStringIntegerExact(term, model, integers)
+	if !ok {
+		return 0, false
+	}
+	return value.Int64()
+}
+
+func evaluateStringIntegerExact(term any, model stringModel, integers integerModel) (IntegerValue, bool) {
 	if constant, ok := integerConstant(term); ok {
-		return constant, true
+		return NewIntegerValue(constant), true
 	}
 	switch value := term.(type) {
 	case stringLength:
 		text, found := evaluateString(value.value, model, integers)
-		return int64(utf8.RuneCountInString(text)), found
+		return NewIntegerValue(int64(len(DecodeStringCodePoints(text)))), found
 	case stringIndexOf:
 		text, textOK := evaluateString(value.value, model, integers)
 		substring, substringOK := evaluateString(value.substring, model, integers)
 		offset, offsetOK := evaluateStringOffset(value.offset, integers)
 		if !textOK || !substringOK || !offsetOK {
-			return 0, false
+			return IntegerValue{}, false
 		}
-		return stringIndexOfRunes(text, substring, offset), true
+		return NewIntegerValue(stringIndexOfRunes(text, substring, offset)), true
+	case stringToInteger:
+		text, found := evaluateString(value.value, model, integers)
+		if !found || text == "" {
+			return NewIntegerValue(-1), found
+		}
+		for index := 0; index < len(text); index++ {
+			if text[index] < '0' || text[index] > '9' {
+				return NewIntegerValue(-1), true
+			}
+		}
+		integer, err := ParseIntegerValue(text)
+		return integer, err == nil
+	case stringToCode:
+		text, found := evaluateString(value.value, model, integers)
+		if !found {
+			return IntegerValue{}, false
+		}
+		codes := DecodeStringCodePoints(text)
+		if len(codes) != 1 {
+			return NewIntegerValue(-1), true
+		}
+		return NewIntegerValue(int64(codes[0])), true
 	default:
-		return evaluateStringOffsetTerm(term, integers)
+		switch value := term.(type) {
+		case Integer:
+			return NewIntegerValue(value.Value), true
+		case integerExact[IntSort]:
+			return value.value, true
+		case IntSymbol:
+			return integers.lookup(value.ID)
+		case integerVariable[IntSort]:
+			return integers.lookup(value.iD)
+		case Add:
+			return evaluateInteger(value, booleanModel{}, integers, rationalModel{})
+		case Subtract:
+			return evaluateInteger(value, booleanModel{}, integers, rationalModel{})
+		case IntegerScale:
+			return evaluateInteger(value, booleanModel{}, integers, rationalModel{})
+		case IntegerDiv:
+			return evaluateInteger(value, booleanModel{}, integers, rationalModel{})
+		case IntegerMod:
+			return evaluateInteger(value, booleanModel{}, integers, rationalModel{})
+		case If[IntSort]:
+			return evaluateInteger(value, booleanModel{}, integers, rationalModel{})
+		default:
+			return IntegerValue{}, false
+		}
 	}
 }
 
@@ -761,7 +928,7 @@ func evaluateStringOffsetTerm(term any, integers integerModel) (int64, bool) {
 }
 
 func stringIndexOfRunes(text, substring string, offset int64) int64 {
-	textRunes, substringRunes := []rune(text), []rune(substring)
+	textRunes, substringRunes := DecodeStringCodePoints(text), DecodeStringCodePoints(substring)
 	if offset < 0 || offset > int64(len(textRunes)) {
 		return -1
 	}
