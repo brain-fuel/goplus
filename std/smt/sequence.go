@@ -53,9 +53,13 @@ type integerSequenceRequirements struct {
 	prefix      IntegerSequenceValue
 	suffix      IntegerSequenceValue
 	exactLength int
+	minLength   int
+	maxLength   int
 	hasPrefix   bool
 	hasSuffix   bool
 	hasLength   bool
+	hasMin      bool
+	hasMax      bool
 	contains    [4]IntegerSequenceValue
 	overflow    []IntegerSequenceValue
 	containment int
@@ -855,12 +859,48 @@ func addIntegerSequenceExactLength(
 	requirements *integerSequenceRequirements,
 	length int,
 ) bool {
+	if requirements.hasMin && length < requirements.minLength {
+		return false
+	}
+	if requirements.hasMax && length > requirements.maxLength {
+		return false
+	}
 	if !requirements.hasLength {
 		requirements.exactLength = length
 		requirements.hasLength = true
+		requirements.minLength = length
+		requirements.maxLength = length
+		requirements.hasMin = true
+		requirements.hasMax = true
 		return true
 	}
 	return requirements.exactLength == length
+}
+
+func addIntegerSequenceMinimumLength(
+	requirements *integerSequenceRequirements,
+	length int,
+) bool {
+	if length < 0 {
+		length = 0
+	}
+	if !requirements.hasMin || length > requirements.minLength {
+		requirements.minLength = length
+		requirements.hasMin = true
+	}
+	return !requirements.hasMax || requirements.minLength <= requirements.maxLength
+}
+
+func addIntegerSequenceMaximumLength(
+	requirements *integerSequenceRequirements,
+	length int,
+) bool {
+	if !requirements.hasMax || length < requirements.maxLength {
+		requirements.maxLength = length
+		requirements.hasMax = true
+	}
+	return requirements.maxLength >= 0 &&
+		(!requirements.hasMin || requirements.minLength <= requirements.maxLength)
 }
 
 func symbolicIntegerSequenceLength(term any) (int, bool) {
@@ -873,6 +913,79 @@ func symbolicIntegerSequenceLength(term any) (int, bool) {
 		return 0, false
 	}
 	return integerSequenceSymbolID(sequence)
+}
+
+func collectIntegerSequenceLengthBound(
+	left,
+	right any,
+	strict bool,
+	model integerSequenceModel,
+	requirements *integerSequenceRequirementSet,
+) (bool, bool, bool) {
+	id, leftLength := symbolicIntegerSequenceLength(left)
+	groundTerm := right
+	minimum := false
+	if !leftLength {
+		id, minimum = symbolicIntegerSequenceLength(right)
+		groundTerm = left
+		if !minimum {
+			return true, true, false
+		}
+	}
+	if assigned, ok := model.lookup(id); ok {
+		ground, ok := groundTerm.(Term[IntSort])
+		if !ok {
+			return true, false, true
+		}
+		value, ok := evaluateInteger(ground, booleanModel{}, integerModel{}, rationalModel{})
+		if !ok {
+			return true, false, true
+		}
+		length := NewIntegerValue(int64(assigned.Len()))
+		comparison := CompareIntegerValue(length, value)
+		if minimum {
+			comparison = -comparison
+		}
+		if strict {
+			return comparison < 0, true, true
+		}
+		return comparison <= 0, true, true
+	}
+	ground, ok := groundTerm.(Term[IntSort])
+	if !ok {
+		return true, false, true
+	}
+	value, ok := evaluateInteger(ground, booleanModel{}, integerModel{}, rationalModel{})
+	if !ok {
+		return true, false, true
+	}
+	bound, fits := value.Int64()
+	if !fits {
+		return true, false, true
+	}
+	target := requirements.forSymbol(id)
+	if minimum {
+		if strict {
+			if bound == int64(^uint64(0)>>1) {
+				return true, false, true
+			}
+			bound++
+		}
+		if bound > maximumConstructedIntegerSequenceLength {
+			return true, false, true
+		}
+		return addIntegerSequenceMinimumLength(target, int(bound)), true, true
+	}
+	if strict {
+		if bound == -int64(^uint64(0)>>1)-1 {
+			return false, true, true
+		}
+		bound--
+	}
+	if bound > maximumConstructedIntegerSequenceLength {
+		return true, true, true
+	}
+	return addIntegerSequenceMaximumLength(target, int(bound)), true, true
 }
 
 func collectPositiveIntegerSequenceRequirements(
@@ -960,6 +1073,34 @@ func collectPositiveIntegerSequenceRequirements(
 		_, rightSymbol := integerSequenceSymbolID(value.Right)
 		if leftSymbol || rightSymbol {
 			return true, true
+		}
+		if containsIntegerSequenceTheory(term) {
+			_, ok := evaluateBoolWithIntegerSequences(
+				term, booleanModel{}, integerModel{}, rationalModel{}, model,
+			)
+			return true, ok
+		}
+		return true, true
+	case Less:
+		consistent, supported, recognized := collectIntegerSequenceLengthBound(
+			value.Left, value.Right, true, model, requirements,
+		)
+		if recognized {
+			return consistent, supported
+		}
+		if containsIntegerSequenceTheory(term) {
+			_, ok := evaluateBoolWithIntegerSequences(
+				term, booleanModel{}, integerModel{}, rationalModel{}, model,
+			)
+			return true, ok
+		}
+		return true, true
+	case LessEqual:
+		consistent, supported, recognized := collectIntegerSequenceLengthBound(
+			value.Left, value.Right, false, model, requirements,
+		)
+		if recognized {
+			return consistent, supported
 		}
 		if containsIntegerSequenceTheory(term) {
 			_, ok := evaluateBoolWithIntegerSequences(
@@ -1187,6 +1328,7 @@ func placeIntegerSequenceContainments(
 
 func buildFixedLengthIntegerSequenceWitness(
 	requirements integerSequenceRequirements,
+	states *int,
 ) (IntegerSequenceValue, bool, bool) {
 	length := requirements.exactLength
 	if requirements.prefix.Len() > length || requirements.suffix.Len() > length {
@@ -1205,9 +1347,8 @@ func buildFixedLengthIntegerSequenceWitness(
 		!builder.placeFixed(requirements.suffix, length-requirements.suffix.Len()) {
 		return IntegerSequenceValue{}, false, true
 	}
-	states := 0
 	found, complete := placeIntegerSequenceContainments(
-		&builder, requirements, 0, &states,
+		&builder, requirements, 0, states,
 	)
 	if !found {
 		return IntegerSequenceValue{}, !complete, complete
@@ -1227,7 +1368,8 @@ func buildIntegerSequenceWitness(
 	requirements integerSequenceRequirements,
 ) (IntegerSequenceValue, bool, bool) {
 	if requirements.hasLength {
-		return buildFixedLengthIntegerSequenceWitness(requirements)
+		states := 0
+		return buildFixedLengthIntegerSequenceWitness(requirements, &states)
 	}
 	var result IntegerSequenceValue
 	if requirements.hasPrefix {
@@ -1241,6 +1383,49 @@ func buildIntegerSequenceWitness(
 	}
 	if requirements.hasSuffix && !integerSequenceEndsWith(result, requirements.suffix) {
 		result.appendSequence(requirements.suffix)
+	}
+	if requirements.hasMax {
+		minimum := 0
+		if requirements.hasMin {
+			minimum = requirements.minLength
+		}
+		for index := 0; index < requirements.containment; index++ {
+			if length := requirements.containmentAt(index).Len(); length > minimum {
+				minimum = length
+			}
+		}
+		if requirements.prefix.Len() > minimum {
+			minimum = requirements.prefix.Len()
+		}
+		if requirements.suffix.Len() > minimum {
+			minimum = requirements.suffix.Len()
+		}
+		states := 0
+		for length := minimum; length <= requirements.maxLength; length++ {
+			candidate := requirements
+			candidate.exactLength = length
+			candidate.hasLength = true
+			witness, consistent, supported := buildFixedLengthIntegerSequenceWitness(
+				candidate, &states,
+			)
+			if !supported {
+				return IntegerSequenceValue{}, true, false
+			}
+			if consistent {
+				return witness, true, true
+			}
+		}
+		return IntegerSequenceValue{}, false, true
+	}
+	if requirements.hasMin && result.Len() < requirements.minLength {
+		candidate := requirements
+		candidate.exactLength = requirements.minLength
+		if result.Len() > candidate.exactLength {
+			candidate.exactLength = result.Len()
+		}
+		candidate.hasLength = true
+		states := 0
+		return buildFixedLengthIntegerSequenceWitness(candidate, &states)
 	}
 	return result, true, true
 }

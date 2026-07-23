@@ -359,3 +359,74 @@ func TestExactLengthSymbolicIntegerSequenceWitness(t *testing.T) {
 		t.Fatalf("negative result=%T", checked)
 	}
 }
+
+func TestRelationalLengthSymbolicIntegerSequenceWitness(t *testing.T) {
+	unit := func(value int64) Term[SequenceSort[IntSort]] {
+		return SequenceUnit[IntSort](Integer{Value: value})
+	}
+	x := SequenceConst[IntSort](30, "x")
+	bounded := And{Values: []Term[BoolSort]{
+		SequenceHasPrefix(x, unit(1)),
+		SequenceHasSuffix(x, unit(3)),
+		SequenceContains(x, unit(2)),
+		LessEqual{Left: Integer{Value: 3}, Right: SequenceLength(x)},
+		LessEqual{Left: SequenceLength(x), Right: Integer{Value: 5}},
+	}}
+	checked := Check(Assert(17, New(), bounded))
+	result, ok := checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("bounded result=%T", checked)
+	}
+	value, found := IntegerSequenceModelValue(result.Value, x)
+	if !found || value.Len() < 3 || value.Len() > 5 {
+		t.Fatalf("bounded len=(%d,%v)", value.Len(), found)
+	}
+	if valid, found := BoolValue(result.Value, bounded); !found || !valid {
+		t.Fatalf("bounded formula=(%v,%v)", valid, found)
+	}
+
+	strictMinimum := Less{
+		Left:  Integer{Value: 5},
+		Right: SequenceLength(x),
+	}
+	strictResult, ok := Check(Assert(18, New(), strictMinimum)).(Satisfiable)
+	if !ok {
+		t.Fatal("strict minimum must be satisfiable")
+	}
+	if value, found := IntegerSequenceModelValue(strictResult.Value, x); !found || value.Len() != 6 {
+		t.Fatalf("strict minimum len=(%d,%v)", value.Len(), found)
+	}
+
+	conflicting := And{Values: []Term[BoolSort]{
+		LessEqual{Left: Integer{Value: 4}, Right: SequenceLength(x)},
+		LessEqual{Left: SequenceLength(x), Right: Integer{Value: 3}},
+	}}
+	if checked := Check(Assert(19, New(), conflicting)); func() bool {
+		_, ok := checked.(Unsatisfiable)
+		return ok
+	}() == false {
+		t.Fatalf("conflicting result=%T", checked)
+	}
+
+	orderIndependent := And{Values: []Term[BoolSort]{
+		LessEqual{Left: Integer{Value: 4}, Right: SequenceLength(x)},
+		Equal{Left: SequenceLength(x), Right: Integer{Value: 3}},
+	}}
+	if checked := Check(Assert(20, New(), orderIndependent)); func() bool {
+		_, ok := checked.(Unsatisfiable)
+		return ok
+	}() == false {
+		t.Fatalf("order-independent result=%T", checked)
+	}
+
+	impossible := Less{
+		Left:  SequenceLength(x),
+		Right: Integer{Value: 0},
+	}
+	if checked := Check(Assert(21, New(), impossible)); func() bool {
+		_, ok := checked.(Unsatisfiable)
+		return ok
+	}() == false {
+		t.Fatalf("impossible result=%T", checked)
+	}
+}
