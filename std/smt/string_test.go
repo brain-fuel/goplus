@@ -648,6 +648,79 @@ func TestWordEquationAffineLengthInteraction(t *testing.T) {
 	}
 }
 
+func TestWordEquationIntegerStringOperationInteraction(t *testing.T) {
+	x := StringConst(1, "x")
+	y := StringConst(2, "y")
+	indexFormula := And{Values: []Term[BoolSort]{
+		Equal{Left: StringConcat(x, y), Right: StringVal("abc")},
+		Equal{
+			Left:  StringIndexOf(x, StringVal("b"), Integer{Value: 0}),
+			Right: Integer{Value: 1},
+		},
+	}}
+	checked := Check(Assert(39, New(), indexFormula))
+	result, ok := checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("index result=%T", checked)
+	}
+	if actual, found := StringModelValue(result.Value, x); !found || actual != "ab" {
+		t.Fatalf("index x=(%q,%v)", actual, found)
+	}
+
+	toIntegerFormula := And{Values: []Term[BoolSort]{
+		Equal{Left: StringConcat(x, y), Right: StringVal("12z")},
+		Equal{Left: StringToInt(x), Right: Integer{Value: 12}},
+	}}
+	checked = Check(Assert(40, New(), toIntegerFormula))
+	result, ok = checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("to-int result=%T", checked)
+	}
+	if actual, found := StringModelValue(result.Value, x); !found || actual != "12" {
+		t.Fatalf("to-int x=(%q,%v)", actual, found)
+	}
+
+	toCodeFormula := And{Values: []Term[BoolSort]{
+		Equal{Left: StringConcat(x, y), Right: StringVal("a🙂")},
+		Equal{Left: StringToCode(x), Right: Integer{Value: 97}},
+	}}
+	checked = Check(Assert(41, New(), toCodeFormula))
+	result, ok = checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("to-code result=%T", checked)
+	}
+	if actual, found := StringModelValue(result.Value, x); !found || actual != "a" {
+		t.Fatalf("to-code x=(%q,%v)", actual, found)
+	}
+
+	const digits = "1234567890123456789012345678901234567890"
+	exact, err := ParseIntegerValue(digits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wide := And{Values: []Term[BoolSort]{
+		Equal{Left: StringConcat(x, y), Right: StringVal(digits + "!")},
+		Equal{Left: StringToInt(x), Right: IntegerTerm(exact)},
+	}}
+	checked = Check(Assert(42, New(), wide))
+	result, ok = checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("wide result=%T", checked)
+	}
+	if actual, found := StringModelValue(result.Value, x); !found || actual != digits {
+		t.Fatalf("wide x=(%q,%v)", actual, found)
+	}
+
+	impossible := And{Values: []Term[BoolSort]{
+		Equal{Left: StringConcat(x, y), Right: StringVal("abc")},
+		Equal{Left: StringToCode(x), Right: Integer{Value: 122}},
+	}}
+	checked = Check(Assert(43, New(), impossible))
+	if _, ok := checked.(Unsatisfiable); !ok {
+		t.Fatalf("impossible result=%T", checked)
+	}
+}
+
 func TestMultipleWordEquationInteraction(t *testing.T) {
 	x := StringConst(1, "x")
 	y := StringConst(2, "y")

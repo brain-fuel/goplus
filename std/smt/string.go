@@ -1413,17 +1413,58 @@ func evaluateStringOffsetTerm(term any, integers integerModel) (int64, bool) {
 }
 
 func stringIndexOfRunes(text, substring string, offset int64) int64 {
-	textRunes, substringRunes := DecodeStringCodePoints(text), DecodeStringCodePoints(substring)
-	if offset < 0 || offset > int64(len(textRunes)) {
+	if offset < 0 {
 		return -1
 	}
-	if len(substringRunes) == 0 {
+	byteOffset, codePointOffset, ok := stringCodePointByteOffset(text, offset)
+	if !ok {
+		return -1
+	}
+	if substring == "" {
 		return offset
 	}
-	for index := int(offset); index+len(substringRunes) <= len(textRunes); index++ {
-		if string(textRunes[index:index+len(substringRunes)]) == substring {
-			return int64(index)
+	for byteIndex, codePointIndex := byteOffset, codePointOffset; byteIndex < len(text); {
+		if strings.HasPrefix(text[byteIndex:], substring) &&
+			stringCodePointBoundary(text, byteIndex+len(substring)) {
+			return codePointIndex
 		}
+		byteIndex += stringCodePointWidth(text, byteIndex)
+		codePointIndex++
 	}
 	return -1
+}
+
+func stringCodePointByteOffset(value string, target int64) (int, int64, bool) {
+	byteOffset, codePointOffset := 0, int64(0)
+	for byteOffset < len(value) && codePointOffset < target {
+		byteOffset += stringCodePointWidth(value, byteOffset)
+		codePointOffset++
+	}
+	return byteOffset, codePointOffset, codePointOffset == target
+}
+
+func stringCodePointBoundary(value string, offset int) bool {
+	if offset < 0 || offset > len(value) {
+		return false
+	}
+	if offset == 0 || offset == len(value) {
+		return true
+	}
+	return value[offset]&0xc0 != 0x80
+}
+
+func stringCodePointWidth(value string, offset int) int {
+	first := value[offset]
+	switch {
+	case first < 0x80:
+		return 1
+	case first&0xe0 == 0xc0 && offset+2 <= len(value):
+		return 2
+	case first&0xf0 == 0xe0 && offset+3 <= len(value):
+		return 3
+	case first&0xf8 == 0xf0 && offset+4 <= len(value):
+		return 4
+	default:
+		return 1
+	}
 }

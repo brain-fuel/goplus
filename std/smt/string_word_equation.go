@@ -327,7 +327,7 @@ func bindBoundedWordEquationGroundConjunct(term Term[BoolSort], constraints *bou
 		if id, length, ok := boundedWordEquationLengthEquality(value); ok {
 			return assignBoundedWordEquationLength(constraints, id, length)
 		}
-		if isBoundedWordEquationLengthRelation(value.Left, value.Right) {
+		if isBoundedWordEquationIntegerRelation(value.Left, value.Right) {
 			return appendBoundedWordEquationPredicate(constraints, value)
 		}
 		if !isStringTerm(value.Left) || !isStringTerm(value.Right) {
@@ -347,7 +347,7 @@ func bindBoundedWordEquationGroundConjunct(term Term[BoolSort], constraints *bou
 	case Less:
 		id, minimum, maximum, hasMaximum, ok := boundedWordEquationLengthComparison(value.Left, value.Right, true)
 		if !ok {
-			if isBoundedWordEquationLengthRelation(value.Left, value.Right) {
+			if isBoundedWordEquationIntegerRelation(value.Left, value.Right) {
 				return appendBoundedWordEquationPredicate(constraints, value)
 			}
 			return false, false
@@ -356,7 +356,7 @@ func bindBoundedWordEquationGroundConjunct(term Term[BoolSort], constraints *bou
 	case LessEqual:
 		id, minimum, maximum, hasMaximum, ok := boundedWordEquationLengthComparison(value.Left, value.Right, false)
 		if !ok {
-			if isBoundedWordEquationLengthRelation(value.Left, value.Right) {
+			if isBoundedWordEquationIntegerRelation(value.Left, value.Right) {
 				return appendBoundedWordEquationPredicate(constraints, value)
 			}
 			return false, false
@@ -450,11 +450,11 @@ func isBoundedWordEquationPredicate(term Term[BoolSort]) bool {
 		return true
 	case Equal:
 		return isStringTerm(value.Left) && isStringTerm(value.Right) ||
-			isBoundedWordEquationLengthRelation(value.Left, value.Right)
+			isBoundedWordEquationIntegerRelation(value.Left, value.Right)
 	case Less:
-		return isBoundedWordEquationLengthRelation(value.Left, value.Right)
+		return isBoundedWordEquationIntegerRelation(value.Left, value.Right)
 	case LessEqual:
-		return isBoundedWordEquationLengthRelation(value.Left, value.Right)
+		return isBoundedWordEquationIntegerRelation(value.Left, value.Right)
 	case stringSystem:
 		for _, relation := range value.system.relations() {
 			if relation.Kind > CompactStringSuffix {
@@ -501,35 +501,45 @@ func isBoundedWordEquationPredicate(term Term[BoolSort]) bool {
 	}
 }
 
-func isBoundedWordEquationLengthRelation(left, right any) bool {
-	leftOK, leftHasLength := isBoundedWordEquationLengthExpression(left)
-	rightOK, rightHasLength := isBoundedWordEquationLengthExpression(right)
-	return leftOK && rightOK && (leftHasLength || rightHasLength)
+func isBoundedWordEquationIntegerRelation(left, right any) bool {
+	leftOK, leftHasString := isBoundedWordEquationIntegerExpression(left)
+	rightOK, rightHasString := isBoundedWordEquationIntegerExpression(right)
+	return leftOK && rightOK && (leftHasString || rightHasString)
 }
 
-func isBoundedWordEquationLengthExpression(term any) (valid, hasLength bool) {
-	if _, constant := integerConstant(term); constant {
+func isBoundedWordEquationIntegerExpression(term any) (valid, hasString bool) {
+	switch term.(type) {
+	case Integer, integerExact[IntSort]:
 		return true, false
 	}
 	switch value := term.(type) {
 	case stringLength:
 		return isStringTerm(value.value), true
+	case stringIndexOf:
+		_, constantOffset := integerConstant(value.offset)
+		return isStringTerm(value.value) &&
+			isStringTerm(value.substring) &&
+			constantOffset, true
+	case stringToInteger:
+		return isStringTerm(value.value), true
+	case stringToCode:
+		return isStringTerm(value.value), true
 	case Add:
-		hasLength := false
+		hasString := false
 		for _, item := range value.Values {
-			valid, childHasLength := isBoundedWordEquationLengthExpression(item)
+			valid, childHasString := isBoundedWordEquationIntegerExpression(item)
 			if !valid {
 				return false, false
 			}
-			hasLength = hasLength || childHasLength
+			hasString = hasString || childHasString
 		}
-		return true, hasLength
+		return true, hasString
 	case Subtract:
-		leftOK, leftHasLength := isBoundedWordEquationLengthExpression(value.Left)
-		rightOK, rightHasLength := isBoundedWordEquationLengthExpression(value.Right)
-		return leftOK && rightOK, leftHasLength || rightHasLength
+		leftOK, leftHasString := isBoundedWordEquationIntegerExpression(value.Left)
+		rightOK, rightHasString := isBoundedWordEquationIntegerExpression(value.Right)
+		return leftOK && rightOK, leftHasString || rightHasString
 	case IntegerScale:
-		return isBoundedWordEquationLengthExpression(value.Value)
+		return isBoundedWordEquationIntegerExpression(value.Value)
 	default:
 		return false, false
 	}
