@@ -290,6 +290,52 @@ func TestExecuteRecursiveUnaryDatatypeRecognizerModel(t *testing.T) {
 	}
 }
 
+func TestExecuteBinaryRecursiveDatatype(t *testing.T) {
+	script := `(set-logic QF_DT)
+(declare-datatype Tree ((leaf) (node (left Tree) (right Tree))))
+(declare-const x Tree)
+(assert (= x (node (node leaf leaf) leaf)))
+(assert (= (left x) (node leaf leaf)))
+(assert (is-node x))
+(check-sat)
+(get-value (x (left x) (right x)))`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[6].(Satisfiable); !ok {
+		t.Fatalf("check=%T", result.Responses[6])
+	}
+	values, ok := result.Responses[7].(ValuesAvailable)
+	if !ok || len(values.Values) != 3 {
+		t.Fatalf("values=%#v", result.Responses[7])
+	}
+	x, xOK := values.Values[0].(DatatypeValue)
+	left, leftOK := values.Values[1].(DatatypeValue)
+	right, rightOK := values.Values[2].(DatatypeValue)
+	if !xOK || x.Value.ConstructorName != "node" || x.Value.Child == nil || x.Value.SecondChild == nil || x.Value.Child.ConstructorName != "node" || x.Value.SecondChild.ConstructorName != "leaf" {
+		t.Fatalf("x=%#v", values.Values[0])
+	}
+	if !leftOK || left.Value.ConstructorName != "node" || left.Value.Child == nil || left.Value.SecondChild == nil || !rightOK || right.Value.ConstructorName != "leaf" {
+		t.Fatalf("selectors=%#v", values.Values[1:])
+	}
+}
+
+func TestExecuteBinaryRecursiveDatatypeAcyclicity(t *testing.T) {
+	script := `(set-logic QF_DT)
+(declare-datatype Tree ((leaf) (node (left Tree) (right Tree))))
+(declare-const x Tree)
+(assert (= x (node leaf x)))
+(check-sat)`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[4].(Unsatisfiable); !ok {
+		t.Fatalf("check=%T responses=%#v", result.Responses[4], result.Responses)
+	}
+}
+
 func TestExecuteAssumptionCore(t *testing.T) {
 	script := `(declare-const a Bool)
 (declare-const b Bool)

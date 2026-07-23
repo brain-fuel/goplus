@@ -129,6 +129,98 @@ func solveBooleanInlineCNF(cnf BooleanInlineCNF) checkOutcome {
 	return checkOutcome{status: checkSat, booleans: model}
 }
 
+// solveBooleanChoiceCNF recognizes disjoint positive choice groups constrained
+// only by binary incompatibilities. This covers one-hot allocation, graph
+// coloring, and finite scheduling CNFs without translating them into a larger
+// Tseitin problem. The 64-variable bound keeps recognition and search entirely
+// in fixed-size bit sets; larger and more general CNFs use CDCL below.
+func solveBooleanChoiceCNF(cnf BooleanCNF) (checkOutcome, bool) {
+	var groups [64]uint64
+	var conflicts [65]uint64
+	var owner [65]uint8
+	used := uint64(0)
+	groupCount, maximum, start := 0, 0, 0
+	for _, end := range cnf.ClauseEnds {
+		if end <= start || end > len(cnf.Literals) {
+			return checkOutcome{}, false
+		}
+		clause := cnf.Literals[start:end]
+		start = end
+		positive := true
+		for _, literal := range clause {
+			positive = positive && literal > 0
+			variable := absCNF(literal)
+			if variable == 0 || variable > 64 {
+				return checkOutcome{}, false
+			}
+			if variable > maximum {
+				maximum = variable
+			}
+			used |= uint64(1) << (variable - 1)
+		}
+		if positive {
+			if groupCount == len(groups) {
+				return checkOutcome{}, false
+			}
+			mask := uint64(0)
+			for _, literal := range clause {
+				bit := uint64(1) << (literal - 1)
+				if mask&bit != 0 || owner[literal] != 0 {
+					return checkOutcome{}, false
+				}
+				mask |= bit
+				owner[literal] = uint8(groupCount + 1)
+			}
+			groups[groupCount] = mask
+			groupCount++
+			continue
+		}
+		if len(clause) != 2 || clause[0] >= 0 || clause[1] >= 0 {
+			return checkOutcome{}, false
+		}
+		left, right := -clause[0], -clause[1]
+		if left == right {
+			return checkOutcome{}, false
+		}
+		conflicts[left] |= uint64(1) << (right - 1)
+		conflicts[right] |= uint64(1) << (left - 1)
+	}
+	if start != len(cnf.Literals) || groupCount < 2 {
+		return checkOutcome{}, false
+	}
+	for variable := 1; variable <= maximum; variable++ {
+		if used&(uint64(1)<<(variable-1)) != 0 && owner[variable] == 0 {
+			return checkOutcome{}, false
+		}
+	}
+	selected, satisfiable := searchBooleanChoices(groups[:groupCount], &conflicts, 0, 0)
+	if !satisfiable {
+		return checkOutcome{status: checkUnsat}, true
+	}
+	var model booleanModel
+	model.reserve(maximum)
+	for variable := 1; variable <= maximum; variable++ {
+		model.set(variable-1, selected&(uint64(1)<<(variable-1)) != 0)
+	}
+	return checkOutcome{status: checkSat, booleans: model}, true
+}
+
+func searchBooleanChoices(groups []uint64, conflicts *[65]uint64, group int, selected uint64) (uint64, bool) {
+	if group == len(groups) {
+		return selected, true
+	}
+	choices := groups[group]
+	for variable := 1; variable <= 64; variable++ {
+		bit := uint64(1) << (variable - 1)
+		if choices&bit != 0 && conflicts[variable]&selected == 0 {
+			if result, ok := searchBooleanChoices(groups, conflicts, group+1, selected|bit); ok {
+				return result, true
+			}
+		}
+	}
+	return 0, false
+}
+
 func searchBooleanInlineCNF(cnf BooleanInlineCNF, maximum int, used *[65]bool, assignment *[65]int8, trail *[64]int, trailCount *int) bool {
 	startTrail := *trailCount
 	if !propagateBooleanInlineCNF(cnf, assignment, trail, trailCount) {

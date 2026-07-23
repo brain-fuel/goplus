@@ -143,6 +143,13 @@ type ArrayCongruenceConjunction struct {
 
 func (ArrayCongruenceConjunction) isTerm(BoolSort) {}
 
+type ArrayExtensionalReadConjunction struct {
+	Equality ArrayEqualityRelation
+	Read     ArrayReadValueRelation
+}
+
+func (ArrayExtensionalReadConjunction) isTerm(BoolSort) {}
+
 type ArrayStoreEqualityRelation struct {
 	LeftID     int
 	RightID    int
@@ -205,6 +212,17 @@ type ArrayIntegerEqualityExchange struct {
 
 func (ArrayIntegerEqualityExchange) isTerm(BoolSort) {}
 
+// ArrayIntegerSymbolEqualityExchange is the compact two-atom form of
+// i = j together with a store-at-i/read-at-j relation. It avoids routing a
+// common array law through the general LIA/array combination machinery.
+type ArrayIntegerSymbolEqualityExchange struct {
+	LeftID  int
+	RightID int
+	Read    ArrayStoreReadValueRelation
+}
+
+func (ArrayIntegerSymbolEqualityExchange) isTerm(BoolSort) {}
+
 func CompactIntegerArrayStoreReadValueEquality(left, right Term[IntSort]) (ArrayStoreReadValueRelation, bool) {
 	if read, ok := left.(arrayStoreReadInteger[IntSort]); ok {
 		if value, valueOK := exactIntegerConstant(right); valueOK {
@@ -223,19 +241,27 @@ func solveCompactArrayIntegerExchange(assertions []Term[BoolSort]) (checkOutcome
 	if len(assertions) != 1 {
 		return checkOutcome{}, false
 	}
-	value, ok := assertions[0].(ArrayIntegerEqualityExchange)
-	if !ok {
+	switch value := assertions[0].(type) {
+	case ArrayIntegerSymbolEqualityExchange:
+		read := value.Read
+		indices := read.StoreIndexID == value.LeftID && read.ReadIndexID == value.RightID || read.StoreIndexID == value.RightID && read.ReadIndexID == value.LeftID
+		if indices && read.Negated && CompareIntegerValue(read.StoredValue, read.ComparedValue) == 0 {
+			return checkOutcome{status: checkUnsat}, true
+		}
+		return checkOutcome{}, false
+	case ArrayIntegerEqualityExchange:
+		first, second, read := value.First, value.Second, value.Read
+		firstZero := !first.Strict && !first.Wide && first.Bound == 0 && first.HasPositive && first.HasNegative
+		secondZero := !second.Strict && !second.Wide && second.Bound == 0 && second.HasPositive && second.HasNegative
+		reciprocal := first.PositiveID == second.NegativeID && first.NegativeID == second.PositiveID
+		indices := read.StoreIndexID == first.PositiveID && read.ReadIndexID == first.NegativeID || read.StoreIndexID == first.NegativeID && read.ReadIndexID == first.PositiveID
+		if firstZero && secondZero && reciprocal && indices && read.Negated && CompareIntegerValue(read.StoredValue, read.ComparedValue) == 0 {
+			return checkOutcome{status: checkUnsat}, true
+		}
+		return checkOutcome{}, false
+	default:
 		return checkOutcome{}, false
 	}
-	first, second, read := value.First, value.Second, value.Read
-	firstZero := !first.Strict && !first.Wide && first.Bound == 0 && first.HasPositive && first.HasNegative
-	secondZero := !second.Strict && !second.Wide && second.Bound == 0 && second.HasPositive && second.HasNegative
-	reciprocal := first.PositiveID == second.NegativeID && first.NegativeID == second.PositiveID
-	indices := read.StoreIndexID == first.PositiveID && read.ReadIndexID == first.NegativeID || read.StoreIndexID == first.NegativeID && read.ReadIndexID == first.PositiveID
-	if firstZero && secondZero && reciprocal && indices && read.Negated && CompareIntegerValue(read.StoredValue, read.ComparedValue) == 0 {
-		return checkOutcome{status: checkUnsat}, true
-	}
-	return checkOutcome{}, false
 }
 
 func CompactIntegerArrayReadValueEquality(left, right Term[IntSort]) (ArrayReadValueRelation, bool) {
@@ -309,7 +335,7 @@ func containsArrayTheory(term Term[BoolSort]) bool {
 		return containsArrayTheory(value.Left) || containsArrayTheory(value.Right)
 	case Equal:
 		return isArrayTerm(value.Left) || isArrayTerm(value.Right) || isArraySelect(value.Left) || isArraySelect(value.Right)
-	case ArrayEqualityRelation, ArrayReadRelation, ArrayCongruenceConjunction, ArrayStoreEqualityRelation, ArrayStoreBridgeReadConjunction, ArrayConstantEqualityRelation, ArrayReadValueRelation, ArrayConstantReadConjunction, ArrayStoreReadValueRelation, ArrayIntegerEqualityExchange, BitVectorArrayEqualityRelation, BitVectorArrayStoreReadValueRelation, BitVectorArrayEqualityExchange:
+	case ArrayEqualityRelation, ArrayReadRelation, ArrayCongruenceConjunction, ArrayExtensionalReadConjunction, ArrayStoreEqualityRelation, ArrayStoreBridgeReadConjunction, ArrayConstantEqualityRelation, ArrayReadValueRelation, ArrayConstantReadConjunction, ArrayStoreReadValueRelation, ArrayIntegerEqualityExchange, ArrayIntegerSymbolEqualityExchange, BitVectorArrayEqualityRelation, BitVectorArrayStoreReadValueRelation, BitVectorArrayEqualityExchange:
 		return true
 	}
 	return false
@@ -317,6 +343,26 @@ func containsArrayTheory(term Term[BoolSort]) bool {
 
 func solveCompactArrayAssertions(assertions []Term[BoolSort]) (checkOutcome, bool) {
 	if len(assertions) == 1 {
+		if conjunction, ok := assertions[0].(ArrayExtensionalReadConjunction); ok {
+			equality, read := conjunction.Equality, conjunction.Read
+			if !equality.Negated || read.Negated || read.ArrayID != equality.LeftID && read.ArrayID != equality.RightID {
+				return checkOutcome{}, false
+			}
+			otherID := equality.RightID
+			if read.ArrayID == otherID {
+				otherID = equality.LeftID
+			}
+			zero := NewIntegerValue(0)
+			different := zero
+			if CompareIntegerValue(read.Value, zero) == 0 {
+				different = NewIntegerValue(1)
+			}
+			arrays := &integerArrayModel{}
+			arrays.setDefault(read.ArrayID, read.Value)
+			arrays.setDefault(otherID, different)
+			arrays.set(read.ArrayID, read.Index, read.Value)
+			return checkOutcome{status: checkSat, arrays: arrays}, true
+		}
 		if conjunction, ok := assertions[0].(ArrayConstantReadConjunction); ok {
 			equality, read := conjunction.Equality, conjunction.Read
 			if !equality.Negated && read.Negated && equality.ArrayID == read.ArrayID && CompareIntegerValue(equality.Default, read.Value) == 0 {

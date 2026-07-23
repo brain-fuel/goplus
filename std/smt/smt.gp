@@ -19,6 +19,16 @@ type DatatypeSort[d nat, n nat] enum {
 type RecursiveDatatypeConstructor[d nat, n nat, c nat] enum {
 	recursiveDatatypeConstructorValue(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, SelectorName string) RecursiveDatatypeConstructor[d, n, c]
 }
+// BinaryRecursiveDatatypeConstructor witnesses a branching constructor whose
+// two fields both have the enclosing datatype sort.
+//goplus:derive off
+type BinaryRecursiveDatatypeConstructor[d nat, n nat, c nat] enum {
+	binaryRecursiveDatatypeConstructorValue(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, FirstSelectorName string, SecondSelectorName string) BinaryRecursiveDatatypeConstructor[d, n, c]
+}
+type BinaryDatatypeField enum {
+	FirstDatatypeField() BinaryDatatypeField
+	SecondDatatypeField() BinaryDatatypeField
+}
 //goplus:derive off
 type ArraySort[I any, E any] enum {
 	arraySort() ArraySort[I, E]
@@ -145,6 +155,9 @@ type Term[S any] enum {
 	datatypeRecursiveRecognizer(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, SelectorName string, Value any) Term[BoolSort]
 	datatypeRecursiveApplication(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, SelectorName string, Value any) Term[S]
 	datatypeRecursiveSelector(DatatypeID int, ConstructorCount int, ConstructorID int, SelectorName string, Value any) Term[S]
+	datatypeBinaryRecursiveApplication(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, FirstSelectorName string, SecondSelectorName string, First any, Second any) Term[S]
+	datatypeBinaryRecursiveSelector(DatatypeID int, ConstructorCount int, ConstructorID int, Field int, SelectorName string, Value any) Term[S]
+	datatypeBinaryRecursiveRecognizer(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, Value any) Term[BoolSort]
 }
 
 type AnyTerm enum {
@@ -172,7 +185,7 @@ type Solver[c nat, d nat] enum {
 //goplus:derive off
 //goplus:repr transparent
 type Model[c nat] enum {
-	modelValue(ContextID int, Booleans booleanModel, Integers integerModel, Reals rationalModel, BitVectors bitVectorModel, Arrays *integerArrayModel, BitVectorArrays *bitVectorArrayModel, Datatypes datatypeModel) Model[c]
+	modelValue(ContextID int, Booleans booleanModel, Integers integerModel, Reals rationalModel, BitVectors bitVectorModel, Arrays *integerArrayModel, BitVectorArrays *bitVectorArrayModel, Datatypes *datatypeModel) Model[c]
 }
 
 //goplus:derive off
@@ -264,6 +277,33 @@ func SelectRecursiveDatatypeConstructor(0 datatype nat, 0 constructors nat, 0 co
 func IsRecursiveDatatypeConstructor(0 datatype nat, 0 constructors nat, 0 constructor nat, declaration RecursiveDatatypeConstructor[datatype, constructors, constructor], value Term[DatatypeSort[datatype, constructors]]) Term[BoolSort] {
 	match declaration { case recursiveDatatypeConstructorValue(datatypeID, constructorCount, constructorID, name, selectorName):
 		return datatypeRecursiveRecognizer(datatypeID, constructorCount, constructorID, name, selectorName, value)
+	}
+}
+
+func DeclareBinaryRecursiveDatatypeConstructor(datatype nat, constructors nat, constructor nat, name string, firstSelectorName string, secondSelectorName string) BinaryRecursiveDatatypeConstructor[datatype, constructors, constructor] {
+	if constructors < 2 || constructor >= constructors { panic("smt: binary recursive constructor requires a possible base constructor inside datatype cardinality") }
+	if firstSelectorName == secondSelectorName { panic("smt: binary recursive constructor selectors must be distinct") }
+	return binaryRecursiveDatatypeConstructorValue(int(datatype), int(constructors), int(constructor), name, firstSelectorName, secondSelectorName)
+}
+
+func ApplyBinaryRecursiveDatatypeConstructor(0 datatype nat, 0 constructors nat, 0 constructor nat, declaration BinaryRecursiveDatatypeConstructor[datatype, constructors, constructor], first Term[DatatypeSort[datatype, constructors]], second Term[DatatypeSort[datatype, constructors]]) Term[DatatypeSort[datatype, constructors]] {
+	match declaration { case binaryRecursiveDatatypeConstructorValue(datatypeID, constructorCount, constructorID, name, firstSelectorName, secondSelectorName):
+		return Term[DatatypeSort[datatype, constructors]].datatypeBinaryRecursiveApplication(datatypeID, constructorCount, constructorID, name, firstSelectorName, secondSelectorName, first, second)
+	}
+}
+
+func SelectBinaryRecursiveDatatypeConstructor(field BinaryDatatypeField, 0 datatype nat, 0 constructors nat, 0 constructor nat, declaration BinaryRecursiveDatatypeConstructor[datatype, constructors, constructor], value Term[DatatypeSort[datatype, constructors]]) Term[DatatypeSort[datatype, constructors]] {
+	match declaration { case binaryRecursiveDatatypeConstructorValue(datatypeID, constructorCount, constructorID, _, firstSelectorName, secondSelectorName):
+		match field {
+		case FirstDatatypeField(): return Term[DatatypeSort[datatype, constructors]].datatypeBinaryRecursiveSelector(datatypeID, constructorCount, constructorID, 0, firstSelectorName, value)
+		case SecondDatatypeField(): return Term[DatatypeSort[datatype, constructors]].datatypeBinaryRecursiveSelector(datatypeID, constructorCount, constructorID, 1, secondSelectorName, value)
+		}
+	}
+}
+
+func IsBinaryRecursiveDatatypeConstructor(0 datatype nat, 0 constructors nat, 0 constructor nat, declaration BinaryRecursiveDatatypeConstructor[datatype, constructors, constructor], value Term[DatatypeSort[datatype, constructors]]) Term[BoolSort] {
+	match declaration { case binaryRecursiveDatatypeConstructorValue(datatypeID, constructorCount, constructorID, name, _, _):
+		return datatypeBinaryRecursiveRecognizer(datatypeID, constructorCount, constructorID, name, value)
 	}
 }
 
@@ -574,7 +614,7 @@ func CheckAssuming(0 c nat, 0 d nat, solver Solver[c, d], assumptions ...Term[Bo
 		if depth < 0 { panic("smt: invalid depth") }
 		status, booleans, integers, reals, bitVectors, core, reason := state.checkAssuming(assumptions)
 		switch status {
-		case checkSat: return AssumptionsSatisfiable(modelValue(context, booleans, integers, reals, bitVectors, nil, nil, datatypeModel{}))
+		case checkSat: return AssumptionsSatisfiable(modelValue(context, booleans, integers, reals, bitVectors, nil, nil, nil))
 		case checkUnsat: return AssumptionsUnsatisfiable(proofValue(context, len(state.assertions)), core)
 		default: return AssumptionsUnknown(proofValue(context, len(state.assertions)), reason)
 		}

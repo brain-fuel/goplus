@@ -56,6 +56,28 @@ func TestBooleanInlineCNFModelAndContradiction(t *testing.T) {
 	}
 }
 
+func TestBooleanChoiceCNFSparseModelAndContradiction(t *testing.T) {
+	satisfiable := BooleanCNF{
+		Literals:   []int{2, 3, 5, 6, -2, -5, -3, -6},
+		ClauseEnds: []int{2, 4, 6, 8},
+	}
+	result, ok := Check(Assert(1, New(), satisfiable)).(Satisfiable)
+	if !ok {
+		t.Fatalf("result=%T", Check(Assert(1, New(), satisfiable)))
+	}
+	if value, complete := BoolValue(result.Value, satisfiable); !complete || !value {
+		t.Fatalf("choice model=(%v,%v)", value, complete)
+	}
+
+	unsatisfiable := BooleanCNF{
+		Literals:   []int{2, 5, -2, -5},
+		ClauseEnds: []int{1, 2, 4},
+	}
+	if _, ok := Check(Assert(2, New(), unsatisfiable)).(Unsatisfiable); !ok {
+		t.Fatal("expected incompatible singleton choices to be unsatisfiable")
+	}
+}
+
 func TestLinearIntegerArithmeticSatModel(t *testing.T) {
 	x := IntSymbol{ID: 1, Name: "x"}
 	y := IntSymbol{ID: 2, Name: "y"}
@@ -850,6 +872,66 @@ func TestRecursiveUnaryDatatypeRecognizerBuildsWellFoundedModel(t *testing.T) {
 	value, found := DatatypeModelValue(84, 2, result.Value, x)
 	if !found || value.ConstructorID != 1 || value.ConstructorName != "succ" || value.Child == nil || value.Child.ConstructorID != 0 || value.Child.Child != nil {
 		t.Fatalf("recursive recognizer model=%#v/%v", value, found)
+	}
+}
+
+func TestBinaryRecursiveDatatypeSelectorsAndModels(t *testing.T) {
+	leaf := DatatypeConstructor(85, 2, 0, "leaf")
+	node := DeclareBinaryRecursiveDatatypeConstructor(85, 2, 1, "node", "left", "right")
+	left := ApplyBinaryRecursiveDatatypeConstructor(node, leaf, leaf)
+	tree := ApplyBinaryRecursiveDatatypeConstructor(node, left, leaf)
+	x := DatatypeConst(85, 2, 1, "x")
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: tree},
+		Equal{Left: SelectBinaryRecursiveDatatypeConstructor(FirstDatatypeField{}, node, x), Right: left},
+		Equal{Left: SelectBinaryRecursiveDatatypeConstructor(SecondDatatypeField{}, node, x), Right: leaf},
+		IsBinaryRecursiveDatatypeConstructor(node, x),
+	}}
+	result, ok := Check(Assert(1, New(), formula)).(Satisfiable)
+	if !ok {
+		t.Fatalf("binary recursive result=%#v", Check(Assert(1, New(), formula)))
+	}
+	value, found := DatatypeModelValue(85, 2, result.Value, x)
+	if !found || value.ConstructorID != 1 || value.Child == nil || value.SecondChild == nil || value.Child.ConstructorID != 1 || value.Child.Child == nil || value.Child.SecondChild == nil || value.SecondChild.ConstructorID != 0 {
+		t.Fatalf("binary recursive model=%#v/%v", value, found)
+	}
+}
+
+func TestBinaryRecursiveDatatypeInjectivityAndAcyclicity(t *testing.T) {
+	leaf := DatatypeConstructor(86, 2, 0, "leaf")
+	node := DeclareBinaryRecursiveDatatypeConstructor(86, 2, 1, "node", "left", "right")
+	x := DatatypeConst(86, 2, 1, "x")
+	y := DatatypeConst(86, 2, 2, "y")
+	firstConflict := And{Values: []Term[BoolSort]{
+		Equal{Left: ApplyBinaryRecursiveDatatypeConstructor(node, x, leaf), Right: ApplyBinaryRecursiveDatatypeConstructor(node, y, leaf)},
+		Not{Value: Equal{Left: x, Right: y}},
+	}}
+	if _, ok := Check(Assert(1, New(), firstConflict)).(Unsatisfiable); !ok {
+		t.Fatal("binary constructor must be injective in its first field")
+	}
+	secondConflict := And{Values: []Term[BoolSort]{
+		Equal{Left: ApplyBinaryRecursiveDatatypeConstructor(node, leaf, x), Right: ApplyBinaryRecursiveDatatypeConstructor(node, leaf, y)},
+		Not{Value: Equal{Left: x, Right: y}},
+	}}
+	if _, ok := Check(Assert(2, New(), secondConflict)).(Unsatisfiable); !ok {
+		t.Fatal("binary constructor must be injective in its second field")
+	}
+	cycle := Equal{Left: x, Right: ApplyBinaryRecursiveDatatypeConstructor(node, leaf, x)}
+	if _, ok := Check(Assert(3, New(), cycle)).(Unsatisfiable); !ok {
+		t.Fatal("cycles through either binary field must be rejected")
+	}
+}
+
+func TestBinaryRecursiveDatatypeRecognizerBuildsWellFoundedModel(t *testing.T) {
+	node := DeclareBinaryRecursiveDatatypeConstructor(87, 2, 1, "node", "left", "right")
+	x := DatatypeConst(87, 2, 1, "x")
+	result, ok := Check(Assert(1, New(), IsBinaryRecursiveDatatypeConstructor(node, x))).(Satisfiable)
+	if !ok {
+		t.Fatalf("binary recognizer result=%#v", Check(Assert(1, New(), IsBinaryRecursiveDatatypeConstructor(node, x))))
+	}
+	value, found := DatatypeModelValue(87, 2, result.Value, x)
+	if !found || value.ConstructorID != 1 || value.Child == nil || value.SecondChild == nil || value.Child.ConstructorID != 0 || value.SecondChild.ConstructorID != 0 {
+		t.Fatalf("binary recognizer model=%#v/%v", value, found)
 	}
 }
 

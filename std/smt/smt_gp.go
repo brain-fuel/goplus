@@ -41,6 +41,102 @@ type recursiveDatatypeConstructorValue struct {
 
 func (recursiveDatatypeConstructorValue) isRecursiveDatatypeConstructor() {}
 
+// BinaryRecursiveDatatypeConstructor witnesses a branching constructor whose
+// two fields both have the enclosing datatype sort.
+//
+//goplus:enum BinaryRecursiveDatatypeConstructor[d nat, n nat, c nat]
+//goplus:derive off
+type BinaryRecursiveDatatypeConstructor interface{ isBinaryRecursiveDatatypeConstructor() }
+
+//goplus:variant (BinaryRecursiveDatatypeConstructor) binaryRecursiveDatatypeConstructorValue(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, FirstSelectorName string, SecondSelectorName string) BinaryRecursiveDatatypeConstructor[d, n, c]
+type binaryRecursiveDatatypeConstructorValue struct {
+	datatypeID         int
+	constructorCount   int
+	constructorID      int
+	name               string
+	firstSelectorName  string
+	secondSelectorName string
+}
+
+func (binaryRecursiveDatatypeConstructorValue) isBinaryRecursiveDatatypeConstructor() {}
+
+//goplus:enum BinaryDatatypeField
+type BinaryDatatypeField interface{ isBinaryDatatypeField() }
+
+//goplus:variant (BinaryDatatypeField) FirstDatatypeField() BinaryDatatypeField
+type FirstDatatypeField struct{}
+
+func (FirstDatatypeField) isBinaryDatatypeField() {}
+
+//goplus:variant (BinaryDatatypeField) SecondDatatypeField() BinaryDatatypeField
+type SecondDatatypeField struct{}
+
+func (SecondDatatypeField) isBinaryDatatypeField() {}
+
+// BinaryDatatypeFieldCases selects one handler per BinaryDatatypeField variant for BinaryDatatypeFieldFold.
+type BinaryDatatypeFieldCases[R any] struct {
+	FirstDatatypeField  func() R
+	SecondDatatypeField func() R
+}
+
+// BinaryDatatypeFieldFold reduces BinaryDatatypeField by one-level case analysis.
+func BinaryDatatypeFieldFold[R any](b BinaryDatatypeField, cs BinaryDatatypeFieldCases[R]) R {
+	switch any(b).(type) {
+	case FirstDatatypeField:
+		return cs.FirstDatatypeField()
+	case SecondDatatypeField:
+		return cs.SecondDatatypeField()
+	default:
+		panic("goplus: impossible enum value in BinaryDatatypeFieldFold")
+	}
+}
+
+// BinaryDatatypeFieldEqOverrides carries optional per-variant hooks for BinaryDatatypeFieldEqualWith.
+// A hook returning handled=false falls through to the derived comparison.
+type BinaryDatatypeFieldEqOverrides struct {
+	FirstDatatypeField  func(x, y FirstDatatypeField) (eq, handled bool)
+	SecondDatatypeField func(x, y SecondDatatypeField) (eq, handled bool)
+}
+
+// BinaryDatatypeFieldEqualWith reports structural equality of a and b under ov.
+func BinaryDatatypeFieldEqualWith(a, b BinaryDatatypeField, ov BinaryDatatypeFieldEqOverrides) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	switch x := any(a).(type) {
+	case FirstDatatypeField:
+		y, ok := any(b).(FirstDatatypeField)
+		if !ok {
+			return false
+		}
+		if ov.FirstDatatypeField != nil {
+			if eq, handled := ov.FirstDatatypeField(x, y); handled {
+				return eq
+			}
+		}
+		_ = y
+		return true
+	case SecondDatatypeField:
+		y, ok := any(b).(SecondDatatypeField)
+		if !ok {
+			return false
+		}
+		if ov.SecondDatatypeField != nil {
+			if eq, handled := ov.SecondDatatypeField(x, y); handled {
+				return eq
+			}
+		}
+		_ = y
+		return true
+	}
+	return false
+}
+
+// BinaryDatatypeFieldEqual reports structural equality of a and b.
+func BinaryDatatypeFieldEqual(a, b BinaryDatatypeField) bool {
+	return BinaryDatatypeFieldEqualWith(a, b, BinaryDatatypeFieldEqOverrides{})
+}
+
 //goplus:enum ArraySort[I any, E any]
 //goplus:derive off
 type ArraySort[I any, E any] interface{ isArraySort(I, E) }
@@ -822,91 +918,131 @@ type datatypeRecursiveSelector[S any] struct {
 
 func (datatypeRecursiveSelector[S]) isTerm(S) {}
 
+//goplus:variant (Term[S]) datatypeBinaryRecursiveApplication(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, FirstSelectorName string, SecondSelectorName string, First any, Second any) Term[S]
+type datatypeBinaryRecursiveApplication[S any] struct {
+	datatypeID         int
+	constructorCount   int
+	constructorID      int
+	name               string
+	firstSelectorName  string
+	secondSelectorName string
+	first              any
+	second             any
+}
+
+func (datatypeBinaryRecursiveApplication[S]) isTerm(S) {}
+
+//goplus:variant (Term[S]) datatypeBinaryRecursiveSelector(DatatypeID int, ConstructorCount int, ConstructorID int, Field int, SelectorName string, Value any) Term[S]
+type datatypeBinaryRecursiveSelector[S any] struct {
+	datatypeID       int
+	constructorCount int
+	constructorID    int
+	field            int
+	selectorName     string
+	value            any
+}
+
+func (datatypeBinaryRecursiveSelector[S]) isTerm(S) {}
+
+//goplus:variant (Term[S]) datatypeBinaryRecursiveRecognizer(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, Value any) Term[BoolSort]
+type datatypeBinaryRecursiveRecognizer struct {
+	datatypeID       int
+	constructorCount int
+	constructorID    int
+	name             string
+	value            any
+}
+
+func (datatypeBinaryRecursiveRecognizer) isTerm(BoolSort) {}
+
 // TermCases selects one handler per Term variant for TermFold.
 type TermCases[S any, R any] struct {
-	Bool                          func(Value bool) R
-	BoolSymbol                    func(ID int, Name string) R
-	BooleanVariable               func(ID int) R
-	NegatedBooleanVariable        func(ID int) R
-	BooleanClause                 func(Literals []int) R
-	BooleanCNF                    func(Literals []int, ClauseEnds []int) R
-	Not                           func(Value Term[BoolSort]) R
-	And                           func(Values []Term[BoolSort]) R
-	Or                            func(Values []Term[BoolSort]) R
-	Implies                       func(Left Term[BoolSort], Right Term[BoolSort]) R
-	Iff                           func(Left Term[BoolSort], Right Term[BoolSort]) R
-	If                            func(Condition Term[BoolSort], Then Term[S], Else Term[S]) R
-	Equal                         func(Left any, Right any) R
-	Integer                       func(Value int64) R
-	integerExact                  func(Value IntegerValue) R
-	IntSymbol                     func(ID int, Name string) R
-	integerVariable               func(ID int) R
-	Add                           func(Values []Term[IntSort]) R
-	Subtract                      func(Left Term[IntSort], Right Term[IntSort]) R
-	IntegerScale                  func(Coefficient IntegerValue, Value Term[IntSort]) R
-	IntegerDiv                    func(Dividend Term[IntSort], Divisor IntegerValue) R
-	IntegerMod                    func(Dividend Term[IntSort], Divisor IntegerValue) R
-	LessEqual                     func(Left Term[IntSort], Right Term[IntSort]) R
-	Less                          func(Left Term[IntSort], Right Term[IntSort]) R
-	Real                          func(Value Rational) R
-	RealSymbol                    func(ID int, Name string) R
-	RealAdd                       func(Values []Term[RealSort]) R
-	RealSubtract                  func(Left Term[RealSort], Right Term[RealSort]) R
-	RealScale                     func(Coefficient Rational, Value Term[RealSort]) R
-	RealLessEqual                 func(Left Term[RealSort], Right Term[RealSort]) R
-	RealLess                      func(Left Term[RealSort], Right Term[RealSort]) R
-	uninterpretedValue            func(SortID int, ID int, Name string) R
-	unaryApplication              func(Function any, Argument any) R
-	binaryApplication             func(Function any, First any, Second any) R
-	sortedUnaryApplication        func(Function any, Argument any, RangeKind int) R
-	sortedBinaryApplication       func(Function any, First any, Second any, RangeKind int) R
-	bitVector                     func(Value BitVectorValue) R
-	bitVectorSymbol               func(Width int, ID int, Name string) R
-	bitVectorNot                  func(Value any) R
-	bitVectorAnd                  func(Left any, Right any) R
-	bitVectorOr                   func(Left any, Right any) R
-	bitVectorXor                  func(Left any, Right any) R
-	bitVectorAdd                  func(Left any, Right any) R
-	bitVectorSub                  func(Left any, Right any) R
-	bitVectorMul                  func(Left any, Right any) R
-	bitVectorShiftLeft            func(Value any, Amount any) R
-	bitVectorLogicalShiftRight    func(Value any, Amount any) R
-	bitVectorArithmeticShiftRight func(Value any, Amount any) R
-	bitVectorUnsignedDiv          func(Left any, Right any) R
-	bitVectorUnsignedRem          func(Left any, Right any) R
-	bitVectorSignedDiv            func(Left any, Right any) R
-	bitVectorSignedRem            func(Left any, Right any) R
-	bitVectorConcat               func(First any, Second any, FirstWidth int, SecondWidth int) R
-	bitVectorExtract              func(Value any, High int, Low int) R
-	bitVectorZeroExtend           func(Value any, Additional int) R
-	bitVectorSignExtend           func(Value any, Additional int) R
-	bitVectorRotateLeft           func(Value any, Amount int) R
-	bitVectorRotateRight          func(Value any, Amount int) R
-	bitVectorRepeat               func(Value any, Count int) R
-	bitVectorUnsignedLess         func(Left any, Right any, OrEqual bool) R
-	bitVectorSignedLess           func(Left any, Right any, OrEqual bool) R
-	bitVectorUnsignedAddOverflow  func(Left any, Right any) R
-	bitVectorSignedAddOverflow    func(Left any, Right any) R
-	bitVectorUnsignedSubOverflow  func(Left any, Right any) R
-	bitVectorSignedSubOverflow    func(Left any, Right any) R
-	bitVectorUnsignedMulOverflow  func(Left any, Right any) R
-	bitVectorSignedMulOverflow    func(Left any, Right any) R
-	bitVectorSignedDivOverflow    func(Left any, Right any) R
-	bitVectorNegOverflow          func(Value any) R
-	bitVectorToInteger            func(Value any, Signed bool) R
-	integerToBitVector            func(Value any, Width int) R
-	arraySymbol                   func(ID int, Name string) R
-	constantArray                 func(DefaultValue any) R
-	arraySelect                   func(Array any, Index any) R
-	arrayStore                    func(Array any, Index any, Value any) R
-	arrayReadInteger              func(ArrayID int, Index IntegerValue) R
-	arrayStoreReadInteger         func(ArrayID int, StoreIndexID int, ReadIndexID int, Value IntegerValue) R
-	datatypeSymbol                func(DatatypeID int, ConstructorCount int, ID int, Name string) R
-	datatypeConstructor           func(DatatypeID int, ConstructorCount int, ConstructorID int, Name string) R
-	datatypeRecognizer            func(DatatypeID int, ConstructorCount int, ConstructorID int, Value any) R
-	datatypeRecursiveRecognizer   func(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, SelectorName string, Value any) R
-	datatypeRecursiveApplication  func(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, SelectorName string, Value any) R
-	datatypeRecursiveSelector     func(DatatypeID int, ConstructorCount int, ConstructorID int, SelectorName string, Value any) R
+	Bool                               func(Value bool) R
+	BoolSymbol                         func(ID int, Name string) R
+	BooleanVariable                    func(ID int) R
+	NegatedBooleanVariable             func(ID int) R
+	BooleanClause                      func(Literals []int) R
+	BooleanCNF                         func(Literals []int, ClauseEnds []int) R
+	Not                                func(Value Term[BoolSort]) R
+	And                                func(Values []Term[BoolSort]) R
+	Or                                 func(Values []Term[BoolSort]) R
+	Implies                            func(Left Term[BoolSort], Right Term[BoolSort]) R
+	Iff                                func(Left Term[BoolSort], Right Term[BoolSort]) R
+	If                                 func(Condition Term[BoolSort], Then Term[S], Else Term[S]) R
+	Equal                              func(Left any, Right any) R
+	Integer                            func(Value int64) R
+	integerExact                       func(Value IntegerValue) R
+	IntSymbol                          func(ID int, Name string) R
+	integerVariable                    func(ID int) R
+	Add                                func(Values []Term[IntSort]) R
+	Subtract                           func(Left Term[IntSort], Right Term[IntSort]) R
+	IntegerScale                       func(Coefficient IntegerValue, Value Term[IntSort]) R
+	IntegerDiv                         func(Dividend Term[IntSort], Divisor IntegerValue) R
+	IntegerMod                         func(Dividend Term[IntSort], Divisor IntegerValue) R
+	LessEqual                          func(Left Term[IntSort], Right Term[IntSort]) R
+	Less                               func(Left Term[IntSort], Right Term[IntSort]) R
+	Real                               func(Value Rational) R
+	RealSymbol                         func(ID int, Name string) R
+	RealAdd                            func(Values []Term[RealSort]) R
+	RealSubtract                       func(Left Term[RealSort], Right Term[RealSort]) R
+	RealScale                          func(Coefficient Rational, Value Term[RealSort]) R
+	RealLessEqual                      func(Left Term[RealSort], Right Term[RealSort]) R
+	RealLess                           func(Left Term[RealSort], Right Term[RealSort]) R
+	uninterpretedValue                 func(SortID int, ID int, Name string) R
+	unaryApplication                   func(Function any, Argument any) R
+	binaryApplication                  func(Function any, First any, Second any) R
+	sortedUnaryApplication             func(Function any, Argument any, RangeKind int) R
+	sortedBinaryApplication            func(Function any, First any, Second any, RangeKind int) R
+	bitVector                          func(Value BitVectorValue) R
+	bitVectorSymbol                    func(Width int, ID int, Name string) R
+	bitVectorNot                       func(Value any) R
+	bitVectorAnd                       func(Left any, Right any) R
+	bitVectorOr                        func(Left any, Right any) R
+	bitVectorXor                       func(Left any, Right any) R
+	bitVectorAdd                       func(Left any, Right any) R
+	bitVectorSub                       func(Left any, Right any) R
+	bitVectorMul                       func(Left any, Right any) R
+	bitVectorShiftLeft                 func(Value any, Amount any) R
+	bitVectorLogicalShiftRight         func(Value any, Amount any) R
+	bitVectorArithmeticShiftRight      func(Value any, Amount any) R
+	bitVectorUnsignedDiv               func(Left any, Right any) R
+	bitVectorUnsignedRem               func(Left any, Right any) R
+	bitVectorSignedDiv                 func(Left any, Right any) R
+	bitVectorSignedRem                 func(Left any, Right any) R
+	bitVectorConcat                    func(First any, Second any, FirstWidth int, SecondWidth int) R
+	bitVectorExtract                   func(Value any, High int, Low int) R
+	bitVectorZeroExtend                func(Value any, Additional int) R
+	bitVectorSignExtend                func(Value any, Additional int) R
+	bitVectorRotateLeft                func(Value any, Amount int) R
+	bitVectorRotateRight               func(Value any, Amount int) R
+	bitVectorRepeat                    func(Value any, Count int) R
+	bitVectorUnsignedLess              func(Left any, Right any, OrEqual bool) R
+	bitVectorSignedLess                func(Left any, Right any, OrEqual bool) R
+	bitVectorUnsignedAddOverflow       func(Left any, Right any) R
+	bitVectorSignedAddOverflow         func(Left any, Right any) R
+	bitVectorUnsignedSubOverflow       func(Left any, Right any) R
+	bitVectorSignedSubOverflow         func(Left any, Right any) R
+	bitVectorUnsignedMulOverflow       func(Left any, Right any) R
+	bitVectorSignedMulOverflow         func(Left any, Right any) R
+	bitVectorSignedDivOverflow         func(Left any, Right any) R
+	bitVectorNegOverflow               func(Value any) R
+	bitVectorToInteger                 func(Value any, Signed bool) R
+	integerToBitVector                 func(Value any, Width int) R
+	arraySymbol                        func(ID int, Name string) R
+	constantArray                      func(DefaultValue any) R
+	arraySelect                        func(Array any, Index any) R
+	arrayStore                         func(Array any, Index any, Value any) R
+	arrayReadInteger                   func(ArrayID int, Index IntegerValue) R
+	arrayStoreReadInteger              func(ArrayID int, StoreIndexID int, ReadIndexID int, Value IntegerValue) R
+	datatypeSymbol                     func(DatatypeID int, ConstructorCount int, ID int, Name string) R
+	datatypeConstructor                func(DatatypeID int, ConstructorCount int, ConstructorID int, Name string) R
+	datatypeRecognizer                 func(DatatypeID int, ConstructorCount int, ConstructorID int, Value any) R
+	datatypeRecursiveRecognizer        func(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, SelectorName string, Value any) R
+	datatypeRecursiveApplication       func(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, SelectorName string, Value any) R
+	datatypeRecursiveSelector          func(DatatypeID int, ConstructorCount int, ConstructorID int, SelectorName string, Value any) R
+	datatypeBinaryRecursiveApplication func(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, FirstSelectorName string, SecondSelectorName string, First any, Second any) R
+	datatypeBinaryRecursiveSelector    func(DatatypeID int, ConstructorCount int, ConstructorID int, Field int, SelectorName string, Value any) R
+	datatypeBinaryRecursiveRecognizer  func(DatatypeID int, ConstructorCount int, ConstructorID int, Name string, Value any) R
 }
 
 // TermFold reduces Term[S] by one-level case analysis.
@@ -1078,6 +1214,12 @@ func TermFold[S any, R any](t Term[S], cs TermCases[S, R]) R {
 		return cs.datatypeRecursiveApplication(m.datatypeID, m.constructorCount, m.constructorID, m.name, m.selectorName, m.value)
 	case datatypeRecursiveSelector[S]:
 		return cs.datatypeRecursiveSelector(m.datatypeID, m.constructorCount, m.constructorID, m.selectorName, m.value)
+	case datatypeBinaryRecursiveApplication[S]:
+		return cs.datatypeBinaryRecursiveApplication(m.datatypeID, m.constructorCount, m.constructorID, m.name, m.firstSelectorName, m.secondSelectorName, m.first, m.second)
+	case datatypeBinaryRecursiveSelector[S]:
+		return cs.datatypeBinaryRecursiveSelector(m.datatypeID, m.constructorCount, m.constructorID, m.field, m.selectorName, m.value)
+	case datatypeBinaryRecursiveRecognizer:
+		return cs.datatypeBinaryRecursiveRecognizer(m.datatypeID, m.constructorCount, m.constructorID, m.name, m.value)
 	default:
 		panic("goplus: impossible enum value in TermFold")
 	}
@@ -1324,7 +1466,7 @@ func (solverValue) isSolver() {}
 //goplus:repr transparent
 type Model = modelValue
 
-//goplus:variant (Model) modelValue(ContextID int, Booleans booleanModel, Integers integerModel, Reals rationalModel, BitVectors bitVectorModel, Arrays *integerArrayModel, BitVectorArrays *bitVectorArrayModel, Datatypes datatypeModel) Model[c]
+//goplus:variant (Model) modelValue(ContextID int, Booleans booleanModel, Integers integerModel, Reals rationalModel, BitVectors bitVectorModel, Arrays *integerArrayModel, BitVectorArrays *bitVectorArrayModel, Datatypes *datatypeModel) Model[c]
 type modelValue struct {
 	contextID       int
 	booleans        booleanModel
@@ -1333,7 +1475,7 @@ type modelValue struct {
 	bitVectors      bitVectorModel
 	arrays          *integerArrayModel
 	bitVectorArrays *bitVectorArrayModel
-	datatypes       datatypeModel
+	datatypes       *datatypeModel
 }
 
 func (modelValue) isModel() {}
@@ -1579,14 +1721,80 @@ func IsRecursiveDatatypeConstructor(declaration RecursiveDatatypeConstructor, va
 	}
 }
 
+//goplus:dep DeclareBinaryRecursiveDatatypeConstructor(datatype nat, constructors nat, constructor nat, name string, firstSelectorName string, secondSelectorName string) BinaryRecursiveDatatypeConstructor[datatype, constructors, constructor]
+func DeclareBinaryRecursiveDatatypeConstructor(datatype int, constructors int, constructor int, name string, firstSelectorName string, secondSelectorName string) BinaryRecursiveDatatypeConstructor {
+	if constructors < 2 || constructor >= constructors {
+		panic("smt: binary recursive constructor requires a possible base constructor inside datatype cardinality")
+	}
+	if firstSelectorName == secondSelectorName {
+		panic("smt: binary recursive constructor selectors must be distinct")
+	}
+	return binaryRecursiveDatatypeConstructorValue{datatypeID: int(datatype), constructorCount: int(constructors), constructorID: int(constructor), name: name, firstSelectorName: firstSelectorName, secondSelectorName: secondSelectorName}
+}
+
+//goplus:dep ApplyBinaryRecursiveDatatypeConstructor(0 datatype nat, 0 constructors nat, 0 constructor nat, declaration BinaryRecursiveDatatypeConstructor[datatype, constructors, constructor], first Term[DatatypeSort[datatype, constructors]], second Term[DatatypeSort[datatype, constructors]]) Term[DatatypeSort[datatype, constructors]]
+func ApplyBinaryRecursiveDatatypeConstructor(declaration BinaryRecursiveDatatypeConstructor, first Term[DatatypeSort], second Term[DatatypeSort]) Term[DatatypeSort] {
+	switch __gp_m3 := any(declaration).(type) {
+	case binaryRecursiveDatatypeConstructorValue:
+		datatypeID := __gp_m3.datatypeID
+		constructorCount := __gp_m3.constructorCount
+		constructorID := __gp_m3.constructorID
+		name := __gp_m3.name
+		firstSelectorName := __gp_m3.firstSelectorName
+		secondSelectorName := __gp_m3.secondSelectorName
+
+		return datatypeBinaryRecursiveApplication[DatatypeSort]{datatypeID: datatypeID, constructorCount: constructorCount, constructorID: constructorID, name: name, firstSelectorName: firstSelectorName, secondSelectorName: secondSelectorName, first: first, second: second}
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+}
+
+//goplus:dep SelectBinaryRecursiveDatatypeConstructor(field BinaryDatatypeField, 0 datatype nat, 0 constructors nat, 0 constructor nat, declaration BinaryRecursiveDatatypeConstructor[datatype, constructors, constructor], value Term[DatatypeSort[datatype, constructors]]) Term[DatatypeSort[datatype, constructors]]
+func SelectBinaryRecursiveDatatypeConstructor(field BinaryDatatypeField, declaration BinaryRecursiveDatatypeConstructor, value Term[DatatypeSort]) Term[DatatypeSort] {
+	switch __gp_m4 := any(declaration).(type) {
+	case binaryRecursiveDatatypeConstructorValue:
+		datatypeID := __gp_m4.datatypeID
+		constructorCount := __gp_m4.constructorCount
+		constructorID := __gp_m4.constructorID
+		firstSelectorName := __gp_m4.firstSelectorName
+		secondSelectorName := __gp_m4.secondSelectorName
+
+		switch any(field).(type) {
+		case FirstDatatypeField:
+			return datatypeBinaryRecursiveSelector[DatatypeSort]{datatypeID: datatypeID, constructorCount: constructorCount, constructorID: constructorID, field: 0, selectorName: firstSelectorName, value: value}
+		case SecondDatatypeField:
+			return datatypeBinaryRecursiveSelector[DatatypeSort]{datatypeID: datatypeID, constructorCount: constructorCount, constructorID: constructorID, field: 1, selectorName: secondSelectorName, value: value}
+		default:
+			panic("goplus: impossible enum value in match")
+		}
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+}
+
+//goplus:dep IsBinaryRecursiveDatatypeConstructor(0 datatype nat, 0 constructors nat, 0 constructor nat, declaration BinaryRecursiveDatatypeConstructor[datatype, constructors, constructor], value Term[DatatypeSort[datatype, constructors]]) Term[BoolSort]
+func IsBinaryRecursiveDatatypeConstructor(declaration BinaryRecursiveDatatypeConstructor, value Term[DatatypeSort]) Term[BoolSort] {
+	switch __gp_m6 := any(declaration).(type) {
+	case binaryRecursiveDatatypeConstructorValue:
+		datatypeID := __gp_m6.datatypeID
+		constructorCount := __gp_m6.constructorCount
+		constructorID := __gp_m6.constructorID
+		name := __gp_m6.name
+
+		return datatypeBinaryRecursiveRecognizer{datatypeID: datatypeID, constructorCount: constructorCount, constructorID: constructorID, name: name, value: value}
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+}
+
 func IntegerVariableID(term Term[IntSort]) (int, bool) {
-	switch __gp_m3 := any(term).(type) {
+	switch __gp_m7 := any(term).(type) {
 	case IntSymbol:
-		id := __gp_m3.ID
+		id := __gp_m7.ID
 
 		return id, true
 	case integerVariable[IntSort]:
-		id := __gp_m3.iD
+		id := __gp_m7.iD
 
 		return id, true
 	default:
@@ -1683,11 +1891,11 @@ func ApplyBitVecUnary(function SortedUnaryFunction[BitVecSort, BitVecSort], argu
 }
 
 func BitVecUnaryFunctionInfo[D any, R any](function SortedUnaryFunction[D, R]) (int, int, int) {
-	switch __gp_m4 := any(function).(type) {
+	switch __gp_m8 := any(function).(type) {
 	case sortedUnaryFunctionValue[D, R]:
-		domain := __gp_m4.domainKind
-		rangeKind := __gp_m4.rangeKind
-		id := __gp_m4.iD
+		domain := __gp_m8.domainKind
+		rangeKind := __gp_m8.rangeKind
+		id := __gp_m8.iD
 		return domain, rangeKind, id
 	default:
 		panic("goplus: impossible enum value in match")
@@ -1923,11 +2131,11 @@ func IntToBitVec(width int, value Term[IntSort]) Term[BitVecSort] {
 
 //goplus:dep Assert(assertion nat, 0 c nat, 0 d nat, solver Solver[c, d], formula Term[BoolSort]) Solver[ContextID(c, assertion), d]
 func Assert(assertion int, solver Solver, formula Term[BoolSort]) Solver {
-	switch __gp_m5 := any(solver).(type) {
+	switch __gp_m9 := any(solver).(type) {
 	case solverValue:
-		context := __gp_m5.contextID
-		depth := __gp_m5.depth
-		state := __gp_m5.state
+		context := __gp_m9.contextID
+		depth := __gp_m9.depth
+		state := __gp_m9.state
 
 		if assertion < 0 {
 			panic("smt: negative assertion identity")
@@ -1941,11 +2149,11 @@ func Assert(assertion int, solver Solver, formula Term[BoolSort]) Solver {
 
 //goplus:dep Push(0 c nat, 0 d nat, solver Solver[c, d]) Pushed[c, d]
 func Push(solver Solver) Pushed {
-	switch __gp_m6 := any(solver).(type) {
+	switch __gp_m10 := any(solver).(type) {
 	case solverValue:
-		context := __gp_m6.contextID
-		depth := __gp_m6.depth
-		state := __gp_m6.state
+		context := __gp_m10.contextID
+		depth := __gp_m10.depth
+		state := __gp_m10.state
 
 		return PushResult{Current: solverValue{contextID: context, depth: depth + 1, state: state}, Previous: checkpointValue{contextID: context, depth: depth, state: state}}
 	default:
@@ -1955,9 +2163,9 @@ func Push(solver Solver) Pushed {
 
 //goplus:dep Current(0 c nat, 0 d nat, pushed Pushed[c, d]) Solver[c, d+1]
 func Current(pushed Pushed) Solver {
-	switch __gp_m7 := any(pushed).(type) {
+	switch __gp_m11 := any(pushed).(type) {
 	case PushResult:
-		current := __gp_m7.Current
+		current := __gp_m11.Current
 		return current
 	default:
 		panic("goplus: impossible enum value in match")
@@ -1966,9 +2174,9 @@ func Current(pushed Pushed) Solver {
 
 //goplus:dep Previous(0 c nat, 0 d nat, pushed Pushed[c, d]) Checkpoint[c, d]
 func Previous(pushed Pushed) Checkpoint {
-	switch __gp_m8 := any(pushed).(type) {
+	switch __gp_m12 := any(pushed).(type) {
 	case PushResult:
-		previous := __gp_m8.Previous
+		previous := __gp_m12.Previous
 		return previous
 	default:
 		panic("goplus: impossible enum value in match")
@@ -1977,15 +2185,15 @@ func Previous(pushed Pushed) Checkpoint {
 
 //goplus:dep Restore(0 current nat, 0 parent nat, 0 d nat, solver Solver[current, d+1], checkpoint Checkpoint[parent, d]) Solver[parent, d]
 func Restore(solver Solver, checkpoint Checkpoint) Solver {
-	switch __gp_m9 := any(solver).(type) {
+	switch __gp_m13 := any(solver).(type) {
 	case solverValue:
-		depth := __gp_m9.depth
+		depth := __gp_m13.depth
 
-		switch __gp_m10 := any(checkpoint).(type) {
+		switch __gp_m14 := any(checkpoint).(type) {
 		case checkpointValue:
-			context := __gp_m10.contextID
-			previousDepth := __gp_m10.depth
-			state := __gp_m10.state
+			context := __gp_m14.contextID
+			previousDepth := __gp_m14.depth
+			state := __gp_m14.state
 
 			if depth != previousDepth+1 {
 				panic("smt: checkpoint depth mismatch")
@@ -2001,11 +2209,11 @@ func Restore(solver Solver, checkpoint Checkpoint) Solver {
 
 //goplus:dep Check(0 c nat, 0 d nat, solver Solver[c, d]) CheckResult[c]
 func Check(solver Solver) CheckResult {
-	switch __gp_m11 := any(solver).(type) {
+	switch __gp_m15 := any(solver).(type) {
 	case solverValue:
-		context := __gp_m11.contextID
-		depth := __gp_m11.depth
-		state := __gp_m11.state
+		context := __gp_m15.contextID
+		depth := __gp_m15.depth
+		state := __gp_m15.state
 
 		if depth < 0 {
 			panic("smt: invalid depth")
@@ -2021,11 +2229,11 @@ func Check(solver Solver) CheckResult {
 //
 //goplus:dep CheckAssuming(0 c nat, 0 d nat, solver Solver[c, d], assumptions ...Term[BoolSort]) AssumptionCheckResult[c]
 func CheckAssuming(solver Solver, assumptions ...Term[BoolSort]) AssumptionCheckResult {
-	switch __gp_m12 := any(solver).(type) {
+	switch __gp_m16 := any(solver).(type) {
 	case solverValue:
-		context := __gp_m12.contextID
-		depth := __gp_m12.depth
-		state := __gp_m12.state
+		context := __gp_m16.contextID
+		depth := __gp_m16.depth
+		state := __gp_m16.state
 
 		if depth < 0 {
 			panic("smt: invalid depth")
@@ -2033,7 +2241,7 @@ func CheckAssuming(solver Solver, assumptions ...Term[BoolSort]) AssumptionCheck
 		status, booleans, integers, reals, bitVectors, core, reason := state.checkAssuming(assumptions)
 		switch status {
 		case checkSat:
-			return AssumptionsSatisfiable{Value: modelValue{contextID: context, booleans: booleans, integers: integers, reals: reals, bitVectors: bitVectors, arrays: nil, bitVectorArrays: nil, datatypes: datatypeModel{}}}
+			return AssumptionsSatisfiable{Value: modelValue{contextID: context, booleans: booleans, integers: integers, reals: reals, bitVectors: bitVectors, arrays: nil, bitVectorArrays: nil, datatypes: nil}}
 		case checkUnsat:
 			return AssumptionsUnsatisfiable{Value: proofValue{contextID: context, assertions: len(state.assertions)}, Indices: core}
 		default:
@@ -2046,12 +2254,12 @@ func CheckAssuming(solver Solver, assumptions ...Term[BoolSort]) AssumptionCheck
 
 //goplus:dep BoolValue(0 c nat, model Model[c], term Term[BoolSort]) (bool, bool)
 func BoolValue(model Model, term Term[BoolSort]) (bool, bool) {
-	switch __gp_m13 := any(model).(type) {
+	switch __gp_m17 := any(model).(type) {
 	case modelValue:
-		booleans := __gp_m13.booleans
-		integers := __gp_m13.integers
-		reals := __gp_m13.reals
-		datatypes := __gp_m13.datatypes
+		booleans := __gp_m17.booleans
+		integers := __gp_m17.integers
+		reals := __gp_m17.reals
+		datatypes := __gp_m17.datatypes
 		return evaluateBoolWithDatatypes(term, booleans, integers, reals, datatypes)
 	default:
 		panic("goplus: impossible enum value in match")
@@ -2060,11 +2268,11 @@ func BoolValue(model Model, term Term[BoolSort]) (bool, bool) {
 
 //goplus:dep IntValue(0 c nat, model Model[c], term Term[IntSort]) (int64, bool)
 func IntValue(model Model, term Term[IntSort]) (int64, bool) {
-	switch __gp_m14 := any(model).(type) {
+	switch __gp_m18 := any(model).(type) {
 	case modelValue:
-		booleans := __gp_m14.booleans
-		integers := __gp_m14.integers
-		reals := __gp_m14.reals
+		booleans := __gp_m18.booleans
+		integers := __gp_m18.integers
+		reals := __gp_m18.reals
 		return evaluateInt(term, booleans, integers, reals)
 	default:
 		panic("goplus: impossible enum value in match")
@@ -2073,12 +2281,12 @@ func IntValue(model Model, term Term[IntSort]) (int64, bool) {
 
 //goplus:dep ExactIntValue(0 c nat, model Model[c], term Term[IntSort]) (IntegerValue, bool)
 func ExactIntValue(model Model, term Term[IntSort]) (IntegerValue, bool) {
-	switch __gp_m15 := any(model).(type) {
+	switch __gp_m19 := any(model).(type) {
 	case modelValue:
-		booleans := __gp_m15.booleans
-		integers := __gp_m15.integers
-		reals := __gp_m15.reals
-		bitVectors := __gp_m15.bitVectors
+		booleans := __gp_m19.booleans
+		integers := __gp_m19.integers
+		reals := __gp_m19.reals
+		bitVectors := __gp_m19.bitVectors
 		return evaluateIntegerWithBitVectors(term, booleans, integers, reals, bitVectors)
 	default:
 		panic("goplus: impossible enum value in match")
@@ -2087,13 +2295,13 @@ func ExactIntValue(model Model, term Term[IntSort]) (IntegerValue, bool) {
 
 //goplus:dep IntegerModelValue(0 c nat, model Model[c], term Term[IntSort]) (IntegerValue, bool)
 func IntegerModelValue(model Model, term Term[IntSort]) (IntegerValue, bool) {
-	switch __gp_m16 := any(model).(type) {
+	switch __gp_m20 := any(model).(type) {
 	case modelValue:
-		booleans := __gp_m16.booleans
-		integers := __gp_m16.integers
-		reals := __gp_m16.reals
-		bitVectors := __gp_m16.bitVectors
-		arrays := __gp_m16.arrays
+		booleans := __gp_m20.booleans
+		integers := __gp_m20.integers
+		reals := __gp_m20.reals
+		bitVectors := __gp_m20.bitVectors
+		arrays := __gp_m20.arrays
 		return evaluateIntegerModelTerm(term, booleans, integers, reals, bitVectors, arrays)
 	default:
 		panic("goplus: impossible enum value in match")
@@ -2102,11 +2310,11 @@ func IntegerModelValue(model Model, term Term[IntSort]) (IntegerValue, bool) {
 
 //goplus:dep RealValue(0 c nat, model Model[c], term Term[RealSort]) (Rational, bool)
 func RealValue(model Model, term Term[RealSort]) (Rational, bool) {
-	switch __gp_m17 := any(model).(type) {
+	switch __gp_m21 := any(model).(type) {
 	case modelValue:
-		booleans := __gp_m17.booleans
-		integers := __gp_m17.integers
-		reals := __gp_m17.reals
+		booleans := __gp_m21.booleans
+		integers := __gp_m21.integers
+		reals := __gp_m21.reals
 		return evaluateReal(term, booleans, integers, reals)
 	default:
 		panic("goplus: impossible enum value in match")
@@ -2115,11 +2323,11 @@ func RealValue(model Model, term Term[RealSort]) (Rational, bool) {
 
 //goplus:dep BitVecModelValue(0 c nat, 0 width nat, model Model[c], term Term[BitVecSort[width]]) (BitVectorValue, bool)
 func BitVecModelValue(model Model, term Term[BitVecSort]) (BitVectorValue, bool) {
-	switch __gp_m18 := any(model).(type) {
+	switch __gp_m22 := any(model).(type) {
 	case modelValue:
-		integers := __gp_m18.integers
-		bitVectors := __gp_m18.bitVectors
-		arrays := __gp_m18.bitVectorArrays
+		integers := __gp_m22.integers
+		bitVectors := __gp_m22.bitVectors
+		arrays := __gp_m22.bitVectorArrays
 		return evaluateBitVectorModelTerm(term, bitVectors, integers, arrays)
 	default:
 		panic("goplus: impossible enum value in match")
@@ -2128,10 +2336,10 @@ func BitVecModelValue(model Model, term Term[BitVecSort]) (BitVectorValue, bool)
 
 //goplus:dep IntegerArrayValue(0 c nat, model Model[c], array Term[ArraySort[IntSort, IntSort]], index IntegerValue) (IntegerValue, bool)
 func IntegerArrayValue(model Model, array Term[ArraySort[IntSort, IntSort]], index IntegerValue) (IntegerValue, bool) {
-	switch __gp_m19 := any(model).(type) {
+	switch __gp_m23 := any(model).(type) {
 	case modelValue:
-		integers := __gp_m19.integers
-		arrays := __gp_m19.arrays
+		integers := __gp_m23.integers
+		arrays := __gp_m23.arrays
 		return evaluateIntegerArray(array, index, integers, arrays)
 	default:
 		panic("goplus: impossible enum value in match")
@@ -2140,9 +2348,9 @@ func IntegerArrayValue(model Model, array Term[ArraySort[IntSort, IntSort]], ind
 
 //goplus:dep BitVectorArrayValue(0 c nat, 0 indexWidth nat, 0 elementWidth nat, model Model[c], array Term[ArraySort[BitVecSort[indexWidth], BitVecSort[elementWidth]]], index BitVectorValue) (BitVectorValue, bool)
 func BitVectorArrayValue(model Model, array Term[ArraySort[BitVecSort, BitVecSort]], index BitVectorValue) (BitVectorValue, bool) {
-	switch __gp_m20 := any(model).(type) {
+	switch __gp_m24 := any(model).(type) {
 	case modelValue:
-		arrays := __gp_m20.bitVectorArrays
+		arrays := __gp_m24.bitVectorArrays
 		return evaluateBitVectorArray(array, index, arrays)
 	default:
 		panic("goplus: impossible enum value in match")
@@ -2151,9 +2359,9 @@ func BitVectorArrayValue(model Model, array Term[ArraySort[BitVecSort, BitVecSor
 
 //goplus:dep DatatypeModelValue(datatype nat, constructors nat, 0 c nat, model Model[c], term Term[DatatypeSort[datatype, constructors]]) (DatatypeValue, bool)
 func DatatypeModelValue(datatype int, constructors int, model Model, term Term[DatatypeSort]) (DatatypeValue, bool) {
-	switch __gp_m21 := any(model).(type) {
+	switch __gp_m25 := any(model).(type) {
 	case modelValue:
-		datatypes := __gp_m21.datatypes
+		datatypes := __gp_m25.datatypes
 		return evaluateDatatype(term, datatypes)
 	default:
 		panic("goplus: impossible enum value in match")

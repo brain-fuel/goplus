@@ -69,6 +69,22 @@ func MemoizedView(solver Solver, key any, build func(CheckResult) any) any {
 	return state.adapterValue
 }
 
+// MemoizedContextView is the non-capturing form of MemoizedView for adapters
+// whose result also retains an erased context witness. Passing a package-level
+// build function avoids allocating a closure on the cold path while preserving
+// the same immutable one-view cache and allocation-free warm checks.
+func MemoizedContextView(solver Solver, key any, context int, build func(int, CheckResult) any) any {
+	state := solver.state
+	state.adapterOnce.Do(func() {
+		state.adapterKey = key
+		state.adapterValue = build(context, runtimeCheckResult(solver.contextID, state))
+	})
+	if state.adapterKey != key {
+		panic("smt: immutable solver already has a different compatibility view")
+	}
+	return state.adapterValue
+}
+
 func runtimeCheckResult(context int, e *engine) CheckResult {
 	e.publicOnce.Do(func() {
 		e.publicContext = context
@@ -96,7 +112,7 @@ type checkOutcome struct {
 	bitVectors      bitVectorModel
 	arrays          *integerArrayModel
 	bitVectorArrays *bitVectorArrayModel
-	datatypes       datatypeModel
+	datatypes       *datatypeModel
 	reason          UnknownReason
 }
 
@@ -245,6 +261,11 @@ func (e *engine) solveAdditional(assumptions []Term[BoolSort]) checkOutcome {
 	if len(allAssertions) == 1 && len(assumptions) == 0 {
 		if compact, ok := allAssertions[0].(BooleanInlineCNF); ok {
 			return solveBooleanInlineCNF(compact)
+		}
+		if normalized, ok := allAssertions[0].(BooleanCNF); ok {
+			if outcome, recognized := solveBooleanChoiceCNF(normalized); recognized {
+				return outcome
+			}
 		}
 	}
 	if outcome, recognized := solveCompactBitVectorArrayExchange(allAssertions); recognized {
