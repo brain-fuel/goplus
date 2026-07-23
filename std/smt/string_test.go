@@ -593,6 +593,61 @@ func TestWordEquationRelationalLengthInteraction(t *testing.T) {
 	}
 }
 
+func TestWordEquationAffineLengthInteraction(t *testing.T) {
+	x := StringConst(1, "x")
+	y := StringConst(2, "y")
+	weighted := Add{Values: []Term[IntSort]{
+		IntegerScale{Coefficient: NewIntegerValue(2), Value: StringLength(x)},
+		StringLength(y),
+	}}
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: StringConcat(x, y), Right: StringVal("abcd")},
+		Equal{Left: weighted, Right: Integer{Value: 6}},
+	}}
+	checked := Check(Assert(36, New(), formula))
+	result, ok := checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("result=%T", checked)
+	}
+	if actual, found := StringModelValue(result.Value, x); !found || actual != "ab" {
+		t.Fatalf("x=(%q,%v)", actual, found)
+	}
+	if actual, found := StringModelValue(result.Value, y); !found || actual != "cd" {
+		t.Fatalf("y=(%q,%v)", actual, found)
+	}
+	if valid, found := BoolValue(result.Value, formula); !found || !valid {
+		t.Fatalf("formula=(%v,%v)", valid, found)
+	}
+
+	ordered := And{Values: []Term[BoolSort]{
+		Equal{Left: StringConcat(x, y), Right: StringVal("abc")},
+		Less{
+			Left:  Integer{Value: 0},
+			Right: Subtract{Left: StringLength(x), Right: StringLength(y)},
+		},
+	}}
+	checked = Check(Assert(37, New(), ordered))
+	result, ok = checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("ordered result=%T", checked)
+	}
+	if actual, found := StringModelValue(result.Value, x); !found || actual != "ab" {
+		t.Fatalf("ordered x=(%q,%v)", actual, found)
+	}
+
+	impossible := And{Values: []Term[BoolSort]{
+		Equal{Left: StringConcat(x, y), Right: StringVal("abc")},
+		Equal{
+			Left:  Add{Values: []Term[IntSort]{StringLength(x), StringLength(y)}},
+			Right: Integer{Value: 4},
+		},
+	}}
+	checked = Check(Assert(38, New(), impossible))
+	if _, ok := checked.(Unsatisfiable); !ok {
+		t.Fatalf("impossible result=%T", checked)
+	}
+}
+
 func TestMultipleWordEquationInteraction(t *testing.T) {
 	x := StringConst(1, "x")
 	y := StringConst(2, "y")

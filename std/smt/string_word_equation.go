@@ -502,11 +502,37 @@ func isBoundedWordEquationPredicate(term Term[BoolSort]) bool {
 }
 
 func isBoundedWordEquationLengthRelation(left, right any) bool {
-	leftLength, leftOK := left.(stringLength)
-	rightLength, rightOK := right.(stringLength)
-	return leftOK && rightOK &&
-		isStringTerm(leftLength.value) &&
-		isStringTerm(rightLength.value)
+	leftOK, leftHasLength := isBoundedWordEquationLengthExpression(left)
+	rightOK, rightHasLength := isBoundedWordEquationLengthExpression(right)
+	return leftOK && rightOK && (leftHasLength || rightHasLength)
+}
+
+func isBoundedWordEquationLengthExpression(term any) (valid, hasLength bool) {
+	if _, constant := integerConstant(term); constant {
+		return true, false
+	}
+	switch value := term.(type) {
+	case stringLength:
+		return isStringTerm(value.value), true
+	case Add:
+		hasLength := false
+		for _, item := range value.Values {
+			valid, childHasLength := isBoundedWordEquationLengthExpression(item)
+			if !valid {
+				return false, false
+			}
+			hasLength = hasLength || childHasLength
+		}
+		return true, hasLength
+	case Subtract:
+		leftOK, leftHasLength := isBoundedWordEquationLengthExpression(value.Left)
+		rightOK, rightHasLength := isBoundedWordEquationLengthExpression(value.Right)
+		return leftOK && rightOK, leftHasLength || rightHasLength
+	case IntegerScale:
+		return isBoundedWordEquationLengthExpression(value.Value)
+	default:
+		return false, false
+	}
 }
 
 func assignBoundedWordEquationRegex(

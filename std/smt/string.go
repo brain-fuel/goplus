@@ -1369,11 +1369,22 @@ func evaluateStringIntegerExact(term any, model stringModel, integers integerMod
 		case integerVariable[IntSort]:
 			return integers.lookup(value.iD)
 		case Add:
-			return evaluateInteger(value, booleanModel{}, integers, rationalModel{})
+			total := IntegerValue{}
+			for _, item := range value.Values {
+				next, ok := evaluateStringIntegerExact(item, model, integers)
+				if !ok {
+					return IntegerValue{}, false
+				}
+				total = AddIntegerValue(total, next)
+			}
+			return total, true
 		case Subtract:
-			return evaluateInteger(value, booleanModel{}, integers, rationalModel{})
+			left, leftOK := evaluateStringIntegerExact(value.Left, model, integers)
+			right, rightOK := evaluateStringIntegerExact(value.Right, model, integers)
+			return SubIntegerValue(left, right), leftOK && rightOK
 		case IntegerScale:
-			return evaluateInteger(value, booleanModel{}, integers, rationalModel{})
+			scaled, ok := evaluateStringIntegerExact(value.Value, model, integers)
+			return MultiplyIntegerValue(value.Coefficient, scaled), ok
 		case IntegerDiv:
 			return evaluateInteger(value, booleanModel{}, integers, rationalModel{})
 		case IntegerMod:
