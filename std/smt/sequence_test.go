@@ -549,6 +549,30 @@ func TestThreeSymbolAffineLengthIntegerSequenceWitness(t *testing.T) {
 		t.Fatalf("conflicting result=%T", checked)
 	}
 
+	nondivisible := Equal{
+		Left: Add{Values: []Term[IntSort]{
+			IntegerScale{
+				Coefficient: NewIntegerValue(2),
+				Value:       SequenceLength(x),
+			},
+			IntegerScale{
+				Coefficient: NewIntegerValue(2),
+				Value:       SequenceLength(y),
+			},
+			IntegerScale{
+				Coefficient: NewIntegerValue(2),
+				Value:       SequenceLength(z),
+			},
+		}},
+		Right: Integer{Value: 7},
+	}
+	if checked := Check(Assert(28, New(), nondivisible)); func() bool {
+		_, ok := checked.(Unsatisfiable)
+		return ok
+	}() == false {
+		t.Fatalf("nondivisible result=%T", checked)
+	}
+
 	alias := SequenceConst[IntSort](46, "alias")
 	aliased := And{Values: []Term[BoolSort]{
 		Equal{Left: z, Right: alias},
@@ -565,7 +589,7 @@ func TestThreeSymbolAffineLengthIntegerSequenceWitness(t *testing.T) {
 		SequenceHasPrefix(y, unit(2)),
 		SequenceHasPrefix(z, SequenceConcat(unit(3), unit(4))),
 	}}
-	aliasedResult, ok := Check(Assert(28, New(), aliased)).(Satisfiable)
+	aliasedResult, ok := Check(Assert(29, New(), aliased)).(Satisfiable)
 	if !ok {
 		t.Fatal("alias-canonicalized affine lengths must be satisfiable")
 	}

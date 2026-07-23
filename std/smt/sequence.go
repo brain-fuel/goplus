@@ -1287,6 +1287,26 @@ func normalizeIntegerSequenceLengthMultiAffine(
 	return compacted
 }
 
+func greatestCommonIntegerSequenceLengthCoefficient(
+	form integerSequenceLengthMultiAffine,
+) IntegerValue {
+	divisor := form.coefficients[0]
+	if CompareIntegerValue(divisor, IntegerValue{}) < 0 {
+		divisor = NegateIntegerValue(divisor)
+	}
+	for index := 1; index < form.count; index++ {
+		coefficient := form.coefficients[index]
+		if CompareIntegerValue(coefficient, IntegerValue{}) < 0 {
+			coefficient = NegateIntegerValue(coefficient)
+		}
+		for CompareIntegerValue(coefficient, IntegerValue{}) != 0 {
+			_, remainder, _ := DivModIntegerValue(divisor, coefficient)
+			divisor, coefficient = coefficient, remainder
+		}
+	}
+	return divisor
+}
+
 func applyIntegerSequenceMinimumValue(
 	requirements *integerSequenceRequirements,
 	value IntegerValue,
@@ -1366,6 +1386,13 @@ func collectAffineIntegerSequenceLengthEquality(
 					requirements.forSymbol(id), int(length),
 				), true, true
 			default:
+				divisor := greatestCommonIntegerSequenceLengthCoefficient(multi)
+				_, remainder, _ := DivModIntegerValue(
+					NegateIntegerValue(multi.constant), divisor,
+				)
+				if CompareIntegerValue(remainder, IntegerValue{}) != 0 {
+					return false, true, true
+				}
 				for index := 0; index < multi.count; index++ {
 					requirements.forSymbol(multi.ids[index])
 				}
