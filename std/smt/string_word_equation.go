@@ -29,10 +29,68 @@ func solveCompactStringWordEquationAssertions(assertions []Term[BoolSort]) (chec
 	if !ok {
 		return checkOutcome{}, false
 	}
-	return solveCompactStringWordEquation(equation)
+	return solveCompactStringWordEquation(equation, false)
 }
 
-func solveCompactStringWordEquation(equation CompactStringWordEquation) (checkOutcome, bool) {
+func solveBoundedGroundWordEquationAssertion(assertions []Term[BoolSort]) (checkOutcome, bool) {
+	if len(assertions) != 1 {
+		return checkOutcome{}, false
+	}
+	equality, ok := assertions[0].(Equal)
+	if !ok || !isStringTerm(equality.Left) || !isStringTerm(equality.Right) {
+		return checkOutcome{}, false
+	}
+	if target, ground := evaluateString(equality.Right.(Term[StringSort]), stringModel{}, integerModel{}); ground {
+		if pattern, ok := compactPatternFromStringTerm(equality.Left); ok {
+			return solveCompactStringWordEquation(CompactStringWordEquation{Pattern: pattern, Target: target}, false)
+		}
+	}
+	if target, ground := evaluateString(equality.Left.(Term[StringSort]), stringModel{}, integerModel{}); ground {
+		if pattern, ok := compactPatternFromStringTerm(equality.Right); ok {
+			return solveCompactStringWordEquation(CompactStringWordEquation{Pattern: pattern, Target: target}, false)
+		}
+	}
+	return checkOutcome{}, false
+}
+
+func compactPatternFromStringTerm(term any) (CompactStringPattern, bool) {
+	concat, ok := term.(stringConcat[StringSort])
+	if !ok {
+		return CompactStringPattern{}, false
+	}
+	var pattern CompactStringPattern
+	literal := ""
+	for _, item := range concat.values {
+		if symbol, ok := item.(stringSymbol[StringSort]); ok {
+			if pattern.Count == len(pattern.SymbolIDs) {
+				return CompactStringPattern{}, false
+			}
+			for index := 0; index < pattern.Count; index++ {
+				if pattern.SymbolIDs[index] == symbol.iD {
+					return CompactStringPattern{}, false
+				}
+			}
+			pattern.Delimiters[pattern.Count] = literal
+			pattern.SymbolIDs[pattern.Count] = symbol.iD
+			pattern.SymbolNames[pattern.Count] = symbol.name
+			pattern.Count++
+			literal = ""
+			continue
+		}
+		value, ground := evaluateString(item, stringModel{}, integerModel{})
+		if !ground {
+			return CompactStringPattern{}, false
+		}
+		literal += value
+	}
+	if pattern.Count == 0 {
+		return CompactStringPattern{}, false
+	}
+	pattern.Delimiters[pattern.Count] = literal
+	return pattern, true
+}
+
+func solveCompactStringWordEquation(equation CompactStringWordEquation, requireUnique bool) (checkOutcome, bool) {
 	pattern := equation.Pattern
 	if pattern.Count < 1 || pattern.Count > len(pattern.SymbolIDs) {
 		return checkOutcome{}, false
@@ -55,13 +113,17 @@ func solveCompactStringWordEquation(equation CompactStringWordEquation) (checkOu
 	for index := 1; index < pattern.Count; index++ {
 		delimiter := pattern.Delimiters[index]
 		if delimiter == "" {
-			return checkOutcome{}, false
+			if requireUnique {
+				return checkOutcome{}, false
+			}
+			model.set(pattern.SymbolIDs[index-1], "")
+			continue
 		}
 		first := strings.Index(remaining, delimiter)
 		if first < 0 {
 			return checkOutcome{status: checkUnsat}, true
 		}
-		if strings.LastIndex(remaining, delimiter) != first {
+		if requireUnique && strings.LastIndex(remaining, delimiter) != first {
 			return checkOutcome{}, false
 		}
 		model.set(pattern.SymbolIDs[index-1], remaining[:first])
@@ -97,7 +159,7 @@ func bindCompactStringWordEquation(equation CompactStringWordEquation, model *st
 	outcome, recognized := solveCompactStringWordEquation(CompactStringWordEquation{
 		Pattern: reduced,
 		Target:  equation.Target,
-	})
+	}, true)
 	if !recognized || outcome.status != checkSat {
 		return false
 	}

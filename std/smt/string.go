@@ -407,6 +407,9 @@ func isStringIntegerTerm(term any) bool {
 }
 
 func solveStringAssertions(assertions []Term[BoolSort]) (checkOutcome, bool) {
+	if outcome, recognized := solveBoundedGroundWordEquationAssertion(assertions); recognized {
+		return outcome, true
+	}
 	if outcome, recognized := solveCompactStringWordEquationAssertions(assertions); recognized {
 		return outcome, true
 	}

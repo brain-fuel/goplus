@@ -295,8 +295,31 @@ func TestStringUniquelyDelimitedWordEquation(t *testing.T) {
 		Right: StringVal("[a]b]c!"),
 	}
 	checked = Check(Assert(24, New(), ambiguous))
-	if _, unknown := checked.(Unknown); !unknown {
+	ambiguousResult, sat := checked.(Satisfiable)
+	if !sat {
 		t.Fatalf("ambiguous result=%T", checked)
+	}
+	if actual, found := StringModelValue(ambiguousResult.Value, x); !found || actual != "a" {
+		t.Fatalf("ambiguous x=(%q,%v)", actual, found)
+	}
+	if actual, found := StringModelValue(ambiguousResult.Value, y); !found || actual != "b]c" {
+		t.Fatalf("ambiguous y=(%q,%v)", actual, found)
+	}
+
+	adjacent := Equal{
+		Left:  StringConcat(x, y),
+		Right: StringVal("forge"),
+	}
+	checked = Check(Assert(25, New(), adjacent))
+	adjacentResult, sat := checked.(Satisfiable)
+	if !sat {
+		t.Fatalf("adjacent result=%T", checked)
+	}
+	if actual, found := StringModelValue(adjacentResult.Value, x); !found || actual != "" {
+		t.Fatalf("adjacent x=(%q,%v)", actual, found)
+	}
+	if actual, found := StringModelValue(adjacentResult.Value, y); !found || actual != "forge" {
+		t.Fatalf("adjacent y=(%q,%v)", actual, found)
 	}
 }
 
