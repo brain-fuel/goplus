@@ -2551,7 +2551,9 @@ func bindPositiveIntegerSequenceWitnesses(
 	return true, true
 }
 
-func solveIntegerSequenceAssertions(assertions []Term[BoolSort]) (checkOutcome, bool) {
+func solveIntegerSequenceConjunctiveAssertions(
+	assertions []Term[BoolSort],
+) (checkOutcome, bool) {
 	found := false
 	for _, assertion := range assertions {
 		found = found || containsIntegerSequenceTheory(assertion)
@@ -2605,6 +2607,205 @@ func solveIntegerSequenceAssertions(assertions []Term[BoolSort]) (checkOutcome, 
 		}
 	}
 	return checkOutcome{status: checkSat, integerSequences: sequences}, true
+}
+
+func containsIntegerSequenceDisjunction(term Term[BoolSort]) bool {
+	switch value := term.(type) {
+	case Or:
+		if containsIntegerSequenceTheory(term) {
+			return true
+		}
+	case And:
+		for _, item := range value.Values {
+			if containsIntegerSequenceDisjunction(item) {
+				return true
+			}
+		}
+	case BooleanConjunction:
+		items, negated := value.values()
+		for index, item := range items {
+			if !negated[index] && containsIntegerSequenceDisjunction(item) {
+				return true
+			}
+		}
+	case Not:
+		return containsIntegerSequenceDisjunction(value.Value)
+	case Implies:
+		return containsIntegerSequenceDisjunction(value.Left) ||
+			containsIntegerSequenceDisjunction(value.Right)
+	case Iff:
+		return containsIntegerSequenceDisjunction(value.Left) ||
+			containsIntegerSequenceDisjunction(value.Right)
+	case If[BoolSort]:
+		return containsIntegerSequenceDisjunction(value.Condition) ||
+			containsIntegerSequenceDisjunction(value.Then) ||
+			containsIntegerSequenceDisjunction(value.Else)
+	}
+	return false
+}
+
+func integerSequenceDisjunctiveNormalForm(
+	term Term[BoolSort],
+	states *int,
+) ([][]Term[BoolSort], bool) {
+	switch value := term.(type) {
+	case Or:
+		var result [][]Term[BoolSort]
+		for _, item := range value.Values {
+			branches, complete := integerSequenceDisjunctiveNormalForm(item, states)
+			if !complete {
+				return nil, false
+			}
+			result = append(result, branches...)
+			*states += len(branches)
+			if *states > maximumConstructedIntegerSequenceLength {
+				return nil, false
+			}
+		}
+		return result, true
+	case And:
+		result := [][]Term[BoolSort]{{}}
+		for _, item := range value.Values {
+			branches, complete := integerSequenceDisjunctiveNormalForm(item, states)
+			if !complete {
+				return nil, false
+			}
+			if len(result) != 0 && len(branches) >
+				maximumConstructedIntegerSequenceLength/len(result) {
+				return nil, false
+			}
+			combined := make([][]Term[BoolSort], 0, len(result)*len(branches))
+			for _, prefix := range result {
+				for _, branch := range branches {
+					candidate := make(
+						[]Term[BoolSort], 0, len(prefix)+len(branch),
+					)
+					candidate = append(candidate, prefix...)
+					candidate = append(candidate, branch...)
+					combined = append(combined, candidate)
+				}
+			}
+			result = combined
+			*states += len(result)
+			if *states > maximumConstructedIntegerSequenceLength {
+				return nil, false
+			}
+		}
+		return result, true
+	case BooleanConjunction:
+		items, negated := value.values()
+		positive := make([]Term[BoolSort], 0, len(items))
+		for index, item := range items {
+			if negated[index] {
+				return [][]Term[BoolSort]{{term}}, true
+			}
+			positive = append(positive, item)
+		}
+		return integerSequenceDisjunctiveNormalForm(
+			And{Values: positive}, states,
+		)
+	default:
+		return [][]Term[BoolSort]{{term}}, true
+	}
+}
+
+func solveIntegerSequenceAssertions(assertions []Term[BoolSort]) (checkOutcome, bool) {
+	hasDisjunction := false
+	for _, assertion := range assertions {
+		if containsIntegerSequenceDisjunction(assertion) {
+			hasDisjunction = true
+			break
+		}
+	}
+	if !hasDisjunction {
+		return solveIntegerSequenceConjunctiveAssertions(assertions)
+	}
+	if len(assertions) == 1 {
+		if disjunction, ok := assertions[0].(Or); ok {
+			var unknown checkOutcome
+			foundUnknown := false
+			for _, branch := range disjunction.Values {
+				single := [1]Term[BoolSort]{branch}
+				outcome, found := solveIntegerSequenceConjunctiveAssertions(
+					single[:],
+				)
+				if !found {
+					continue
+				}
+				switch outcome.status {
+				case checkSat:
+					return outcome, true
+				case checkUnknown:
+					if !foundUnknown {
+						unknown = outcome
+						foundUnknown = true
+					}
+				}
+			}
+			if foundUnknown {
+				return unknown, true
+			}
+			return checkOutcome{status: checkUnsat}, true
+		}
+	}
+	branches := [][]Term[BoolSort]{{}}
+	states := 0
+	for _, assertion := range assertions {
+		expanded, complete := integerSequenceDisjunctiveNormalForm(
+			assertion, &states,
+		)
+		if !complete || len(branches) != 0 && len(expanded) >
+			maximumConstructedIntegerSequenceLength/len(branches) {
+			return checkOutcome{
+				status: checkUnknown,
+				reason: ResourceLimit{
+					Limit: maximumConstructedIntegerSequenceLength,
+				},
+			}, true
+		}
+		combined := make([][]Term[BoolSort], 0, len(branches)*len(expanded))
+		for _, prefix := range branches {
+			for _, branch := range expanded {
+				candidate := make(
+					[]Term[BoolSort], 0, len(prefix)+len(branch),
+				)
+				candidate = append(candidate, prefix...)
+				candidate = append(candidate, branch...)
+				combined = append(combined, candidate)
+			}
+		}
+		branches = combined
+		states += len(branches)
+		if states > maximumConstructedIntegerSequenceLength {
+			return checkOutcome{
+				status: checkUnknown,
+				reason: ResourceLimit{
+					Limit: maximumConstructedIntegerSequenceLength,
+				},
+			}, true
+		}
+	}
+	var unknown checkOutcome
+	foundUnknown := false
+	for _, branch := range branches {
+		outcome, found := solveIntegerSequenceConjunctiveAssertions(branch)
+		if !found {
+			continue
+		}
+		switch outcome.status {
+		case checkSat:
+			return outcome, true
+		case checkUnknown:
+			if !foundUnknown {
+				unknown = outcome
+				foundUnknown = true
+			}
+		}
+	}
+	if foundUnknown {
+		return unknown, true
+	}
+	return checkOutcome{status: checkUnsat}, true
 }
 
 func evaluateBoolWithStringsDatatypesAndSequences(

@@ -907,6 +907,79 @@ func TestFourSymbolAffineLengthIntegerSequenceSystems(t *testing.T) {
 	}
 }
 
+func TestDisjunctiveSymbolicIntegerSequenceWitnesses(t *testing.T) {
+	unit := func(value int64) Term[SequenceSort[IntSort]] {
+		return SequenceUnit[IntSort](Integer{Value: value})
+	}
+	pair := func(left, right int64) Term[SequenceSort[IntSort]] {
+		return SequenceConcat(unit(left), unit(right))
+	}
+	x := SequenceConst[IntSort](70, "x")
+	formula := Or{Values: []Term[BoolSort]{
+		And{Values: []Term[BoolSort]{
+			Equal{Left: SequenceLength(x), Right: Integer{Value: 1}},
+			SequenceHasPrefix(x, pair(1, 2)),
+		}},
+		And{Values: []Term[BoolSort]{
+			Equal{Left: SequenceLength(x), Right: Integer{Value: 2}},
+			SequenceHasSuffix(x, pair(3, 4)),
+		}},
+	}}
+	checked := Check(Assert(40, New(), formula))
+	result, ok := checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("result=%T", checked)
+	}
+	value, found := IntegerSequenceModelValue(result.Value, x)
+	if !found || value.Len() != 2 {
+		t.Fatalf("model=(%d,%v)", value.Len(), found)
+	}
+	last, _ := value.At(1)
+	if actual, fits := last.Int64(); !fits || actual != 4 {
+		t.Fatalf("last=(%d,%v)", actual, fits)
+	}
+	if valid, found := BoolValue(result.Value, formula); !found || !valid {
+		t.Fatalf("formula=(%v,%v)", valid, found)
+	}
+
+	nested := And{Values: []Term[BoolSort]{
+		Or{Values: []Term[BoolSort]{
+			SequenceHasPrefix(x, unit(5)),
+			SequenceHasPrefix(x, unit(6)),
+		}},
+		Equal{Left: SequenceLength(x), Right: Integer{Value: 1}},
+	}}
+	nestedResult, ok := Check(Assert(41, New(), nested)).(Satisfiable)
+	if !ok {
+		t.Fatal("nested disjunction must be satisfiable")
+	}
+	value, found = IntegerSequenceModelValue(nestedResult.Value, x)
+	first, firstFound := value.At(0)
+	if !found || !firstFound {
+		t.Fatal("missing nested model")
+	}
+	if actual, fits := first.Int64(); !fits || actual != 5 {
+		t.Fatalf("first=(%d,%v)", actual, fits)
+	}
+
+	impossible := Or{Values: []Term[BoolSort]{
+		And{Values: []Term[BoolSort]{
+			Equal{Left: SequenceLength(x), Right: Integer{Value: 0}},
+			SequenceHasPrefix(x, unit(1)),
+		}},
+		And{Values: []Term[BoolSort]{
+			Equal{Left: SequenceLength(x), Right: Integer{Value: 0}},
+			SequenceHasSuffix(x, unit(2)),
+		}},
+	}}
+	if checked := Check(Assert(42, New(), impossible)); func() bool {
+		_, ok := checked.(Unsatisfiable)
+		return ok
+	}() == false {
+		t.Fatalf("impossible result=%T", checked)
+	}
+}
+
 func TestSymbolicIntegerSequenceEqualityClasses(t *testing.T) {
 	unit := func(value int64) Term[SequenceSort[IntSort]] {
 		return SequenceUnit[IntSort](Integer{Value: value})
