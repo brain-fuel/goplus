@@ -12,15 +12,33 @@ const (
 // Kind is CompactStringAtEquality or CompactStringSubstringEquality; Offset
 // is the at index or substring offset, and Length is used by substring.
 type CompactStringIndexedEquality struct {
-	Kind       uint8
-	SymbolID   int
-	SymbolName string
-	Offset     int64
-	Length     int64
-	Target     string
+	Kind         uint8
+	SymbolID     int
+	SymbolName   string
+	Offset       int64
+	OffsetID     int
+	OffsetName   string
+	OffsetSymbol bool
+	Length       int64
+	LengthID     int
+	LengthName   string
+	LengthSymbol bool
+	Target       string
 }
 
 func (CompactStringIndexedEquality) isTerm(BoolSort) {}
+
+// CompactGroundIndexedStringFormula groups ground integer assignments with
+// indexed-string equalities without allocating an interface-backed
+// conjunction.
+type CompactGroundIndexedStringFormula struct {
+	AssignmentCount uint8
+	Assignments     [4]IntegerLinearEquality
+	EqualityCount   uint8
+	Equalities      [4]CompactStringIndexedEquality
+}
+
+func (*CompactGroundIndexedStringFormula) isTerm(BoolSort) {}
 
 type indexedStringPlacement struct {
 	index int64
@@ -106,6 +124,11 @@ const indexedStringModelCodePointLimit = 4096
 // a direct string symbol x and ground integer/result operands. Such equalities
 // are exactly positional code-point requirements plus length bounds.
 func solveGroundIndexedStringEqualities(assertions []Term[BoolSort]) (checkOutcome, bool) {
+	if len(assertions) == 1 {
+		if compact, ok := assertions[0].(*CompactGroundIndexedStringFormula); ok {
+			return solveCompactGroundIndexedStringFormula(compact), true
+		}
+	}
 	var storage boundedWordEquationConjuncts
 	for _, assertion := range assertions {
 		appendBoundedWordEquationConjunct(assertion, &storage)
@@ -114,9 +137,19 @@ func solveGroundIndexedStringEqualities(assertions []Term[BoolSort]) (checkOutco
 	if len(conjuncts) == 0 {
 		return checkOutcome{}, false
 	}
+	integers, contradiction := groundIndexedIntegerAssignments(conjuncts)
+	if contradiction {
+		return checkOutcome{status: checkUnsat}, true
+	}
 	var constraints indexedStringConstraints
 	for _, conjunct := range conjuncts {
-		if ground, known := evaluateStringBoolean(conjunct, stringModel{}, integerModel{}); known {
+		if id, value, assignment := groundIndexedIntegerAssignment(conjunct, integers); assignment {
+			if existing, found := integers.lookup(id); found &&
+				CompareIntegerValue(existing, value) == 0 {
+				continue
+			}
+		}
+		if ground, known := evaluateStringBoolean(conjunct, stringModel{}, integers); known {
 			if !ground {
 				return checkOutcome{status: checkUnsat}, true
 			}
@@ -124,6 +157,10 @@ func solveGroundIndexedStringEqualities(assertions []Term[BoolSort]) (checkOutco
 		}
 		var id int
 		if compact, ok := conjunct.(CompactStringIndexedEquality); ok {
+			compact, ok = groundCompactIndexedStringEquality(compact, integers)
+			if !ok {
+				return checkOutcome{}, false
+			}
 			constraint := constraints.findOrAppend(compact.SymbolID)
 			switch compact.Kind {
 			case CompactStringAtEquality:
@@ -143,14 +180,14 @@ func solveGroundIndexedStringEqualities(assertions []Term[BoolSort]) (checkOutco
 		if !ok {
 			return checkOutcome{}, false
 		}
-		derived, target, ok := groundIndexedStringEquality(equality)
+		derived, target, ok := groundIndexedStringEquality(equality, integers)
 		if !ok {
 			return checkOutcome{}, false
 		}
 		switch value := derived.(type) {
 		case stringAt[StringSort]:
 			id, ok = stringSymbolID(value.value)
-			index, constant := integerConstant(value.index)
+			index, constant := evaluateStringOffset(value.index, integers)
 			if !ok || !constant {
 				return checkOutcome{}, false
 			}
@@ -160,8 +197,8 @@ func solveGroundIndexedStringEqualities(assertions []Term[BoolSort]) (checkOutco
 			}
 		case stringSubstring[StringSort]:
 			id, ok = stringSymbolID(value.value)
-			offset, offsetConstant := integerConstant(value.offset)
-			length, lengthConstant := integerConstant(value.length)
+			offset, offsetConstant := evaluateStringOffset(value.offset, integers)
+			length, lengthConstant := evaluateStringOffset(value.length, integers)
 			if !ok || !offsetConstant || !lengthConstant {
 				return checkOutcome{}, false
 			}
@@ -203,25 +240,120 @@ func solveGroundIndexedStringEqualities(assertions []Term[BoolSort]) (checkOutco
 		model.set(constraint.id, result.String())
 	}
 	for _, conjunct := range conjuncts {
-		valid, known := evaluateStringBoolean(conjunct, model, integerModel{})
+		if id, value, assignment := groundIndexedIntegerAssignment(conjunct, integers); assignment {
+			if existing, found := integers.lookup(id); found &&
+				CompareIntegerValue(existing, value) == 0 {
+				continue
+			}
+		}
+		valid, known := evaluateStringBoolean(conjunct, model, integers)
 		if !known || !valid {
 			return checkOutcome{}, false
 		}
 	}
-	return checkOutcome{status: checkSat, strings: model}, true
+	return checkOutcome{status: checkSat, integers: integers, strings: model}, true
 }
 
-func groundIndexedStringEquality(equality Equal) (Term[StringSort], string, bool) {
+func solveCompactGroundIndexedStringFormula(
+	formula *CompactGroundIndexedStringFormula,
+) checkOutcome {
+	var integers integerModel
+	for index := 0; index < int(formula.AssignmentCount); index++ {
+		assignment := formula.Assignments[index]
+		outcome := solveCompactIntegerLinearEquality(assignment)
+		if outcome.status != checkSat {
+			return outcome
+		}
+		value, found := outcome.integers.lookup(assignment.ID)
+		if !found {
+			continue
+		}
+		if existing, assigned := integers.lookup(assignment.ID); assigned {
+			if CompareIntegerValue(existing, value) != 0 {
+				return checkOutcome{status: checkUnsat}
+			}
+			continue
+		}
+		integers.set(assignment.ID, value)
+	}
+	var constraints indexedStringConstraints
+	for index := 0; index < int(formula.EqualityCount); index++ {
+		equality, ground := groundCompactIndexedStringEquality(formula.Equalities[index], integers)
+		if !ground {
+			return checkOutcome{}
+		}
+		constraint := constraints.findOrAppend(equality.SymbolID)
+		valid := false
+		switch equality.Kind {
+		case CompactStringAtEquality:
+			valid = applyStringAtEquality(constraint, equality.Offset, equality.Target)
+		case CompactStringSubstringEquality:
+			valid = applyStringSubstringEquality(constraint, equality.Offset, equality.Length, equality.Target)
+		}
+		if !valid {
+			return checkOutcome{status: checkUnsat}
+		}
+	}
+	strings, outcome := indexedStringConstraintModel(&constraints)
+	if outcome.status != checkSat {
+		return outcome
+	}
+	for index := 0; index < int(formula.EqualityCount); index++ {
+		equality, ground := groundCompactIndexedStringEquality(formula.Equalities[index], integers)
+		if !ground {
+			return checkOutcome{}
+		}
+		value, found := strings.lookup(equality.SymbolID)
+		if !found || !evaluateCompactIndexedStringEquality(equality, value) {
+			return checkOutcome{}
+		}
+	}
+	return checkOutcome{status: checkSat, integers: integers, strings: strings}
+}
+
+func indexedStringConstraintModel(
+	constraints *indexedStringConstraints,
+) (stringModel, checkOutcome) {
+	var model stringModel
+	for index := 0; index < constraints.count; index++ {
+		constraint := constraints.at(index)
+		if constraint.hasMaximum && constraint.minimum > constraint.maximum {
+			return stringModel{}, checkOutcome{status: checkUnsat}
+		}
+		if constraint.minimum > indexedStringModelCodePointLimit {
+			return stringModel{}, checkOutcome{
+				status: checkUnknown,
+				reason: ResourceLimit{Limit: indexedStringModelCodePointLimit},
+			}
+		}
+		var result strings.Builder
+		for position := int64(0); position < constraint.minimum; position++ {
+			value := "a"
+			for placementIndex := 0; placementIndex < constraint.placementCount; placementIndex++ {
+				placement := constraint.placementAt(placementIndex)
+				if placement.index == position {
+					value = placement.value
+					break
+				}
+			}
+			result.WriteString(value)
+		}
+		model.set(constraint.id, result.String())
+	}
+	return model, checkOutcome{status: checkSat}
+}
+
+func groundIndexedStringEquality(equality Equal, integers integerModel) (Term[StringSort], string, bool) {
 	if left, ok := equality.Left.(Term[StringSort]); ok {
 		if right, stringRight := equality.Right.(Term[StringSort]); stringRight {
-			if target, ground := evaluateString(right, stringModel{}, integerModel{}); ground && isGroundIndexedStringTerm(left) {
+			if target, ground := evaluateString(right, stringModel{}, integers); ground && isGroundIndexedStringTerm(left) {
 				return left, target, true
 			}
 		}
 	}
 	if right, ok := equality.Right.(Term[StringSort]); ok {
 		if left, stringLeft := equality.Left.(Term[StringSort]); stringLeft {
-			if target, ground := evaluateString(left, stringModel{}, integerModel{}); ground && isGroundIndexedStringTerm(right) {
+			if target, ground := evaluateString(left, stringModel{}, integers); ground && isGroundIndexedStringTerm(right) {
 				return right, target, true
 			}
 		}
@@ -237,7 +369,7 @@ func compactGroundIndexedStringEquality(term Term[BoolSort]) (CompactStringIndex
 	if !ok {
 		return CompactStringIndexedEquality{}, false
 	}
-	derived, target, ok := groundIndexedStringEquality(equality)
+	derived, target, ok := groundIndexedStringEquality(equality, integerModel{})
 	if !ok {
 		return CompactStringIndexedEquality{}, false
 	}
@@ -268,6 +400,75 @@ func compactGroundIndexedStringEquality(term Term[BoolSort]) (CompactStringIndex
 	}
 }
 
+func groundIndexedIntegerAssignments(conjuncts []Term[BoolSort]) (integerModel, bool) {
+	var model integerModel
+	for pass := 0; pass < len(conjuncts); pass++ {
+		changed := false
+		for _, conjunct := range conjuncts {
+			if compact, ok := conjunct.(IntegerLinearEquality); ok {
+				if solveCompactIntegerLinearEquality(compact).status == checkUnsat {
+					return integerModel{}, true
+				}
+			}
+			id, value, assignment := groundIndexedIntegerAssignment(conjunct, model)
+			if !assignment {
+				continue
+			}
+			if existing, found := model.lookup(id); found {
+				if CompareIntegerValue(existing, value) != 0 {
+					return integerModel{}, true
+				}
+				continue
+			}
+			model.set(id, value)
+			changed = true
+		}
+		if !changed {
+			break
+		}
+	}
+	return model, false
+}
+
+func groundIndexedIntegerAssignment(
+	term Term[BoolSort], model integerModel,
+) (int, IntegerValue, bool) {
+	if compact, ok := term.(IntegerLinearEquality); ok {
+		outcome := solveCompactIntegerLinearEquality(compact)
+		if outcome.status != checkSat {
+			return 0, IntegerValue{}, false
+		}
+		value, found := outcome.integers.lookup(compact.ID)
+		return compact.ID, value, found
+	}
+	equality, ok := term.(Equal)
+	if !ok {
+		return 0, IntegerValue{}, false
+	}
+	if id, symbol := directIntegerSymbolID(equality.Left); symbol {
+		if value, ground := evaluateStringIntegerExact(equality.Right, stringModel{}, model); ground {
+			return id, value, true
+		}
+	}
+	if id, symbol := directIntegerSymbolID(equality.Right); symbol {
+		if value, ground := evaluateStringIntegerExact(equality.Left, stringModel{}, model); ground {
+			return id, value, true
+		}
+	}
+	return 0, IntegerValue{}, false
+}
+
+func directIntegerSymbolID(term any) (int, bool) {
+	switch value := term.(type) {
+	case IntSymbol:
+		return value.ID, true
+	case integerVariable[IntSort]:
+		return value.iD, true
+	default:
+		return 0, false
+	}
+}
+
 func evaluateCompactIndexedStringEquality(
 	equality CompactStringIndexedEquality,
 	value string,
@@ -287,6 +488,36 @@ func evaluateCompactIndexedStringEquality(
 	}
 	actual, known := evaluateString(derived, stringModel{}, integerModel{})
 	return known && actual == equality.Target
+}
+
+func groundCompactIndexedStringEquality(
+	equality CompactStringIndexedEquality, integers integerModel,
+) (CompactStringIndexedEquality, bool) {
+	if equality.OffsetSymbol {
+		value, found := integers.lookup(equality.OffsetID)
+		if !found {
+			return CompactStringIndexedEquality{}, false
+		}
+		offset, fits := value.Int64()
+		if !fits {
+			return CompactStringIndexedEquality{}, false
+		}
+		equality.Offset = offset
+		equality.OffsetSymbol = false
+	}
+	if equality.LengthSymbol {
+		value, found := integers.lookup(equality.LengthID)
+		if !found {
+			return CompactStringIndexedEquality{}, false
+		}
+		length, fits := value.Int64()
+		if !fits {
+			return CompactStringIndexedEquality{}, false
+		}
+		equality.Length = length
+		equality.LengthSymbol = false
+	}
+	return equality, true
 }
 
 func isGroundIndexedStringTerm(term Term[StringSort]) bool {

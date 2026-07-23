@@ -1239,6 +1239,64 @@ func TestGroundAssignedStringReplaceOperands(t *testing.T) {
 	}
 }
 
+func TestGroundAssignedIndexedStringOperands(t *testing.T) {
+	x := StringConst(1, "x")
+	offset := IntSymbol{ID: 2, Name: "offset"}
+	length := IntSymbol{ID: 3, Name: "length"}
+	base := IntSymbol{ID: 4, Name: "base"}
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: base, Right: Integer{Value: 0}},
+		Equal{Left: offset, Right: Add{Values: []Term[IntSort]{base, Integer{Value: 1}}}},
+		Equal{Left: length, Right: Integer{Value: 2}},
+		Equal{
+			Left:  StringSubstring(x, offset, length),
+			Right: StringVal("bc"),
+		},
+		Equal{
+			Left:  StringAt(x, offset),
+			Right: StringVal("b"),
+		},
+	}}
+	checked := Check(Assert(83, New(), formula))
+	result, ok := checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("result=%T", checked)
+	}
+	if actual, found := StringModelValue(result.Value, x); !found || actual != "abc" {
+		t.Fatalf("x=(%q,%v)", actual, found)
+	}
+	if actual, found := IntegerModelValue(result.Value, offset); !found || CompareIntegerValue(actual, NewIntegerValue(1)) != 0 {
+		t.Fatalf("offset=(%v,%v)", actual, found)
+	}
+	if actual, found := IntegerModelValue(result.Value, length); !found || CompareIntegerValue(actual, NewIntegerValue(2)) != 0 {
+		t.Fatalf("length=(%v,%v)", actual, found)
+	}
+	if valid, found := BoolValue(result.Value, formula); !found || !valid {
+		t.Fatalf("formula=(%v,%v)", valid, found)
+	}
+
+	conflicting := And{Values: []Term[BoolSort]{
+		Equal{Left: offset, Right: Integer{Value: 1}},
+		Equal{Left: offset, Right: Integer{Value: 2}},
+		Equal{Left: StringAt(x, offset), Right: StringVal("b")},
+	}}
+	checked = Check(Assert(84, New(), conflicting))
+	if _, ok := checked.(Unsatisfiable); !ok {
+		t.Fatalf("conflicting result=%T", checked)
+	}
+
+	compactAssignments := And{Values: []Term[BoolSort]{
+		IntegerLinearEquality{ID: 2, Coefficient: 1, Value: NewIntegerValue(1)},
+		IntegerLinearEquality{ID: 3, Coefficient: 1, Value: NewIntegerValue(2)},
+		Equal{Left: StringSubstring(x, offset, length), Right: StringVal("bc")},
+		Equal{Left: StringAt(x, offset), Right: StringVal("b")},
+	}}
+	checked = Check(Assert(85, New(), compactAssignments))
+	if _, ok := checked.(Satisfiable); !ok {
+		t.Fatalf("compact result=%T", checked)
+	}
+}
+
 func TestShortestStringDeletionPreimageExhaustive(t *testing.T) {
 	sources := []string{"a", "b", "aa", "ab", "ba", "aba"}
 	targets := []string{"", "a", "b", "aa", "ab", "ba", "aba", "bab"}

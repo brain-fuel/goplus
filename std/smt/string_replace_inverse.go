@@ -155,6 +155,11 @@ func (constraint *groundStringReplaceConstraint) appendPredicate(predicate Term[
 }
 
 func solveGroundStringReplaceEqualities(assertions []Term[BoolSort]) (checkOutcome, bool) {
+	if len(assertions) == 1 {
+		if _, indexed := assertions[0].(*CompactGroundIndexedStringFormula); indexed {
+			return checkOutcome{}, false
+		}
+	}
 	var storage boundedWordEquationConjuncts
 	for _, assertion := range assertions {
 		appendBoundedWordEquationConjunct(assertion, &storage)

@@ -293,6 +293,13 @@ func appendBoundedWordEquationConjunct(
 				appendBoundedWordEquationConjunct(child, result)
 			}
 		}
+	case *CompactGroundIndexedStringFormula:
+		for index := 0; index < int(value.AssignmentCount); index++ {
+			result.append(value.Assignments[index])
+		}
+		for index := 0; index < int(value.EqualityCount); index++ {
+			result.append(value.Equalities[index])
+		}
 	default:
 		result.append(term)
 	}

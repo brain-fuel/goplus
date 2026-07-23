@@ -129,6 +129,19 @@ type integerModel struct {
 	overflow map[int]IntegerValue
 }
 
+// IntegerSymbol identifies a direct integer symbol without materializing or
+// exposing the internal variable representation.
+func IntegerSymbol(term Term[IntSort]) (int, string, bool) {
+	switch value := term.(type) {
+	case IntSymbol:
+		return value.ID, value.Name, true
+	case integerVariable[IntSort]:
+		return value.iD, "", true
+	default:
+		return 0, "", false
+	}
+}
+
 func (m *integerModel) reserve(count int) {
 	if count > len(m.inline) {
 		m.overflow = make(map[int]IntegerValue, count-len(m.inline))
@@ -616,6 +629,13 @@ func evaluateBool(term Term[BoolSort], booleans booleanModel, integers integerMo
 		left, leftOK := evaluateInteger(value.Left, booleans, integers, reals)
 		right, rightOK := evaluateInteger(value.Right, booleans, integers, reals)
 		return CompareIntegerValue(left, right) < 0, leftOK && rightOK
+	case IntegerLinearEquality:
+		symbol, found := integers.lookup(value.ID)
+		if !found {
+			return false, false
+		}
+		actual := MultiplyIntegerValue(NewIntegerValue(value.Coefficient), symbol)
+		return CompareIntegerValue(actual, value.Value) == 0, true
 	case RealLessEqual:
 		left, leftOK := evaluateReal(value.Left, booleans, integers, reals)
 		right, rightOK := evaluateReal(value.Right, booleans, integers, reals)

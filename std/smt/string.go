@@ -388,7 +388,7 @@ func containsStringTheory(term Term[BoolSort]) bool {
 	switch value := term.(type) {
 	case stringContains, stringPrefix, stringSuffix, stringIsDigit, stringInRegex, stringSystem,
 		CompactStringBooleanFormula, CompactStringWordEquation, CompactStringLengthRelation,
-		CompactStringIndexedEquality, CompactStringReplaceEquality:
+		CompactStringIndexedEquality, CompactStringReplaceEquality, *CompactGroundIndexedStringFormula:
 		return true
 	case Equal:
 		return isStringTerm(value.Left) || isStringTerm(value.Right) || isStringIntegerTerm(value.Left) || isStringIntegerTerm(value.Right)
@@ -1258,6 +1258,11 @@ func evaluateStringBoolean(term Term[BoolSort], model stringModel, integers inte
 		if !found {
 			return false, false
 		}
+		ground, ok := groundCompactIndexedStringEquality(value, integers)
+		if !ok {
+			return false, false
+		}
+		value = ground
 		var derived Term[StringSort]
 		switch value.Kind {
 		case CompactStringAtEquality:
@@ -1273,6 +1278,20 @@ func evaluateStringBoolean(term Term[BoolSort], model stringModel, integers inte
 		}
 		actual, known := evaluateString(derived, stringModel{}, integers)
 		return actual == value.Target, known
+	case *CompactGroundIndexedStringFormula:
+		for index := 0; index < int(value.AssignmentCount); index++ {
+			valid, known := evaluateStringBoolean(value.Assignments[index], model, integers)
+			if !known || !valid {
+				return valid, known
+			}
+		}
+		for index := 0; index < int(value.EqualityCount); index++ {
+			valid, known := evaluateStringBoolean(value.Equalities[index], model, integers)
+			if !known || !valid {
+				return valid, known
+			}
+		}
+		return true, true
 	case CompactStringLengthRelation:
 		left, leftOK := evaluateCompactString(value.Left, model)
 		right, rightOK := evaluateCompactString(value.Right, model)
@@ -1374,6 +1393,8 @@ func evaluateStringBoolean(term Term[BoolSort], model stringModel, integers inte
 		leftInteger, leftOK := evaluateStringIntegerExact(value.Left, model, integers)
 		rightInteger, rightOK := evaluateStringIntegerExact(value.Right, model, integers)
 		return CompareIntegerValue(leftInteger, rightInteger) <= 0, leftOK && rightOK
+	case IntegerLinearEquality:
+		return evaluateBool(value, booleanModel{}, integers, rationalModel{})
 	case stringContains:
 		text, textOK := evaluateString(value.value, model, integers)
 		part, partOK := evaluateString(value.substring, model, integers)
