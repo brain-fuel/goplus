@@ -43,14 +43,18 @@ func (*CompactGroundIndexedStringFormula) isTerm(BoolSort) {}
 // CompactStringIndexOfEquality represents
 // str.indexof(text, needle, offset) = result for direct symbols.
 type CompactStringIndexOfEquality struct {
-	TextID     int
-	TextName   string
-	NeedleID   int
-	NeedleName string
-	OffsetID   int
-	OffsetName string
-	ResultID   int
-	ResultName string
+	TextID       int
+	TextName     string
+	NeedleID     int
+	NeedleName   string
+	Offset       int64
+	OffsetID     int
+	OffsetName   string
+	OffsetSymbol bool
+	Result       int64
+	ResultID     int
+	ResultName   string
+	ResultSymbol bool
 }
 
 func (CompactStringIndexOfEquality) isTerm(BoolSort) {}

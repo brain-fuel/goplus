@@ -629,11 +629,19 @@ func evaluateCompactStringIndexOfEquality(
 ) (bool, bool) {
 	text, textOK := strings.lookup(equality.TextID)
 	needle, needleOK := strings.lookup(equality.NeedleID)
-	offset, offsetOK := integers.lookup(equality.OffsetID)
-	result, resultOK := integers.lookup(equality.ResultID)
-	offsetValue, offsetFits := offset.Int64()
-	resultValue, resultFits := result.Int64()
-	if !textOK || !needleOK || !offsetOK || !resultOK || !offsetFits || !resultFits {
+	offsetValue, offsetOK := equality.Offset, true
+	if equality.OffsetSymbol {
+		offset, found := integers.lookup(equality.OffsetID)
+		offsetValue, offsetOK = offset.Int64()
+		offsetOK = offsetOK && found
+	}
+	resultValue, resultOK := equality.Result, true
+	if equality.ResultSymbol {
+		result, found := integers.lookup(equality.ResultID)
+		resultValue, resultOK = result.Int64()
+		resultOK = resultOK && found
+	}
+	if !textOK || !needleOK || !offsetOK || !resultOK {
 		return false, false
 	}
 	return stringIndexOfRunes(text, needle, offsetValue) == resultValue, true

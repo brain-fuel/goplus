@@ -1328,6 +1328,19 @@ func TestGroundAssignedStringIndexOfOperands(t *testing.T) {
 	if _, unsat := checked.(Unsatisfiable); !unsat {
 		t.Fatalf("contradiction result=%T", checked)
 	}
+
+	literalOperands := And{Values: []Term[BoolSort]{
+		Equal{Left: text, Right: StringVal("abcabc")},
+		Equal{Left: needle, Right: StringVal("bc")},
+		Equal{
+			Left:  StringIndexOf(text, needle, Integer{Value: 2}),
+			Right: Integer{Value: 4},
+		},
+	}}
+	checked = Check(Assert(88, New(), literalOperands))
+	if _, sat := checked.(Satisfiable); !sat {
+		t.Fatalf("literal result=%T", checked)
+	}
 }
 
 func TestShortestStringDeletionPreimageExhaustive(t *testing.T) {
