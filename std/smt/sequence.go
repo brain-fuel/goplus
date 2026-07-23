@@ -154,8 +154,8 @@ type integerSequenceRequirementSet struct {
 }
 
 type integerSequenceLengthRelation struct {
-	ids          [3]int
-	coefficients [3]IntegerValue
+	ids          [4]int
+	coefficients [4]IntegerValue
 	count        int
 	constant     IntegerValue
 	equality     bool
@@ -1172,8 +1172,8 @@ func normalizeIntegerSequenceLengthAffine(
 }
 
 type integerSequenceLengthMultiAffine struct {
-	ids          [3]int
-	coefficients [3]IntegerValue
+	ids          [4]int
+	coefficients [4]IntegerValue
 	count        int
 	constant     IntegerValue
 	valid        bool
@@ -2024,11 +2024,11 @@ func buildIntegerSequenceAtLength(
 
 type integerSequenceLengthSearch struct {
 	relation     integerSequenceLengthRelation
-	requirements [3]integerSequenceRequirements
-	assigned     [3]IntegerSequenceValue
-	hasAssigned  [3]bool
-	values       [3]IntegerSequenceValue
-	lengths      [3]int
+	requirements [4]integerSequenceRequirements
+	assigned     [4]IntegerSequenceValue
+	hasAssigned  [4]bool
+	values       [4]IntegerSequenceValue
+	lengths      [4]int
 	states       int
 }
 
@@ -2238,13 +2238,13 @@ func solveIntegerSequenceLengthRelation(
 
 type integerSequenceLengthSystemSearch struct {
 	relations    *integerSequenceRequirementSet
-	ids          [3]int
+	ids          [4]int
 	count        int
-	requirements [3]integerSequenceRequirements
-	assigned     [3]IntegerSequenceValue
-	hasAssigned  [3]bool
-	values       [3]IntegerSequenceValue
-	lengths      [3]int
+	requirements [4]integerSequenceRequirements
+	assigned     [4]IntegerSequenceValue
+	hasAssigned  [4]bool
+	values       [4]IntegerSequenceValue
+	lengths      [4]int
 	states       int
 }
 

@@ -786,6 +786,96 @@ func TestMultiSymbolAffineLengthIntegerSequenceInequalities(t *testing.T) {
 	}
 }
 
+func TestFourSymbolAffineLengthIntegerSequenceSystems(t *testing.T) {
+	unit := func(value int64) Term[SequenceSort[IntSort]] {
+		return SequenceUnit[IntSort](Integer{Value: value})
+	}
+	pair := func(left, right int64) Term[SequenceSort[IntSort]] {
+		return SequenceConcat(unit(left), unit(right))
+	}
+	x := SequenceConst[IntSort](60, "x")
+	y := SequenceConst[IntSort](61, "y")
+	z := SequenceConst[IntSort](62, "z")
+	w := SequenceConst[IntSort](63, "w")
+	sum := Add{Values: []Term[IntSort]{
+		SequenceLength(x),
+		SequenceLength(y),
+		SequenceLength(z),
+		SequenceLength(w),
+	}}
+	weighted := Add{Values: []Term[IntSort]{
+		IntegerScale{
+			Coefficient: NewIntegerValue(2),
+			Value:       SequenceLength(x),
+		},
+		SequenceLength(y),
+		SequenceLength(z),
+		SequenceLength(w),
+	}}
+	exact := And{Values: []Term[BoolSort]{
+		Equal{Left: weighted, Right: Integer{Value: 10}},
+		SequenceHasPrefix(x, pair(1, 2)),
+		SequenceHasPrefix(y, pair(3, 4)),
+		SequenceHasPrefix(z, pair(5, 6)),
+		SequenceHasSuffix(w, pair(7, 8)),
+	}}
+	exactResult, ok := Check(Assert(36, New(), exact)).(Satisfiable)
+	if !ok {
+		t.Fatal("four-symbol affine equality must be satisfiable")
+	}
+	var lengths [4]int
+	for index, expression := range []Term[SequenceSort[IntSort]]{x, y, z, w} {
+		value, found := IntegerSequenceModelValue(exactResult.Value, expression)
+		if !found {
+			t.Fatalf("missing model index=%d", index)
+		}
+		lengths[index] = value.Len()
+	}
+	if 2*lengths[0]+lengths[1]+lengths[2]+lengths[3] != 10 {
+		t.Fatalf("exact lengths=%v", lengths)
+	}
+
+	system := And{Values: []Term[BoolSort]{
+		LessEqual{Left: Integer{Value: 8}, Right: sum},
+		LessEqual{Left: weighted, Right: Integer{Value: 10}},
+		SequenceHasPrefix(x, pair(1, 2)),
+		SequenceHasPrefix(y, pair(3, 4)),
+		SequenceHasPrefix(z, pair(5, 6)),
+		SequenceHasSuffix(w, pair(7, 8)),
+	}}
+	systemResult, ok := Check(Assert(37, New(), system)).(Satisfiable)
+	if !ok {
+		t.Fatal("four-symbol affine system must be satisfiable")
+	}
+	total := 0
+	for index, expression := range []Term[SequenceSort[IntSort]]{x, y, z, w} {
+		value, found := IntegerSequenceModelValue(systemResult.Value, expression)
+		if !found {
+			t.Fatalf("missing system model index=%d", index)
+		}
+		lengths[index] = value.Len()
+		total += value.Len()
+	}
+	if total < 8 || 2*lengths[0]+lengths[1]+lengths[2]+lengths[3] > 10 {
+		t.Fatalf("system lengths=%v", lengths)
+	}
+
+	v := SequenceConst[IntSort](64, "v")
+	fiveSymbol := Equal{
+		Left: Add{Values: []Term[IntSort]{
+			sum,
+			SequenceLength(v),
+		}},
+		Right: Integer{Value: 10},
+	}
+	if checked := Check(Assert(38, New(), fiveSymbol)); func() bool {
+		_, ok := checked.(Unknown)
+		return ok
+	}() == false {
+		t.Fatalf("five-symbol result=%T", checked)
+	}
+}
+
 func TestSymbolicIntegerSequenceEqualityClasses(t *testing.T) {
 	unit := func(value int64) Term[SequenceSort[IntSort]] {
 		return SequenceUnit[IntSort](Integer{Value: value})
