@@ -1808,6 +1808,35 @@ func TestGroundIntegerRealCoercions(t *testing.T) {
 	}
 }
 
+func TestSymbolicIntegerToRealComparisons(t *testing.T) {
+	x := IntegerVariable(1)
+	formula := And{Values: []Term[BoolSort]{
+		RealLessEqual{
+			Left:  Real{Value: MustParseRational("3/2")},
+			Right: IntToReal(x),
+		},
+		RealLess{
+			Left:  IntToReal(x),
+			Right: Real{Value: MustParseRational("5/2")},
+		},
+	}}
+	result, ok := Check(Assert(1, New(), formula)).(Satisfiable)
+	if !ok {
+		t.Fatalf("result=%T", Check(Assert(1, New(), formula)))
+	}
+	if value, found := IntegerModelValue(result.Value, x); !found || CompareIntegerValue(value, NewIntegerValue(2)) != 0 {
+		t.Fatalf("x=%v found=%v", value, found)
+	}
+
+	fractionalEquality := Equal{
+		Left:  IntToReal(x),
+		Right: Real{Value: MustParseRational("3/2")},
+	}
+	if result := Check(Assert(2, New(), fractionalEquality)); func() bool { _, ok := result.(Unsatisfiable); return ok }() == false {
+		t.Fatalf("fractional equality result=%T", result)
+	}
+}
+
 func TestSharedRealEUFExchangesLRAImpliedEquality(t *testing.T) {
 	x := RealSymbol{ID: 1, Name: "x"}
 	y := RealSymbol{ID: 2, Name: "y"}

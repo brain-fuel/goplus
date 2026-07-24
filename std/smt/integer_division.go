@@ -137,7 +137,14 @@ func solveCompactIntegerDivModValues(equalities []IntegerLinearEquality, relatio
 		symbol.assigned, symbol.value = true, quotient
 	}
 	if len(relations) == 0 {
-		return checkOutcome{}, false
+		var model integerModel
+		for index := 0; index < symbolCount; index++ {
+			if !symbols[index].assigned {
+				return checkOutcome{}, false
+			}
+			model.set(symbols[index].id, symbols[index].value)
+		}
+		return checkOutcome{status: checkSat, integers: model}, true
 	}
 	for _, relation := range relations {
 		symbol := find(relation.SymbolID)

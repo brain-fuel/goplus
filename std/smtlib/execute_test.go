@@ -1975,10 +1975,6 @@ func TestExecuteGroundIntegerRealCoercions(t *testing.T) {
 func TestExecuteSymbolicIntegerRealCoercionsRemainUnknown(t *testing.T) {
 	for _, source := range []string{
 		`(set-logic QF_LIRA)
-(declare-const x Int)
-(assert (= (to_real x) 1.0))
-(check-sat)`,
-		`(set-logic QF_LIRA)
 (declare-const x Real)
 (assert (= (to_int x) 1))
 (check-sat)`,
@@ -1994,6 +1990,38 @@ func TestExecuteSymbolicIntegerRealCoercionsRemainUnknown(t *testing.T) {
 		if _, ok := result.Responses[len(result.Responses)-1].(Unknown); !ok {
 			t.Fatalf("last response=%#v", result.Responses[len(result.Responses)-1])
 		}
+	}
+}
+
+func TestExecuteSymbolicIntegerToRealComparisons(t *testing.T) {
+	source := `(set-logic QF_LIRA)
+(declare-const x Int)
+(assert (<= 1.5 (to_real x)))
+(assert (< (to_real x) 2.5))
+(check-sat)
+(get-value (x))`
+	result, ok := Execute(source).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(source))
+	}
+	if _, ok := result.Responses[len(result.Responses)-2].(Satisfiable); !ok {
+		t.Fatalf("check response=%#v", result.Responses[len(result.Responses)-2])
+	}
+	values := result.Responses[len(result.Responses)-1].(ValuesAvailable).Values
+	if value, ok := values[0].(IntegerValue); !ok || value.Value != 2 {
+		t.Fatalf("x=%#v", values[0])
+	}
+
+	impossible := `(set-logic QF_LIRA)
+(declare-const x Int)
+(assert (= (to_real x) 1.5))
+(check-sat)`
+	result, ok = Execute(impossible).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(impossible))
+	}
+	if _, ok := result.Responses[len(result.Responses)-1].(Unsatisfiable); !ok {
+		t.Fatalf("check response=%#v", result.Responses[len(result.Responses)-1])
 	}
 }
 

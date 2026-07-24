@@ -272,6 +272,7 @@ func (e *engine) solveAdditional(assumptions []Term[BoolSort]) checkOutcome {
 		allAssertions = append(allAssertions, e.assertions...)
 		allAssertions = append(allAssertions, assumptions...)
 	}
+	allAssertions = rewriteSymbolicIntegerToReal(allAssertions)
 	allConstants := len(allAssertions) > 0
 	for _, assertion := range allAssertions {
 		constant, ok := assertion.(Bool)
@@ -716,6 +717,12 @@ func evaluateReal(term Term[RealSort], booleans booleanModel, integers integerMo
 	case RealScale:
 		item, ok := evaluateReal(value.Value, booleans, integers, reals)
 		return rationalMul(value.Coefficient, item), ok
+	case integerToReal:
+		item, ok := evaluateInteger(value.value, booleans, integers, reals)
+		if !ok {
+			return Rational{}, false
+		}
+		return RationalFromInteger(item), true
 	case If[RealSort]:
 		condition, ok := evaluateBool(value.Condition, booleans, integers, reals)
 		if !ok {
