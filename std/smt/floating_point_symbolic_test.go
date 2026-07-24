@@ -797,6 +797,75 @@ func TestSymbolicFloatingPointRemRelation(t *testing.T) {
 	}
 }
 
+func TestSymbolicFloatingPointRemSynthesizesUnconstrainedOperands(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		target uint64
+	}{
+		{"finite", 0xbf800000},
+		{"negative-zero", 0x80000000},
+		{"subnormal", 0x00000001},
+		{"canonical-nan", 0x7fc00000},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			relation := NewFloatingPointRemRelation(
+				8, 24, 1, 2, NewBitVectorUint64(32, test.target),
+			)
+			result, ok := Check(AssertFloatingPointRemRelation(
+				1, New(), relation,
+			)).(Satisfiable)
+			if !ok {
+				t.Fatal("expected synthesized fp.rem model")
+			}
+			left, leftFound := FloatingPointSymbolModelBits(result.Value, 1)
+			right, rightFound := FloatingPointSymbolModelBits(result.Value, 2)
+			leftValue, leftInline := left.Uint64()
+			rightValue, rightInline := right.Uint64()
+			if !leftFound || !rightFound || !leftInline || !rightInline ||
+				leftValue != test.target || rightValue != 0x7f800000 {
+				t.Fatalf(
+					"unexpected operands: left=%#x right=%#x",
+					leftValue, rightValue,
+				)
+			}
+		})
+	}
+}
+
+func TestSymbolicFloatingPointRemRejectsInfiniteResult(t *testing.T) {
+	for _, target := range []uint64{0x7f800000, 0xff800000} {
+		relation := NewFloatingPointRemRelation(
+			8, 24, 1, 2, NewBitVectorUint64(32, target),
+		)
+		if _, ok := Check(AssertFloatingPointRemRelation(
+			1, New(), relation,
+		)).(Unsatisfiable); !ok {
+			t.Fatalf("expected fp.rem result %#x to be unsatisfiable", target)
+		}
+	}
+}
+
+func TestSymbolicFloatingPointRemSynthesizesBinary128Operands(t *testing.T) {
+	target := FloatingPointBits(FloatingPointFromRational(
+		15, 113, RoundNearestTiesToEven(), NewRational(-3, 2),
+	))
+	infinity := FloatingPointBits(FloatingPointPositiveInfinity(15, 113))
+	relation := NewFloatingPointRemRelation(15, 113, 1, 2, target)
+	result, ok := Check(AssertFloatingPointRemRelation(
+		1, New(), relation,
+	)).(Satisfiable)
+	if !ok {
+		t.Fatal("expected synthesized binary128 fp.rem model")
+	}
+	left, leftFound := FloatingPointSymbolModelBits(result.Value, 1)
+	right, rightFound := FloatingPointSymbolModelBits(result.Value, 2)
+	if !leftFound || !rightFound ||
+		!EqualBitVectorValue(left, target) ||
+		!EqualBitVectorValue(right, infinity) {
+		t.Fatalf("unexpected binary128 operands: left=%v right=%v", left, right)
+	}
+}
+
 func TestFloatingPointMinMaxBitBlastFallback(t *testing.T) {
 	expected := NewBitVectorUint64(32, 0xbf800000)
 	relation := NewFloatingPointMinMaxRelation(

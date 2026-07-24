@@ -3029,6 +3029,37 @@ func TestExecuteFloatingPointRem(t *testing.T) {
 	}
 }
 
+func TestExecuteUnconstrainedFloatingPointRem(t *testing.T) {
+	script := `(set-logic QF_FP)
+(declare-const left (_ FloatingPoint 8 24))
+(declare-const right (_ FloatingPoint 8 24))
+(assert (= (fp.to_ieee_bv (fp.rem left right)) #xbf800000))
+(check-sat)`
+	fast, recognized := executeFloatingPointFast(script)
+	if !recognized {
+		t.Fatal("unconstrained fp.rem script did not use streaming execution")
+	}
+	result, ok := fast.(Executed)
+	if !ok {
+		t.Fatalf("streaming execution=%#v", fast)
+	}
+	if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+		t.Fatalf("streaming result=%#v", result)
+	}
+
+	parsed, ok := Parse(script).(Parsed)
+	if !ok {
+		t.Fatal("general parse failed")
+	}
+	responses, errors := executeCommands(parsed.Commands)
+	if len(errors) != 0 {
+		t.Fatalf("general execution errors=%#v", errors)
+	}
+	if _, ok := responses[len(responses)-1].(Satisfiable); !ok {
+		t.Fatalf("general result=%#v", responses)
+	}
+}
+
 func TestExecuteFloatingPointToBitVector(t *testing.T) {
 	script := `(set-logic QF_FP)
 (assert (= ((_ fp.to_ubv 8) RTZ ((_ to_fp 8 24) #x40700000)) #x03))
@@ -4200,6 +4231,45 @@ func BenchmarkExecuteFloatingPointRem(b *testing.B) {
 (assert (= (fp.to_ieee_bv left) #x40400000))
 (assert (= (fp.to_ieee_bv right) #x40000000))
 (assert (= (fp.to_ieee_bv (fp.rem left right)) #xbf800000))
+(check-sat)`
+	b.Run("stream", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			result, ok := Execute(script).(Executed)
+			if !ok {
+				b.Fatal("stream execution failed")
+			}
+			if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
+	b.Run("general", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			parsed, ok := Parse(script).(Parsed)
+			if !ok {
+				b.Fatal("parse failed")
+			}
+			responses, errors := executeCommands(parsed.Commands)
+			if len(errors) != 0 {
+				b.Fatal("general execution failed")
+			}
+			if _, ok := responses[len(responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
+}
+
+func BenchmarkExecuteUnconstrainedFloatingPointRem(b *testing.B) {
+	script := `(set-logic QF_FP)
+(declare-const left-a (_ FloatingPoint 8 24))
+(declare-const right-a (_ FloatingPoint 8 24))
+(declare-const left-b (_ FloatingPoint 8 24))
+(declare-const right-b (_ FloatingPoint 8 24))
+(assert (= (fp.to_ieee_bv (fp.rem left-a right-a)) #xbf800000))
+(assert (= (fp.to_ieee_bv (fp.rem left-b right-b)) #x00000001))
 (check-sat)`
 	b.Run("stream", func(b *testing.B) {
 		b.ReportAllocs()

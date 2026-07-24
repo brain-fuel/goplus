@@ -563,6 +563,48 @@ func synthesizeFloatingPointSqrtPreimage(
 	return BitVectorValue{}, false, false
 }
 
+func synthesizeFloatingPointRemIdentity(
+	assignments *[4]compactBitVectorAssignment,
+	assignmentCount *int,
+	relation FloatingPointRemRelation,
+) (bool, bool) {
+	if relation.LeftSymbolID == relation.RightSymbolID {
+		return false, false
+	}
+	total := relation.ExponentBits + relation.SignificandBits
+	if relation.Value.Width() != total ||
+		*assignmentCount+2 > len(assignments) {
+		return false, false
+	}
+	target := FloatingPointFromBits(
+		relation.ExponentBits, relation.SignificandBits, relation.Value,
+	)
+	// IEEE remainder cannot produce an infinity: an infinite dividend is an
+	// invalid operation, while every valid finite remainder stays finite.
+	if FloatingPointIsInfinite(target) {
+		return false, true
+	}
+	divisor := FloatingPointPositiveInfinity(
+		relation.ExponentBits, relation.SignificandBits,
+	)
+	remainder := floatingPointRem(target, divisor)
+	if !EqualBitVectorValue(FloatingPointBits(remainder), relation.Value) {
+		return false, false
+	}
+	fixed := NotBitVectorValue(NewBitVectorUint64(total, 0))
+	assignments[*assignmentCount] = compactBitVectorAssignment{
+		id: relation.LeftSymbolID, value: relation.Value, fixed: fixed,
+	}
+	*assignmentCount++
+	assignments[*assignmentCount] = compactBitVectorAssignment{
+		id:    relation.RightSymbolID,
+		value: FloatingPointBits(divisor),
+		fixed: fixed,
+	}
+	*assignmentCount++
+	return true, false
+}
+
 func (problem *compactBitVectorProblem) add(term Term[BoolSort], negated bool) bool {
 	switch value := term.(type) {
 	case And:
@@ -892,6 +934,30 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 			fixed: NotBitVectorValue(NewBitVectorUint64(total, 0)),
 		}
 		assignmentCount++
+	}
+	// For distinct unconstrained operands, rem(result, +infinity) is an exact
+	// canonical preimage of every finite result (and of the kernel's canonical
+	// NaN). Infinity result patterns are impossible.
+	for _, relation := range problem.rems[:problem.remCount] {
+		leftFound, rightFound := false, false
+		for index := 0; index < assignmentCount; index++ {
+			leftFound = leftFound ||
+				assignments[index].id == relation.LeftSymbolID
+			rightFound = rightFound ||
+				assignments[index].id == relation.RightSymbolID
+		}
+		if leftFound || rightFound || relation.Negated {
+			continue
+		}
+		synthesized, impossible := synthesizeFloatingPointRemIdentity(
+			&assignments, &assignmentCount, relation,
+		)
+		if impossible {
+			return checkOutcome{status: checkUnsat}, true
+		}
+		if !synthesized {
+			return checkOutcome{}, false
+		}
 	}
 	// For two distinct unconstrained operands, fp.add(result, signed-zero)
 	// provides a canonical preimage for every ordinary result. Validate the

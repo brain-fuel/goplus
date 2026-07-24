@@ -252,7 +252,8 @@ type FloatingPointSqrtRelation struct {
 func (FloatingPointSqrtRelation) isTerm(BoolSort) {}
 
 // FloatingPointRemRelation constrains the exact IEEE remainder bits over two
-// assigned same-format symbols.
+// same-format symbols. Distinct unconstrained operands can use the validated
+// rem(result, positive-infinity) canonical model for finite results.
 type FloatingPointRemRelation struct {
 	ExponentBits    int
 	SignificandBits int
