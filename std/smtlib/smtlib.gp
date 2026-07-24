@@ -93,6 +93,7 @@ func Parse(source string) ParseResult {
 func Format(commands []Command) string { return formatCommands(commands) }
 func FormatExpression(expression SExpr) string { return formatExpression(expression) }
 func Execute(source string) ExecutionResult {
+	if result, ok := executeFloatingPointFast(source); ok { return result }
 	match Parse(source) {
 	case Rejected(errors): return ScriptRejected(errors)
 	case Parsed(commands):

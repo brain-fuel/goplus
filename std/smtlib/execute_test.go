@@ -2304,6 +2304,41 @@ func BenchmarkExecuteFloatingPointRoundToIntegral(b *testing.B) {
 	}
 }
 
+func TestFastFloatingPointExecutionMatchesGeneralExecution(t *testing.T) {
+	script := `(set-logic QF_FP)
+; comments and the long rounding-mode spelling remain accepted
+(declare-const x (_ FloatingPoint 8 24))
+(assert (= #x3fc00000 (fp.to_ieee_bv x)))
+(assert (not (= #x3f800000
+  (fp.to_ieee_bv
+    (fp.roundToIntegral roundNearestTiesToEven x)))))
+(check-sat)`
+	fast, recognized := executeFloatingPointFast(script)
+	if !recognized {
+		t.Fatal("supported QF_FP fragment did not use the streaming executor")
+	}
+	parsed, ok := Parse(script).(Parsed)
+	if !ok {
+		t.Fatalf("parse=%#v", Parse(script))
+	}
+	responses, errors := executeCommands(parsed.Commands)
+	if len(errors) != 0 {
+		t.Fatalf("general execution errors=%#v", errors)
+	}
+	general := Executed{Responses: responses}
+	if _, ok := fast.(Executed).Responses[len(responses)-1].(Satisfiable); !ok {
+		t.Fatalf("fast=%#v", fast)
+	}
+	if _, ok := general.Responses[len(responses)-1].(Satisfiable); !ok {
+		t.Fatalf("general=%#v", general)
+	}
+
+	withValue := script + "\n(get-value ((fp.to_ieee_bv x)))"
+	if _, recognized := executeFloatingPointFast(withValue); recognized {
+		t.Fatal("get-value must fall back to the general model-value executor")
+	}
+}
+
 func TestExecuteBitVectorOrdering(t *testing.T) {
 	script := `(set-logic QF_BV)
 (declare-const x (_ BitVec 8))
