@@ -2864,6 +2864,69 @@ func TestExecuteFloatingPointFromBitVector(t *testing.T) {
 	}
 }
 
+func TestExecuteFloatingPointFormatConversion(t *testing.T) {
+	script := `(set-logic QF_FP)
+(assert (= (fp.to_ieee_bv
+  ((_ to_fp 5 11) RNE ((_ to_fp 8 24) #x3f801000))) #x3c00))
+(assert (= (fp.to_ieee_bv
+  ((_ to_fp 5 11) RNA ((_ to_fp 8 24) #x3f801000))) #x3c01))
+(assert (= (fp.to_ieee_bv
+  ((_ to_fp 8 24) RNE (_ -zero 5 11))) #x80000000))
+(check-sat)`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("execute=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+		t.Fatalf("check-sat=%#v", result.Responses[len(result.Responses)-1])
+	}
+}
+
+func TestExecuteSymbolicFloatingPointFormatConversion(t *testing.T) {
+	script := `(set-logic QF_FP)
+(declare-const x (_ FloatingPoint 8 24))
+(assert (= (fp.to_ieee_bv x) #x3f801000))
+(assert (= (fp.to_ieee_bv ((_ to_fp 5 11) RNE x)) #x3c00))
+(check-sat)`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("execute=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+		t.Fatalf("check-sat=%#v", result.Responses[len(result.Responses)-1])
+	}
+}
+
+func TestStreamFloatingPointFormatConversion(t *testing.T) {
+	script := `(set-logic QF_FP)
+(declare-const x (_ FloatingPoint 8 24))
+(assert (= (fp.to_ieee_bv x) #x3f801000))
+(assert (= (fp.to_ieee_bv ((_ to_fp 5 11) RNE x)) #x3c00))
+(check-sat)`
+	result, ok := executeFloatingPointFast(script)
+	if !ok {
+		t.Fatal("streaming executor rejected supported format conversion")
+	}
+	executed, ok := result.(Executed)
+	if !ok {
+		t.Fatalf("execute=%#v", result)
+	}
+	if _, ok := executed.Responses[len(executed.Responses)-1].(Satisfiable); !ok {
+		t.Fatalf("check-sat=%#v", executed.Responses[len(executed.Responses)-1])
+	}
+}
+
+func TestRejectIllSortedFloatingPointFormatConversion(t *testing.T) {
+	for _, script := range []string{
+		`(assert (= (fp.to_ieee_bv ((_ to_fp 5 11) #b0 (_ +zero 8 24))) #x0000))`,
+		`(assert (= (fp.to_ieee_bv ((_ to_fp_unsigned 5 11) RNE (_ +zero 8 24))) #x0000))`,
+	} {
+		if _, ok := Execute(script).(ExecutionFailed); !ok {
+			t.Fatalf("accepted %q", script)
+		}
+	}
+}
+
 func TestExecuteSymbolicFloatingPointFromBitVector(t *testing.T) {
 	script := `(set-logic QF_FP)
 (declare-const x (_ BitVec 8))
@@ -3565,6 +3628,43 @@ func BenchmarkExecuteFloatingPointFromBitVector(b *testing.B) {
 			responses, errors := executeCommands(parsed.Commands)
 			if len(errors) != 0 {
 				b.Fatal("general execution failed")
+			}
+			if _, ok := responses[len(responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
+}
+
+func BenchmarkExecuteFloatingPointFormatConversion(b *testing.B) {
+	script := `(set-logic QF_FP)
+(declare-const x (_ FloatingPoint 8 24))
+(assert (= (fp.to_ieee_bv x) #x3f801000))
+(assert (= (fp.to_ieee_bv ((_ to_fp 5 11) RNE x)) #x3c00))
+(assert (= (fp.to_ieee_bv ((_ to_fp 5 11) RNA x)) #x3c01))
+(check-sat)`
+	b.Run("stream", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			result, ok := Execute(script).(Executed)
+			if !ok {
+				b.Fatal("stream execution failed")
+			}
+			if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
+	b.Run("general", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			parsed, ok := Parse(script).(Parsed)
+			if !ok {
+				b.Fatal("parse failed")
+			}
+			responses, errors := executeCommands(parsed.Commands)
+			if len(errors) != 0 {
+				b.Fatal("general executor rejected script")
 			}
 			if _, ok := responses[len(responses)-1].(Satisfiable); !ok {
 				b.Fatal("unexpected result")

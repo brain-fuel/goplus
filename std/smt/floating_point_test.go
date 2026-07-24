@@ -5,6 +5,15 @@ import (
 	"testing"
 )
 
+func floatingPointTestBits64(t *testing.T, value FloatingPointValue) uint64 {
+	t.Helper()
+	bits, inline := FloatingPointBits(value).Uint64()
+	if !inline {
+		t.Fatal("expected inline floating-point value")
+	}
+	return bits
+}
+
 func TestFloatingPointGroundClassification(t *testing.T) {
 	tests := []struct {
 		name                                  string
@@ -834,6 +843,61 @@ func TestFloatingPointFromBitVectorModes(t *testing.T) {
 				t.Fatalf("bits = %#x, want %#x", raw, test.want)
 			}
 		})
+	}
+}
+
+func TestFloatingPointConvertFormat(t *testing.T) {
+	t.Run("special values preserve class and zero sign", func(t *testing.T) {
+		if got := FloatingPointConvertFormat(
+			5, 11, RoundNearestTiesToEven(),
+			FloatingPointFromUint64(8, 24, 0x80000000),
+		); floatingPointTestBits64(t, got) != 0x8000 {
+			t.Fatalf("negative zero = %#x", floatingPointTestBits64(t, got))
+		}
+		if got := FloatingPointConvertFormat(
+			5, 11, RoundNearestTiesToEven(),
+			FloatingPointFromUint64(8, 24, 0xff800000),
+		); floatingPointTestBits64(t, got) != 0xfc00 {
+			t.Fatalf("negative infinity = %#x", floatingPointTestBits64(t, got))
+		}
+		if got := FloatingPointConvertFormat(
+			5, 11, RoundNearestTiesToEven(),
+			FloatingPointFromUint64(8, 24, 0x7fc12345),
+		); !FloatingPointIsNaN(got) {
+			t.Fatalf("NaN converted to %#x", floatingPointTestBits64(t, got))
+		}
+	})
+
+	// 1 + 2^-11 is exactly halfway between binary16 1.0 and its successor.
+	source := FloatingPointFromUint64(8, 24, 0x3f801000)
+	tests := []struct {
+		mode FloatingPointRoundingMode
+		want uint64
+	}{
+		{RoundNearestTiesToEven(), 0x3c00},
+		{RoundNearestTiesToAway(), 0x3c01},
+		{RoundTowardPositive(), 0x3c01},
+		{RoundTowardNegative(), 0x3c00},
+		{RoundTowardZero(), 0x3c00},
+	}
+	for _, test := range tests {
+		got := FloatingPointConvertFormat(5, 11, test.mode, source)
+		if bits := floatingPointTestBits64(t, got); bits != test.want {
+			t.Fatalf("mode %#v = %#x, want %#x", test.mode, bits, test.want)
+		}
+	}
+
+	wide := FloatingPointFromBits(
+		15, 113,
+		bitVectorValueFromBig(
+			128,
+			new(big.Int).Lsh(big.NewInt(0x3fff), 112),
+		),
+	)
+	if got := FloatingPointConvertFormat(
+		8, 24, RoundNearestTiesToEven(), wide,
+	); floatingPointTestBits64(t, got) != 0x3f800000 {
+		t.Fatalf("binary128 one converted to %#x", floatingPointTestBits64(t, got))
 	}
 }
 

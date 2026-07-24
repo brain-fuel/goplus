@@ -207,6 +207,18 @@ func FloatingPointFromUint64(exponentBits int, significandBits int, bits uint64)
 	return FloatingPointFromBits(exponentBits, significandBits, NewBitVectorUint64(int(exponentBits+significandBits), bits))
 }
 
+// FloatingPointConvertFormat implements SMT-LIB's ((_ to_fp e s) rm fp)
+// numeric conversion. The source value is decoded exactly and rounded once
+// into the target format using the selected rounding mode.
+//
+//goplus:dep FloatingPointConvertFormat(targetExponentBits nat, targetSignificandBits nat, 0 e nat, 0 s nat, mode FloatingPointRoundingMode, value FloatingPointValue[e, s]) FloatingPointValue[targetExponentBits, targetSignificandBits]
+func FloatingPointConvertFormat(targetExponentBits int, targetSignificandBits int, mode FloatingPointRoundingMode, value FloatingPointValue) FloatingPointValue {
+	return floatingPointConvertFormat(
+		floatingPointRoundingModeCode(mode),
+		int(targetExponentBits), int(targetSignificandBits), value,
+	)
+}
+
 // FloatingPointFromComponents implements SMT-LIB's native
 // (fp sign exponent significand) constructor. The significand argument contains
 // the s-1 explicitly encoded trailing bits, not the hidden leading bit.

@@ -22,6 +22,7 @@ const (
 	fpFastRem
 	fpFastConvert
 	fpFastFromBV
+	fpFastFormat
 	fpFastPredicate
 	fpFastComparison
 	fpFastEquality
@@ -35,6 +36,8 @@ type fpFastCommand struct {
 	thirdSymbolID                 int
 	exponentBits                  int
 	significandBits, commandIndex int
+	sourceExponentBits            int
+	sourceSignificandBits         int
 	name, secondName              string
 	value                         smt.BitVectorValue
 	mode                          smt.FloatingPointRoundingMode
@@ -74,6 +77,8 @@ type fpFastOperand struct {
 	kind                   uint8
 	symbolID, exponentBits int
 	significandBits        int
+	sourceExponentBits     int
+	sourceSignificandBits  int
 	value                  smt.BitVectorValue
 	mode                   smt.FloatingPointRoundingMode
 	secondSymbolID         int
@@ -97,6 +102,7 @@ const (
 	fpFastConversionBits
 	fpFastBitVectorSymbolBits
 	fpFastFromBVBits
+	fpFastFormatBits
 	fpFastExactFloatingBits
 	fpFastLiteralBits
 )
@@ -346,6 +352,19 @@ func executeFloatingPointFast(source string) (ExecutionResult, bool) {
 			)
 			nextAssertion++
 			responses = append(responses, Acknowledged{CommandIndex: command.commandIndex})
+		case fpFastFormat:
+			relation := smt.NewFloatingPointFormatConversionRelation(
+				command.sourceExponentBits,
+				command.sourceSignificandBits,
+				command.exponentBits, command.significandBits,
+				command.symbolID, command.mode, command.value,
+			)
+			relation.Negated = command.negated
+			solver = smt.AssertFloatingPointFormatConversionRelation(
+				nextAssertion, solver, relation,
+			)
+			nextAssertion++
+			responses = append(responses, Acknowledged{CommandIndex: command.commandIndex})
 		case fpFastPredicate:
 			relation := smt.NewFloatingPointRelation(
 				command.exponentBits, command.significandBits,
@@ -510,6 +529,8 @@ func (scanner *fpFastScanner) formula(
 		value:           literal.value, mode: derived.mode,
 		operation: derived.operation,
 		width:     derived.width, signed: derived.signed,
+		sourceExponentBits:    derived.sourceExponentBits,
+		sourceSignificandBits: derived.sourceSignificandBits,
 	}
 	switch derived.kind {
 	case fpFastSymbolBits:
@@ -538,6 +559,8 @@ func (scanner *fpFastScanner) formula(
 		command.kind = fpFastAssign
 	case fpFastFromBVBits:
 		command.kind = fpFastFromBV
+	case fpFastFormatBits:
+		command.kind = fpFastFormat
 	default:
 		return fpFastCommand{}, false
 	}
@@ -642,6 +665,20 @@ func (scanner *fpFastScanner) operand(
 					significandBits: significandBits,
 					mode:            mode,
 					signed:          scanner.text(name) == "to_fp",
+				}, true
+			}
+			if modeOK && symbolOK && modeFound && symbolFound &&
+				scanner.text(name) == "to_fp" &&
+				symbol.exponentBits >= 2 && symbol.significandBits >= 2 &&
+				symbol.bitWidth == 0 && scanner.right() && scanner.right() {
+				return fpFastOperand{
+					kind:                  fpFastFormatBits,
+					symbolID:              symbol.id,
+					exponentBits:          exponentBits,
+					significandBits:       significandBits,
+					sourceExponentBits:    symbol.exponentBits,
+					sourceSignificandBits: symbol.significandBits,
+					mode:                  mode,
 				}, true
 			}
 		}
