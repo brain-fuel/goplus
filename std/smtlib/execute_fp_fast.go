@@ -12,6 +12,7 @@ const (
 	fpFastDeclare
 	fpFastAssign
 	fpFastRound
+	fpFastPredicate
 	fpFastCheck
 )
 
@@ -22,6 +23,7 @@ type fpFastCommand struct {
 	name                          string
 	value                         smt.BitVectorValue
 	mode                          smt.FloatingPointRoundingMode
+	predicate                     uint8
 	negated                       bool
 }
 
@@ -171,6 +173,17 @@ func executeFloatingPointFast(source string) (ExecutionResult, bool) {
 			)
 			nextAssertion++
 			responses = append(responses, Acknowledged{CommandIndex: command.commandIndex})
+		case fpFastPredicate:
+			relation := smt.NewFloatingPointRelation(
+				command.exponentBits, command.significandBits,
+				command.symbolID, command.predicate,
+			)
+			relation.Negated = command.negated
+			solver = smt.AssertFloatingPointRelation(
+				nextAssertion, solver, relation,
+			)
+			nextAssertion++
+			responses = append(responses, Acknowledged{CommandIndex: command.commandIndex})
 		case fpFastCheck:
 			switch result := smt.Check(solver).(type) {
 			case smt.Satisfiable:
@@ -204,6 +217,24 @@ func (scanner *fpFastScanner) formula(
 		}
 		relation.negated = !relation.negated
 		return relation, true
+	}
+	if predicate, predicateOK := floatingPointPredicateOperator(
+		scanner.text(operator),
+	); predicateOK {
+		symbol, symbolOK := scanner.atom()
+		if !symbolOK || !scanner.right() {
+			return fpFastCommand{}, false
+		}
+		found, foundOK := fpFastFindSymbol(scanner.text(symbol), symbols)
+		if !foundOK {
+			return fpFastCommand{}, false
+		}
+		return fpFastCommand{
+			kind: fpFastPredicate, symbolID: found.id,
+			exponentBits:    found.exponentBits,
+			significandBits: found.significandBits,
+			predicate:       predicate,
+		}, true
 	}
 	if scanner.text(operator) != "=" {
 		return fpFastCommand{}, false

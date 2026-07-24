@@ -2286,6 +2286,65 @@ func TestRejectIllSortedFloatingPointRoundToIntegral(t *testing.T) {
 	}
 }
 
+func TestExecuteFloatingPointClassification(t *testing.T) {
+	tests := []struct {
+		predicate, bits string
+	}{
+		{"fp.isNaN", "7fc12345"},
+		{"fp.isInfinite", "ff800000"},
+		{"fp.isZero", "80000000"},
+		{"fp.isSubnormal", "00000001"},
+		{"fp.isNormal", "3f800000"},
+		{"fp.isNegative", "bf800000"},
+		{"fp.isPositive", "3f800000"},
+	}
+	for _, test := range tests {
+		script := `(set-logic QF_FP)
+(assert (` + test.predicate + ` ((_ to_fp 8 24) #x` + test.bits + `)))
+(check-sat)`
+		result, ok := Execute(script).(Executed)
+		if !ok {
+			t.Fatalf("%s execute=%#v", test.predicate, Execute(script))
+		}
+		if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+			t.Fatalf("%s result=%#v", test.predicate, result)
+		}
+	}
+}
+
+func TestStreamFloatingPointClassification(t *testing.T) {
+	script := `(set-logic QF_FP)
+(declare-const x (_ FloatingPoint 8 24))
+(assert (= (fp.to_ieee_bv x) #x80000001))
+(assert (fp.isSubnormal x))
+(assert (fp.isNegative x))
+(assert (not (fp.isNaN x)))
+(assert (not (fp.isNormal x)))
+(check-sat)`
+	fast, recognized := executeFloatingPointFast(script)
+	if !recognized {
+		t.Fatal("symbolic classifications did not use the streaming executor")
+	}
+	result := fast.(Executed)
+	if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+		t.Fatalf("result=%#v", result)
+	}
+}
+
+func TestExecuteNestedGroundFloatingPointClassification(t *testing.T) {
+	script := `(set-logic QF_FP)
+(assert (fp.isPositive
+  (fp.roundToIntegral RTZ ((_ to_fp 8 24) #x3fc00000))))
+(check-sat)`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("execute=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+		t.Fatalf("result=%#v", result)
+	}
+}
+
 func BenchmarkExecuteFloatingPointRoundToIntegral(b *testing.B) {
 	script := `(set-logic QF_FP)
 (declare-const x (_ FloatingPoint 8 24))
@@ -2302,6 +2361,42 @@ func BenchmarkExecuteFloatingPointRoundToIntegral(b *testing.B) {
 			b.Fatal("unexpected result")
 		}
 	}
+}
+
+func BenchmarkExecuteFloatingPointClassification(b *testing.B) {
+	script := `(set-logic QF_FP)
+(declare-const x (_ FloatingPoint 8 24))
+(assert (= (fp.to_ieee_bv x) #x7fc12345))
+(assert (fp.isNaN x))
+(check-sat)`
+	b.Run("stream", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			result, ok := Execute(script).(Executed)
+			if !ok {
+				b.Fatal("execution failed")
+			}
+			if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
+	b.Run("general", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			parsed, ok := Parse(script).(Parsed)
+			if !ok {
+				b.Fatal("parse failed")
+			}
+			responses, errors := executeCommands(parsed.Commands)
+			if len(errors) != 0 {
+				b.Fatal("execution failed")
+			}
+			if _, ok := responses[len(responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
 }
 
 func TestFastFloatingPointExecutionMatchesGeneralExecution(t *testing.T) {

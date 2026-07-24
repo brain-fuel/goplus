@@ -2327,6 +2327,52 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 			floatingPointRound: rounded,
 		}, nil
 	}
+	if predicate, ok := floatingPointPredicateOperator(operator); ok &&
+		len(terms) == 1 && terms[0].sort == sortFloatingPoint {
+		value := terms[0]
+		if value.bitVectorExact {
+			ground := smt.FloatingPointFromBits(
+				value.exponentBits, value.significandBits,
+				value.bitVectorValue,
+			)
+			holds := false
+			switch predicate {
+			case smt.FloatingPointPredicateNaN:
+				holds = smt.FloatingPointIsNaN(ground)
+			case smt.FloatingPointPredicateInfinite:
+				holds = smt.FloatingPointIsInfinite(ground)
+			case smt.FloatingPointPredicateZero:
+				holds = smt.FloatingPointIsZero(ground)
+			case smt.FloatingPointPredicateSubnormal:
+				holds = smt.FloatingPointIsSubnormal(ground)
+			case smt.FloatingPointPredicateNormal:
+				holds = smt.FloatingPointIsNormal(ground)
+			case smt.FloatingPointPredicateNegative:
+				holds = smt.FloatingPointIsNegative(ground)
+			case smt.FloatingPointPredicatePositive:
+				holds = smt.FloatingPointIsPositive(ground)
+			}
+			return dynamicTerm{
+				sort: sortBool, boolean: smt.Bool{Value: holds},
+			}, nil
+		}
+		if value.floatingPointSymbol != 0 {
+			return dynamicTerm{
+				sort: sortBool,
+				boolean: smt.NewFloatingPointRelation(
+					value.exponentBits, value.significandBits,
+					value.floatingPointSymbol, predicate,
+				),
+			}, nil
+		}
+		return dynamicTerm{
+			sort: sortBool,
+			boolean: smt.FloatingPointPredicateBitVectorTerm(
+				value.exponentBits, value.significandBits,
+				value.bitVector, predicate,
+			),
+		}, nil
+	}
 	if operator == "select" && len(terms) == 2 && terms[0].sort == sortArrayBitVec && terms[1].sort == sortBitVector && terms[1].bitWidth == terms[0].arrayIndexWidth {
 		return dynamicTerm{sort: sortBitVector, bitWidth: terms[0].arrayElementWidth, bitVector: smt.Select(terms[0].arrayBitVec, terms[1].bitVector)}, nil
 	}
@@ -2999,6 +3045,27 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 		}
 	}
 	return dynamicTerm{}, fmt.Errorf("unsupported or ill-sorted application %s", operator)
+}
+
+func floatingPointPredicateOperator(operator string) (uint8, bool) {
+	switch operator {
+	case "fp.isNaN":
+		return smt.FloatingPointPredicateNaN, true
+	case "fp.isInfinite":
+		return smt.FloatingPointPredicateInfinite, true
+	case "fp.isZero":
+		return smt.FloatingPointPredicateZero, true
+	case "fp.isSubnormal":
+		return smt.FloatingPointPredicateSubnormal, true
+	case "fp.isNormal":
+		return smt.FloatingPointPredicateNormal, true
+	case "fp.isNegative":
+		return smt.FloatingPointPredicateNegative, true
+	case "fp.isPositive":
+		return smt.FloatingPointPredicatePositive, true
+	default:
+		return 0, false
+	}
 }
 
 func indexedBitVectorOperator(expression SExpr) (string, []int, bool) {

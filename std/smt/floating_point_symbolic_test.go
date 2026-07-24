@@ -33,6 +33,30 @@ func TestSymbolicFloatingPointClassificationModels(t *testing.T) {
 	}
 }
 
+func TestFloatingPointPredicateBitVectorTerms(t *testing.T) {
+	tests := []struct {
+		predicate uint8
+		bits      uint64
+	}{
+		{FloatingPointPredicateNaN, 0x7fc12345},
+		{FloatingPointPredicateInfinite, 0xff800000},
+		{FloatingPointPredicateZero, 0x80000000},
+		{FloatingPointPredicateSubnormal, 0x00000001},
+		{FloatingPointPredicateNormal, 0x3f800000},
+		{FloatingPointPredicateNegative, 0xbf800000},
+		{FloatingPointPredicatePositive, 0x3f800000},
+	}
+	for _, test := range tests {
+		bits := NewBitVectorUint64(32, test.bits)
+		term := FloatingPointPredicateBitVectorTerm(
+			8, 24, BitVectorTerm(bits), test.predicate,
+		)
+		if _, ok := Check(Assert(1, New(), term)).(Satisfiable); !ok {
+			t.Fatalf("predicate %d rejected %#x", test.predicate, test.bits)
+		}
+	}
+}
+
 func TestNegatedSymbolicFloatingPointClassification(t *testing.T) {
 	relation := NewFloatingPointRelation(8, 24, 1, FloatingPointPredicateNaN)
 	relation.Negated = true

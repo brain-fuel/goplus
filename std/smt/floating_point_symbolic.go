@@ -183,6 +183,69 @@ func FloatingPointPositiveRelation(exponentBits, significandBits, symbolID int) 
 	return NewFloatingPointRelation(exponentBits, significandBits, symbolID, FloatingPointPredicatePositive)
 }
 
+// FloatingPointPredicateBitVectorTerm applies an SMT-LIB floating-point
+// classification predicate to any exact IEEE bit-vector term.
+func FloatingPointPredicateBitVectorTerm(
+	exponentBits, significandBits int,
+	value Term[BitVecSort],
+	predicate uint8,
+) Term[BoolSort] {
+	if exponentBits < 2 {
+		panic("smt: floating-point exponent width must be at least 2")
+	}
+	if significandBits < 2 {
+		panic("smt: floating-point significand width must be at least 2")
+	}
+	if predicate < FloatingPointPredicateNaN ||
+		predicate > FloatingPointPredicatePositive {
+		panic("smt: invalid floating-point predicate")
+	}
+	total := exponentBits + significandBits
+	exponent := BitVecExtract(total-2, significandBits-1, value)
+	significand := BitVecExtract(significandBits-2, 0, value)
+	exponentZero := Term[BoolSort](Equal{
+		Left: exponent, Right: BitVecVal(exponentBits, 0),
+	})
+	exponentAll := Term[BoolSort](Equal{
+		Left: exponent,
+		Right: BitVectorTerm(
+			NotBitVectorValue(NewBitVectorUint64(exponentBits, 0)),
+		),
+	})
+	significandZero := Term[BoolSort](Equal{
+		Left: significand, Right: BitVecVal(significandBits-1, 0),
+	})
+	sign := Term[BoolSort](Equal{
+		Left:  BitVecExtract(total-1, total-1, value),
+		Right: BitVecVal(1, 1),
+	})
+	nan := Term[BoolSort](And{Values: []Term[BoolSort]{
+		exponentAll, Not{Value: significandZero},
+	}})
+	switch predicate {
+	case FloatingPointPredicateNaN:
+		return nan
+	case FloatingPointPredicateInfinite:
+		return And{Values: []Term[BoolSort]{exponentAll, significandZero}}
+	case FloatingPointPredicateZero:
+		return And{Values: []Term[BoolSort]{exponentZero, significandZero}}
+	case FloatingPointPredicateSubnormal:
+		return And{Values: []Term[BoolSort]{
+			exponentZero, Not{Value: significandZero},
+		}}
+	case FloatingPointPredicateNormal:
+		return And{Values: []Term[BoolSort]{
+			Not{Value: exponentZero}, Not{Value: exponentAll},
+		}}
+	case FloatingPointPredicateNegative:
+		return And{Values: []Term[BoolSort]{Not{Value: nan}, sign}}
+	default:
+		return And{Values: []Term[BoolSort]{
+			Not{Value: nan}, Not{Value: sign},
+		}}
+	}
+}
+
 // AssertFloatingPointRelation preserves the concrete compact relation across
 // the Go boundary instead of first boxing it through a general term builder.
 func AssertFloatingPointRelation(assertion int, solver Solver, relation FloatingPointRelation) Solver {
