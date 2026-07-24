@@ -303,6 +303,38 @@ func FloatingPointComparisonBitVectorTerms(
 	}}
 }
 
+// FloatingPointAbsBitVectorTerm clears the IEEE sign bit of an arbitrary
+// floating-point bit-vector term.
+func FloatingPointAbsBitVectorTerm(
+	exponentBits, significandBits int,
+	value Term[BitVecSort],
+) Term[BitVecSort] {
+	total := exponentBits + significandBits
+	if exponentBits < 2 || significandBits < 2 {
+		panic("smt: invalid floating-point format")
+	}
+	return BitVecConcat(
+		1, total-1, BitVecVal(1, 0),
+		BitVecExtract(total-2, 0, value),
+	)
+}
+
+// FloatingPointNegBitVectorTerm toggles the IEEE sign bit of an arbitrary
+// floating-point bit-vector term.
+func FloatingPointNegBitVectorTerm(
+	exponentBits, significandBits int,
+	value Term[BitVecSort],
+) Term[BitVecSort] {
+	total := exponentBits + significandBits
+	if exponentBits < 2 || significandBits < 2 {
+		panic("smt: invalid floating-point format")
+	}
+	sign := BitVecConcat(
+		1, total-1, BitVecVal(1, 1), BitVecVal(total-1, 0),
+	)
+	return BitVecXor(value, sign)
+}
+
 // AssertFloatingPointRelation preserves the concrete compact relation across
 // the Go boundary instead of first boxing it through a general term builder.
 func AssertFloatingPointRelation(assertion int, solver Solver, relation FloatingPointRelation) Solver {

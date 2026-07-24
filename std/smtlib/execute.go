@@ -40,6 +40,7 @@ type dynamicTerm struct {
 	significandBits      int
 	roundingMode         smt.FloatingPointRoundingMode
 	floatingPointRound   *dynamicFloatingPointRound
+	floatingPointMinMax  *dynamicFloatingPointMinMax
 	floatingPointSymbol  int
 	uninterpreted        smt.Term[smt.UninterpretedSort]
 	arrayIntInt          smt.Term[smt.ArraySort[smt.IntSort, smt.IntSort]]
@@ -60,6 +61,12 @@ type dynamicFloatingPointRound struct {
 	exponentBits, significandBits int
 	symbolID                      int
 	mode                          smt.FloatingPointRoundingMode
+}
+
+type dynamicFloatingPointMinMax struct {
+	exponentBits, significandBits int
+	leftSymbolID, rightSymbolID   int
+	operation                     uint8
 }
 
 type dynamicDatatypeMatch struct {
@@ -2284,11 +2291,12 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 		terms[0].sort == sortFloatingPoint {
 		return dynamicTerm{
 			sort: sortBitVector, bitWidth: terms[0].bitWidth,
-			bitVector:          terms[0].bitVector,
-			bitVectorExact:     terms[0].bitVectorExact,
-			bitVectorValue:     terms[0].bitVectorValue,
-			floatingPointRound: terms[0].floatingPointRound,
-			bitVectorSymbol:    terms[0].floatingPointSymbol,
+			bitVector:           terms[0].bitVector,
+			bitVectorExact:      terms[0].bitVectorExact,
+			bitVectorValue:      terms[0].bitVectorValue,
+			floatingPointRound:  terms[0].floatingPointRound,
+			floatingPointMinMax: terms[0].floatingPointMinMax,
+			bitVectorSymbol:     terms[0].floatingPointSymbol,
 		}, nil
 	}
 	if operator == "fp.roundToIntegral" && len(terms) == 2 &&
@@ -2426,6 +2434,94 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 			)
 		}
 		return dynamicTerm{sort: sortBool, boolean: term}, nil
+	}
+	if (operator == "fp.abs" || operator == "fp.neg") &&
+		len(terms) == 1 && terms[0].sort == sortFloatingPoint {
+		value := terms[0]
+		if value.bitVectorExact {
+			ground := smt.FloatingPointFromBits(
+				value.exponentBits, value.significandBits,
+				value.bitVectorValue,
+			)
+			selected := smt.FloatingPointAbs(ground)
+			if operator == "fp.neg" {
+				selected = smt.FloatingPointNeg(ground)
+			}
+			bits := smt.FloatingPointBits(selected)
+			return dynamicTerm{
+				sort: sortFloatingPoint, bitWidth: value.bitWidth,
+				exponentBits:    value.exponentBits,
+				significandBits: value.significandBits,
+				bitVector:       smt.BitVectorTerm(bits),
+				bitVectorExact:  true, bitVectorValue: bits,
+			}, nil
+		}
+		bits := smt.FloatingPointAbsBitVectorTerm(
+			value.exponentBits, value.significandBits, value.bitVector,
+		)
+		if operator == "fp.neg" {
+			bits = smt.FloatingPointNegBitVectorTerm(
+				value.exponentBits, value.significandBits, value.bitVector,
+			)
+		}
+		return dynamicTerm{
+			sort: sortFloatingPoint, bitWidth: value.bitWidth,
+			exponentBits:    value.exponentBits,
+			significandBits: value.significandBits,
+			bitVector:       bits,
+		}, nil
+	}
+	if (operator == "fp.min" || operator == "fp.max") &&
+		len(terms) == 2 &&
+		terms[0].sort == sortFloatingPoint &&
+		terms[1].sort == sortFloatingPoint &&
+		terms[0].exponentBits == terms[1].exponentBits &&
+		terms[0].significandBits == terms[1].significandBits {
+		left, right := terms[0], terms[1]
+		operation := uint8(smt.FloatingPointOperationMin)
+		if operator == "fp.max" {
+			operation = smt.FloatingPointOperationMax
+		}
+		if left.bitVectorExact && right.bitVectorExact {
+			leftValue := smt.FloatingPointFromBits(
+				left.exponentBits, left.significandBits, left.bitVectorValue,
+			)
+			rightValue := smt.FloatingPointFromBits(
+				right.exponentBits, right.significandBits, right.bitVectorValue,
+			)
+			selected := smt.FloatingPointMin(leftValue, rightValue)
+			if operation == smt.FloatingPointOperationMax {
+				selected = smt.FloatingPointMax(leftValue, rightValue)
+			}
+			bits := smt.FloatingPointBits(selected)
+			return dynamicTerm{
+				sort: sortFloatingPoint, bitWidth: left.bitWidth,
+				exponentBits:    left.exponentBits,
+				significandBits: left.significandBits,
+				bitVector:       smt.BitVectorTerm(bits),
+				bitVectorExact:  true, bitVectorValue: bits,
+			}, nil
+		}
+		var metadata *dynamicFloatingPointMinMax
+		if left.floatingPointSymbol != 0 && right.floatingPointSymbol != 0 {
+			metadata = &dynamicFloatingPointMinMax{
+				exponentBits:    left.exponentBits,
+				significandBits: left.significandBits,
+				leftSymbolID:    left.floatingPointSymbol,
+				rightSymbolID:   right.floatingPointSymbol,
+				operation:       operation,
+			}
+		}
+		return dynamicTerm{
+			sort: sortFloatingPoint, bitWidth: left.bitWidth,
+			exponentBits:    left.exponentBits,
+			significandBits: left.significandBits,
+			bitVector: smt.FloatingPointMinMaxBitVectorTerms(
+				left.exponentBits, left.significandBits,
+				left.bitVector, right.bitVector, operation,
+			),
+			floatingPointMinMax: metadata,
+		}, nil
 	}
 	if operator == "select" && len(terms) == 2 && terms[0].sort == sortArrayBitVec && terms[1].sort == sortBitVector && terms[1].bitWidth == terms[0].arrayIndexWidth {
 		return dynamicTerm{sort: sortBitVector, bitWidth: terms[0].arrayElementWidth, bitVector: smt.Select(terms[0].arrayBitVec, terms[1].bitVector)}, nil
@@ -2775,6 +2871,22 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 					boolean: smt.NewFloatingPointRoundToIntegralRelation(
 						relation.exponentBits, relation.significandBits,
 						relation.symbolID, relation.mode, exact.bitVectorValue,
+					),
+				}, nil
+			}
+			selected, exact := terms[0], terms[1]
+			if selected.floatingPointMinMax == nil {
+				selected, exact = terms[1], terms[0]
+			}
+			if selected.floatingPointMinMax != nil && exact.bitVectorExact &&
+				selected.bitWidth == exact.bitWidth {
+				relation := selected.floatingPointMinMax
+				return dynamicTerm{
+					sort: sortBool,
+					boolean: smt.NewFloatingPointMinMaxRelation(
+						relation.exponentBits, relation.significandBits,
+						relation.leftSymbolID, relation.rightSymbolID,
+						relation.operation, exact.bitVectorValue,
 					),
 				}, nil
 			}

@@ -2416,6 +2416,76 @@ func TestRejectMixedFloatingPointComparisonFormats(t *testing.T) {
 	}
 }
 
+func TestExecuteFloatingPointUnaryAndMinMax(t *testing.T) {
+	script := `(set-logic QF_FP)
+(assert (= (fp.to_ieee_bv
+  (fp.abs ((_ to_fp 8 24) #xffc12345))) #x7fc12345))
+(assert (= (fp.to_ieee_bv
+  (fp.neg ((_ to_fp 8 24) #x3f800000))) #xbf800000))
+(assert (= (fp.to_ieee_bv
+  (fp.min ((_ to_fp 8 24) #xbf800000)
+          ((_ to_fp 8 24) #x3f800000))) #xbf800000))
+(assert (= (fp.to_ieee_bv
+  (fp.max ((_ to_fp 8 24) #xbf800000)
+          ((_ to_fp 8 24) #x3f800000))) #x3f800000))
+(assert (fp.isPositive
+  (fp.abs ((_ to_fp 8 24) #xbf800000))))
+(check-sat)`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("execute=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+		t.Fatalf("result=%#v", result)
+	}
+}
+
+func TestExecuteSymbolicFloatingPointAbsAndNeg(t *testing.T) {
+	script := `(set-logic QF_FP)
+(declare-const x (_ FloatingPoint 8 24))
+(assert (= (fp.to_ieee_bv x) #xbf800000))
+(assert (= (fp.to_ieee_bv (fp.abs x)) #x3f800000))
+(assert (= (fp.to_ieee_bv (fp.neg x)) #x3f800000))
+(check-sat)`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("execute=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+		t.Fatalf("result=%#v", result)
+	}
+}
+
+func TestStreamFloatingPointMinMax(t *testing.T) {
+	script := `(set-logic QF_FP)
+(declare-const left (_ FloatingPoint 8 24))
+(declare-const right (_ FloatingPoint 8 24))
+(assert (= (fp.to_ieee_bv left) #xbf800000))
+(assert (= (fp.to_ieee_bv right) #x3f800000))
+(assert (= (fp.to_ieee_bv (fp.min left right)) #xbf800000))
+(assert (= (fp.to_ieee_bv (fp.max left right)) #x3f800000))
+(check-sat)`
+	fast, recognized := executeFloatingPointFast(script)
+	if !recognized {
+		t.Fatal("symbolic min/max did not use the streaming executor")
+	}
+	result := fast.(Executed)
+	if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+		t.Fatalf("result=%#v", result)
+	}
+}
+
+func TestRejectMixedFloatingPointMinMaxFormats(t *testing.T) {
+	script := `(set-logic QF_FP)
+(assert (= (fp.to_ieee_bv
+  (fp.min ((_ to_fp 8 24) #x3f800000)
+          ((_ to_fp 5 11) #x3c00))) #x3f800000))
+(check-sat)`
+	if _, ok := Execute(script).(ExecutionFailed); !ok {
+		t.Fatalf("mixed formats unexpectedly accepted: %#v", Execute(script))
+	}
+}
+
 func BenchmarkExecuteFloatingPointRoundToIntegral(b *testing.B) {
 	script := `(set-logic QF_FP)
 (declare-const x (_ FloatingPoint 8 24))
@@ -2477,6 +2547,44 @@ func BenchmarkExecuteFloatingPointOrdering(b *testing.B) {
 (assert (= (fp.to_ieee_bv left) #xbf800000))
 (assert (= (fp.to_ieee_bv right) #x3f800000))
 (assert (fp.lt left right))
+(check-sat)`
+	b.Run("stream", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			result, ok := Execute(script).(Executed)
+			if !ok {
+				b.Fatal("execution failed")
+			}
+			if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
+	b.Run("general", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			parsed, ok := Parse(script).(Parsed)
+			if !ok {
+				b.Fatal("parse failed")
+			}
+			responses, errors := executeCommands(parsed.Commands)
+			if len(errors) != 0 {
+				b.Fatal("execution failed")
+			}
+			if _, ok := responses[len(responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
+}
+
+func BenchmarkExecuteFloatingPointMin(b *testing.B) {
+	script := `(set-logic QF_FP)
+(declare-const left (_ FloatingPoint 8 24))
+(declare-const right (_ FloatingPoint 8 24))
+(assert (= (fp.to_ieee_bv left) #xbf800000))
+(assert (= (fp.to_ieee_bv right) #x3f800000))
+(assert (= (fp.to_ieee_bv (fp.min left right)) #xbf800000))
 (check-sat)`
 	b.Run("stream", func(b *testing.B) {
 		b.ReportAllocs()

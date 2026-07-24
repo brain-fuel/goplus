@@ -81,6 +81,20 @@ func TestFloatingPointEqualityAndOrderBitVectorTerms(t *testing.T) {
 	}
 }
 
+func TestFloatingPointUnaryBitVectorTerms(t *testing.T) {
+	source := BitVectorTerm(NewBitVectorUint64(32, 0xbfc12345))
+	absolute := FloatingPointAbsBitVectorTerm(8, 24, source)
+	negated := FloatingPointNegBitVectorTerm(8, 24, source)
+	expected := BitVectorTerm(NewBitVectorUint64(32, 0x3fc12345))
+	laws := And{Values: []Term[BoolSort]{
+		Equal{Left: absolute, Right: expected},
+		Equal{Left: negated, Right: expected},
+	}}
+	if _, ok := Check(Assert(1, New(), laws)).(Satisfiable); !ok {
+		t.Fatal("arbitrary-term floating-point unary laws must be satisfiable")
+	}
+}
+
 func TestNegatedSymbolicFloatingPointClassification(t *testing.T) {
 	relation := NewFloatingPointRelation(8, 24, 1, FloatingPointPredicateNaN)
 	relation.Negated = true

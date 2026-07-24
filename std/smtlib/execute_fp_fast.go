@@ -12,6 +12,7 @@ const (
 	fpFastDeclare
 	fpFastAssign
 	fpFastRound
+	fpFastMinMax
 	fpFastPredicate
 	fpFastComparison
 	fpFastEquality
@@ -28,6 +29,7 @@ type fpFastCommand struct {
 	mode                          smt.FloatingPointRoundingMode
 	predicate                     uint8
 	comparison                    uint8
+	operation                     uint8
 	negated                       bool
 }
 
@@ -59,11 +61,14 @@ type fpFastOperand struct {
 	significandBits        int
 	value                  smt.BitVectorValue
 	mode                   smt.FloatingPointRoundingMode
+	secondSymbolID         int
+	operation              uint8
 }
 
 const (
 	fpFastSymbolBits uint8 = iota + 1
 	fpFastRoundedBits
+	fpFastMinMaxBits
 	fpFastLiteralBits
 )
 
@@ -173,6 +178,18 @@ func executeFloatingPointFast(source string) (ExecutionResult, bool) {
 			)
 			relation.Negated = command.negated
 			solver = smt.AssertFloatingPointRoundToIntegralRelation(
+				nextAssertion, solver, relation,
+			)
+			nextAssertion++
+			responses = append(responses, Acknowledged{CommandIndex: command.commandIndex})
+		case fpFastMinMax:
+			relation := smt.NewFloatingPointMinMaxRelation(
+				command.exponentBits, command.significandBits,
+				command.symbolID, command.secondSymbolID,
+				command.operation, command.value,
+			)
+			relation.Negated = command.negated
+			solver = smt.AssertFloatingPointMinMaxRelation(
 				nextAssertion, solver, relation,
 			)
 			nextAssertion++
@@ -313,16 +330,19 @@ func (scanner *fpFastScanner) formula(
 		return fpFastCommand{}, false
 	}
 	command := fpFastCommand{
-		symbolID:        derived.symbolID,
+		symbolID: derived.symbolID, secondSymbolID: derived.secondSymbolID,
 		exponentBits:    derived.exponentBits,
 		significandBits: derived.significandBits,
 		value:           literal.value, mode: derived.mode,
+		operation: derived.operation,
 	}
 	switch derived.kind {
 	case fpFastSymbolBits:
 		command.kind = fpFastAssign
 	case fpFastRoundedBits:
 		command.kind = fpFastRound
+	case fpFastMinMaxBits:
+		command.kind = fpFastMinMax
 	default:
 		return fpFastCommand{}, false
 	}
@@ -388,24 +408,57 @@ func (scanner *fpFastScanner) operand(
 	if !scanner.left() {
 		return fpFastOperand{}, false
 	}
-	round, roundOK := scanner.atom()
-	mode, modeOK := scanner.atom()
-	symbol, symbolOK := scanner.atom()
-	if !roundOK || !modeOK || !symbolOK ||
-		scanner.text(round) != "fp.roundToIntegral" {
+	operation, operationOK := scanner.atom()
+	if !operationOK {
 		return fpFastOperand{}, false
 	}
-	roundingMode, roundingModeOK := fpFastRoundingMode(scanner.text(mode))
-	found, foundOK := fpFastFindSymbol(scanner.text(symbol), symbols)
-	if !roundingModeOK || !foundOK || !scanner.right() || !scanner.right() {
+	switch scanner.text(operation) {
+	case "fp.roundToIntegral":
+		mode, modeOK := scanner.atom()
+		symbol, symbolOK := scanner.atom()
+		if !modeOK || !symbolOK {
+			return fpFastOperand{}, false
+		}
+		roundingMode, roundingModeOK := fpFastRoundingMode(scanner.text(mode))
+		found, foundOK := fpFastFindSymbol(scanner.text(symbol), symbols)
+		if !roundingModeOK || !foundOK ||
+			!scanner.right() || !scanner.right() {
+			return fpFastOperand{}, false
+		}
+		return fpFastOperand{
+			kind: fpFastRoundedBits, symbolID: found.id,
+			exponentBits:    found.exponentBits,
+			significandBits: found.significandBits,
+			mode:            roundingMode,
+		}, true
+	case "fp.min", "fp.max":
+		leftToken, leftOK := scanner.atom()
+		rightToken, rightOK := scanner.atom()
+		if !leftOK || !rightOK {
+			return fpFastOperand{}, false
+		}
+		left, leftFound := fpFastFindSymbol(scanner.text(leftToken), symbols)
+		right, rightFound := fpFastFindSymbol(scanner.text(rightToken), symbols)
+		if !leftFound || !rightFound ||
+			left.exponentBits != right.exponentBits ||
+			left.significandBits != right.significandBits ||
+			!scanner.right() || !scanner.right() {
+			return fpFastOperand{}, false
+		}
+		selectedOperation := uint8(smt.FloatingPointOperationMin)
+		if scanner.text(operation) == "fp.max" {
+			selectedOperation = smt.FloatingPointOperationMax
+		}
+		return fpFastOperand{
+			kind:     fpFastMinMaxBits,
+			symbolID: left.id, secondSymbolID: right.id,
+			exponentBits:    left.exponentBits,
+			significandBits: left.significandBits,
+			operation:       selectedOperation,
+		}, true
+	default:
 		return fpFastOperand{}, false
 	}
-	return fpFastOperand{
-		kind: fpFastRoundedBits, symbolID: found.id,
-		exponentBits:    found.exponentBits,
-		significandBits: found.significandBits,
-		mode:            roundingMode,
-	}, true
 }
 
 func fpFastFindSymbol(name string, symbols []fpFastSymbol) (fpFastSymbol, bool) {
