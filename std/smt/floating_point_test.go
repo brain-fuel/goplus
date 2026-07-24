@@ -521,6 +521,82 @@ func TestFloatingPointDivBinary128(t *testing.T) {
 	}
 }
 
+func TestFloatingPointFMASingleRounding(t *testing.T) {
+	left := FloatingPointFromUint64(8, 24, 0x3f800001)
+	right := FloatingPointFromUint64(8, 24, 0x3f7fffff)
+	addend := FloatingPointFromUint64(8, 24, 0xbf800000)
+	fused := FloatingPointFMA(
+		RoundNearestTiesToEven(), left, right, addend,
+	)
+	got, inline := FloatingPointBits(fused).Uint64()
+	if !inline || got != 0x337ffffe {
+		t.Fatalf("fused bits=%#x,%v, want 0x337ffffe,true", got, inline)
+	}
+	separate := FloatingPointAdd(
+		RoundNearestTiesToEven(),
+		FloatingPointMul(RoundNearestTiesToEven(), left, right),
+		addend,
+	)
+	if !FloatingPointIsZero(separate) {
+		t.Fatalf("control multiply-then-add must round to zero, got %v", FloatingPointBits(separate))
+	}
+}
+
+func TestFloatingPointFMASpecialValues(t *testing.T) {
+	infinity := FloatingPointPositiveInfinity(8, 24)
+	negativeInfinity := FloatingPointNegativeInfinity(8, 24)
+	zero := FloatingPointPositiveZero(8, 24)
+	one := FloatingPointFromUint64(8, 24, 0x3f800000)
+	if !FloatingPointIsNaN(FloatingPointFMA(
+		RoundNearestTiesToEven(), infinity, zero, one,
+	)) {
+		t.Fatal("infinity times zero in fp.fma must produce NaN")
+	}
+	if !FloatingPointIsNaN(FloatingPointFMA(
+		RoundNearestTiesToEven(), infinity, one, negativeInfinity,
+	)) {
+		t.Fatal("infinite product plus opposite infinity must produce NaN")
+	}
+	positive := FloatingPointFMA(
+		RoundNearestTiesToEven(), infinity, one, infinity,
+	)
+	if !FloatingPointIsInfinite(positive) || FloatingPointIsNegative(positive) {
+		t.Fatal("positive infinite product plus positive infinity must stay positive infinity")
+	}
+}
+
+func TestFloatingPointFMAExtremeBinary128Gap(t *testing.T) {
+	one := FloatingPointFromComponents(
+		15, 113,
+		NewBitVectorUint64(1, 0),
+		NewBitVectorUint64(15, 0x3fff),
+		NewBitVectorUint64(112, 0),
+	)
+	minimumSubnormal := FloatingPointFromBits(
+		15, 113, NewBitVectorUint64(128, 1),
+	)
+	nextOne := FloatingPointFromBits(
+		15, 113,
+		AddBitVectorValue(
+			FloatingPointBits(one), NewBitVectorUint64(128, 1),
+		),
+	)
+	for name, fused := range map[string]FloatingPointValue{
+		"product dominant": FloatingPointFMA(
+			RoundTowardPositive(), one, one, minimumSubnormal,
+		),
+		"addend dominant": FloatingPointFMA(
+			RoundTowardPositive(), minimumSubnormal, minimumSubnormal, one,
+		),
+	} {
+		if !EqualBitVectorValue(
+			FloatingPointBits(fused), FloatingPointBits(nextOne),
+		) {
+			t.Fatalf("%s RTP=%v, want next(1)=%v", name, FloatingPointBits(fused), FloatingPointBits(nextOne))
+		}
+	}
+}
+
 func TestFloatingPointGroundAbsAndNeg(t *testing.T) {
 	tests := []struct {
 		name string

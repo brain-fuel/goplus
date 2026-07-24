@@ -553,6 +553,14 @@ func FloatingPointDiv(mode FloatingPointRoundingMode, left FloatingPointValue, r
 	return floatingPointDiv(floatingPointRoundingModeCode(mode), left, right)
 }
 
+// FloatingPointFMA implements exact SMT-LIB fp.fma semantics: the product and
+// sum are formed exactly and rounded only once.
+//
+//goplus:dep FloatingPointFMA(0 e nat, 0 s nat, mode FloatingPointRoundingMode, left FloatingPointValue[e, s], right FloatingPointValue[e, s], addend FloatingPointValue[e, s]) FloatingPointValue[e, s]
+func FloatingPointFMA(mode FloatingPointRoundingMode, left FloatingPointValue, right FloatingPointValue, addend FloatingPointValue) FloatingPointValue {
+	return floatingPointFMA(floatingPointRoundingModeCode(mode), left, right, addend)
+}
+
 func floatingPointSignificandNonzero(bits BitVectorValue, significandBits int) bool {
 	for index := 0; index < significandBits-1; index++ {
 		if bits.Bit(index) {

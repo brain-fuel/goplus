@@ -321,6 +321,31 @@ func TestSymbolicFloatingPointDivRelation(t *testing.T) {
 	}
 }
 
+func TestSymbolicFloatingPointFMARelation(t *testing.T) {
+	leftBits := NewBitVectorUint64(32, 0x3f800001)
+	rightBits := NewBitVectorUint64(32, 0x3f7fffff)
+	addendBits := NewBitVectorUint64(32, 0xbf800000)
+	wantBits := NewBitVectorUint64(32, 0x337ffffe)
+	solver := Assert(1, New(), BitVectorRelation{
+		Width: 32, SymbolID: 1, Value: leftBits,
+	})
+	solver = Assert(2, solver, BitVectorRelation{
+		Width: 32, SymbolID: 2, Value: rightBits,
+	})
+	solver = Assert(3, solver, BitVectorRelation{
+		Width: 32, SymbolID: 3, Value: addendBits,
+	})
+	solver = AssertFloatingPointFMARelation(
+		4, solver,
+		NewFloatingPointFMARelation(
+			8, 24, 1, 2, 3, RoundNearestTiesToEven(), wantBits,
+		),
+	)
+	if _, ok := Check(solver).(Satisfiable); !ok {
+		t.Fatalf("expected satisfiable fp.fma, got %#v", Check(solver))
+	}
+}
+
 func TestFloatingPointMinMaxBitBlastFallback(t *testing.T) {
 	expected := NewBitVectorUint64(32, 0xbf800000)
 	relation := NewFloatingPointMinMaxRelation(

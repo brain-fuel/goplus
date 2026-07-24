@@ -249,6 +249,225 @@ func floatingPointDiv(
 	)
 }
 
+func floatingPointFMA(
+	mode uint8,
+	left, right, addend FloatingPointValue,
+) FloatingPointValue {
+	if mode < 1 || mode > 5 {
+		panic("smt: invalid floating-point rounding mode")
+	}
+	exponentBits := FloatingPointExponentBits(left)
+	significandBits := FloatingPointSignificandBits(left)
+	if exponentBits != FloatingPointExponentBits(right) ||
+		significandBits != FloatingPointSignificandBits(right) ||
+		exponentBits != FloatingPointExponentBits(addend) ||
+		significandBits != FloatingPointSignificandBits(addend) {
+		panic("smt: floating-point fused multiply-add format mismatch")
+	}
+	if FloatingPointIsNaN(left) || FloatingPointIsNaN(right) ||
+		FloatingPointIsNaN(addend) {
+		return FloatingPointNaN(exponentBits, significandBits)
+	}
+	total := exponentBits + significandBits
+	productNegative := FloatingPointBits(left).Bit(total-1) !=
+		FloatingPointBits(right).Bit(total-1)
+	addendNegative := FloatingPointBits(addend).Bit(total - 1)
+	leftInfinite, rightInfinite :=
+		FloatingPointIsInfinite(left), FloatingPointIsInfinite(right)
+	leftZero, rightZero := FloatingPointIsZero(left), FloatingPointIsZero(right)
+	addendInfinite := FloatingPointIsInfinite(addend)
+	if (leftInfinite && rightZero) || (rightInfinite && leftZero) {
+		return FloatingPointNaN(exponentBits, significandBits)
+	}
+	if leftInfinite || rightInfinite {
+		if addendInfinite && productNegative != addendNegative {
+			return FloatingPointNaN(exponentBits, significandBits)
+		}
+		if productNegative {
+			return FloatingPointNegativeInfinity(exponentBits, significandBits)
+		}
+		return FloatingPointPositiveInfinity(exponentBits, significandBits)
+	}
+	if addendInfinite {
+		return addend
+	}
+	addendZero := FloatingPointIsZero(addend)
+	if (leftZero || rightZero) && addendZero {
+		negative := productNegative && addendNegative ||
+			productNegative != addendNegative && mode == 4
+		return floatingPointZero(exponentBits, significandBits, negative)
+	}
+	if leftZero || rightZero {
+		return addend
+	}
+	if significandBits <= 31 && total <= 64 {
+		leftRaw, leftInline := FloatingPointBits(left).Uint64()
+		rightRaw, rightInline := FloatingPointBits(right).Uint64()
+		addendRaw, addendInline := FloatingPointBits(addend).Uint64()
+		if leftInline && rightInline && addendInline {
+			if fused, ok := floatingPointFMAUint64(
+				mode, exponentBits, significandBits,
+				leftRaw, rightRaw, addendRaw,
+				productNegative, addendNegative, addendZero,
+			); ok {
+				return fused
+			}
+		}
+	}
+	leftFinite := decodeFloatingPointFinite(left)
+	rightFinite := decodeFloatingPointFinite(right)
+	productMagnitude := new(big.Int).Mul(
+		leftFinite.magnitude, rightFinite.magnitude,
+	)
+	productScale := new(big.Int).Add(leftFinite.scale, rightFinite.scale)
+	if addendZero {
+		return floatingPointRoundExactBinary(
+			mode, exponentBits, significandBits, productNegative,
+			productMagnitude, productScale,
+		)
+	}
+	addendFinite := decodeFloatingPointFinite(addend)
+	productTop := new(big.Int).Add(
+		productScale, big.NewInt(int64(productMagnitude.BitLen()-1)),
+	)
+	addendTop := new(big.Int).Add(
+		addendFinite.scale,
+		big.NewInt(int64(addendFinite.magnitude.BitLen()-1)),
+	)
+	topDifference := new(big.Int).Sub(productTop, addendTop)
+	if new(big.Int).Abs(new(big.Int).Set(topDifference)).Cmp(
+		big.NewInt(int64(significandBits+4)),
+	) > 0 {
+		if topDifference.Sign() < 0 {
+			direction := 1
+			if productNegative {
+				direction = -1
+			}
+			return floatingPointRoundNearRepresentable(
+				mode, exponentBits, significandBits, addendFinite, direction,
+			)
+		}
+		// The exact product is not necessarily representable. Append a
+		// sufficiently remote sticky bit in the addend's numeric direction so
+		// exact ties and directed modes see the perturbation without shifting
+		// across an arbitrarily large exponent gap.
+		stickyShift := uint(significandBits + 4)
+		stickyMagnitude := new(big.Int).Lsh(
+			new(big.Int).Set(productMagnitude), stickyShift,
+		)
+		if productNegative == addendNegative {
+			stickyMagnitude.Add(stickyMagnitude, big.NewInt(1))
+		} else {
+			stickyMagnitude.Sub(stickyMagnitude, big.NewInt(1))
+		}
+		stickyScale := new(big.Int).Sub(
+			productScale, big.NewInt(int64(stickyShift)),
+		)
+		return floatingPointRoundExactBinary(
+			mode, exponentBits, significandBits, productNegative,
+			stickyMagnitude, stickyScale,
+		)
+	}
+	commonScale := productScale
+	if addendFinite.scale.Cmp(commonScale) < 0 {
+		commonScale = addendFinite.scale
+	}
+	productShift := new(big.Int).Sub(productScale, commonScale)
+	addendShift := new(big.Int).Sub(addendFinite.scale, commonScale)
+	if !productShift.IsInt64() || !addendShift.IsInt64() {
+		panic("smt: floating-point fused multiply-add shift exceeds implementation limits")
+	}
+	productMagnitude.Lsh(productMagnitude, uint(productShift.Int64()))
+	addendMagnitude := new(big.Int).Lsh(
+		new(big.Int).Set(addendFinite.magnitude),
+		uint(addendShift.Int64()),
+	)
+	if productNegative {
+		productMagnitude.Neg(productMagnitude)
+	}
+	if addendNegative {
+		addendMagnitude.Neg(addendMagnitude)
+	}
+	sum := new(big.Int).Add(productMagnitude, addendMagnitude)
+	if sum.Sign() == 0 {
+		return floatingPointZero(
+			exponentBits, significandBits, mode == 4,
+		)
+	}
+	negative := sum.Sign() < 0
+	sum.Abs(sum)
+	return floatingPointRoundExactBinary(
+		mode, exponentBits, significandBits, negative, sum, commonScale,
+	)
+}
+
+func floatingPointFMAUint64(
+	mode uint8,
+	exponentBits, significandBits int,
+	leftRaw, rightRaw, addendRaw uint64,
+	productNegative, addendNegative, addendZero bool,
+) (FloatingPointValue, bool) {
+	fractionBits := significandBits - 1
+	exponentMask := uint64(1)<<exponentBits - 1
+	fractionMask := uint64(1)<<fractionBits - 1
+	bias := int64(uint64(1)<<(exponentBits-1) - 1)
+	decode := func(raw uint64) (uint64, int64) {
+		exponent := raw >> fractionBits & exponentMask
+		fraction := raw & fractionMask
+		if exponent == 0 {
+			return fraction, 1 - bias - int64(fractionBits)
+		}
+		return fraction | uint64(1)<<fractionBits,
+			int64(exponent) - bias - int64(fractionBits)
+	}
+	leftMagnitude, leftScale := decode(leftRaw)
+	rightMagnitude, rightScale := decode(rightRaw)
+	productMagnitude := leftMagnitude * rightMagnitude
+	productScale := leftScale + rightScale
+	if addendZero {
+		return floatingPointRoundExactBinaryUint64(
+			mode, exponentBits, significandBits,
+			productNegative, productMagnitude, productScale,
+		), true
+	}
+	addendMagnitude, addendScale := decode(addendRaw)
+	commonScale := productScale
+	if addendScale < commonScale {
+		commonScale = addendScale
+	}
+	productShift, addendShift :=
+		productScale-commonScale, addendScale-commonScale
+	if productShift >= 63 || addendShift >= 63 ||
+		bits.Len64(productMagnitude)+int(productShift) > 63 ||
+		bits.Len64(addendMagnitude)+int(addendShift) > 63 {
+		return FloatingPointValue{}, false
+	}
+	productMagnitude <<= uint(productShift)
+	addendMagnitude <<= uint(addendShift)
+	var magnitude uint64
+	negative := productNegative
+	if productNegative == addendNegative {
+		if productMagnitude > uint64(^uint64(0)>>1)-addendMagnitude {
+			return FloatingPointValue{}, false
+		}
+		magnitude = productMagnitude + addendMagnitude
+	} else if productMagnitude >= addendMagnitude {
+		magnitude = productMagnitude - addendMagnitude
+	} else {
+		magnitude = addendMagnitude - productMagnitude
+		negative = addendNegative
+	}
+	if magnitude == 0 {
+		return floatingPointZero(
+			exponentBits, significandBits, mode == 4,
+		), true
+	}
+	return floatingPointRoundExactBinaryUint64(
+		mode, exponentBits, significandBits,
+		negative, magnitude, commonScale,
+	), true
+}
+
 func floatingPointDivUint64(
 	mode uint8,
 	exponentBits, significandBits int,

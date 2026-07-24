@@ -45,6 +45,7 @@ type dynamicTerm struct {
 	floatingPointSub     *dynamicFloatingPointSub
 	floatingPointMul     *dynamicFloatingPointMul
 	floatingPointDiv     *dynamicFloatingPointDiv
+	floatingPointFMA     *dynamicFloatingPointFMA
 	floatingPointSymbol  int
 	uninterpreted        smt.Term[smt.UninterpretedSort]
 	arrayIntInt          smt.Term[smt.ArraySort[smt.IntSort, smt.IntSort]]
@@ -95,6 +96,12 @@ type dynamicFloatingPointDiv struct {
 	exponentBits, significandBits int
 	leftSymbolID, rightSymbolID   int
 	mode                          smt.FloatingPointRoundingMode
+}
+
+type dynamicFloatingPointFMA struct {
+	exponentBits, significandBits               int
+	leftSymbolID, rightSymbolID, addendSymbolID int
+	mode                                        smt.FloatingPointRoundingMode
 }
 
 type dynamicDatatypeMatch struct {
@@ -2366,6 +2373,7 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 			floatingPointSub:    terms[0].floatingPointSub,
 			floatingPointMul:    terms[0].floatingPointMul,
 			floatingPointDiv:    terms[0].floatingPointDiv,
+			floatingPointFMA:    terms[0].floatingPointFMA,
 			bitVectorSymbol:     terms[0].floatingPointSymbol,
 		}, nil
 	}
@@ -2522,6 +2530,53 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 				leftSymbolID:  left.floatingPointSymbol,
 				rightSymbolID: right.floatingPointSymbol,
 				mode:          terms[0].roundingMode,
+			},
+		}, nil
+	}
+	if operator == "fp.fma" && len(terms) == 4 &&
+		terms[0].sort == sortRoundingMode &&
+		terms[1].sort == sortFloatingPoint &&
+		terms[2].sort == sortFloatingPoint &&
+		terms[3].sort == sortFloatingPoint &&
+		terms[1].exponentBits == terms[2].exponentBits &&
+		terms[1].significandBits == terms[2].significandBits &&
+		terms[1].exponentBits == terms[3].exponentBits &&
+		terms[1].significandBits == terms[3].significandBits {
+		left, right, addend := terms[1], terms[2], terms[3]
+		if left.bitVectorExact && right.bitVectorExact && addend.bitVectorExact {
+			fused := smt.FloatingPointFMA(
+				terms[0].roundingMode,
+				smt.FloatingPointFromBits(
+					left.exponentBits, left.significandBits, left.bitVectorValue,
+				),
+				smt.FloatingPointFromBits(
+					right.exponentBits, right.significandBits, right.bitVectorValue,
+				),
+				smt.FloatingPointFromBits(
+					addend.exponentBits, addend.significandBits, addend.bitVectorValue,
+				),
+			)
+			bits := smt.FloatingPointBits(fused)
+			return dynamicTerm{
+				sort: sortFloatingPoint, bitWidth: left.bitWidth,
+				exponentBits: left.exponentBits, significandBits: left.significandBits,
+				bitVector:      smt.BitVectorTerm(bits),
+				bitVectorExact: true, bitVectorValue: bits,
+			}, nil
+		}
+		if left.floatingPointSymbol == 0 || right.floatingPointSymbol == 0 ||
+			addend.floatingPointSymbol == 0 {
+			return dynamicTerm{}, fmt.Errorf("fp.fma currently requires ground values or direct symbols")
+		}
+		return dynamicTerm{
+			sort: sortFloatingPoint, bitWidth: left.bitWidth,
+			exponentBits: left.exponentBits, significandBits: left.significandBits,
+			floatingPointFMA: &dynamicFloatingPointFMA{
+				exponentBits: left.exponentBits, significandBits: left.significandBits,
+				leftSymbolID:   left.floatingPointSymbol,
+				rightSymbolID:  right.floatingPointSymbol,
+				addendSymbolID: addend.floatingPointSymbol,
+				mode:           terms[0].roundingMode,
 			},
 		}, nil
 	}
@@ -3177,6 +3232,23 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 						relation.exponentBits, relation.significandBits,
 						relation.leftSymbolID, relation.rightSymbolID,
 						relation.mode, exact.bitVectorValue,
+					),
+				}, nil
+			}
+			fused, exact := terms[0], terms[1]
+			if fused.floatingPointFMA == nil {
+				fused, exact = terms[1], terms[0]
+			}
+			if fused.floatingPointFMA != nil && exact.bitVectorExact &&
+				fused.bitWidth == exact.bitWidth {
+				relation := fused.floatingPointFMA
+				return dynamicTerm{
+					sort: sortBool,
+					boolean: smt.NewFloatingPointFMARelation(
+						relation.exponentBits, relation.significandBits,
+						relation.leftSymbolID, relation.rightSymbolID,
+						relation.addendSymbolID, relation.mode,
+						exact.bitVectorValue,
 					),
 				}, nil
 			}

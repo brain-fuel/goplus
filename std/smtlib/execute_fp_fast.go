@@ -17,6 +17,7 @@ const (
 	fpFastSub
 	fpFastMul
 	fpFastDiv
+	fpFastFMA
 	fpFastPredicate
 	fpFastComparison
 	fpFastEquality
@@ -27,6 +28,7 @@ const (
 type fpFastCommand struct {
 	kind                          uint8
 	symbolID, secondSymbolID      int
+	thirdSymbolID                 int
 	exponentBits                  int
 	significandBits, commandIndex int
 	name, secondName              string
@@ -68,6 +70,7 @@ type fpFastOperand struct {
 	value                  smt.BitVectorValue
 	mode                   smt.FloatingPointRoundingMode
 	secondSymbolID         int
+	thirdSymbolID          int
 	operation              uint8
 }
 
@@ -79,6 +82,7 @@ const (
 	fpFastSubBits
 	fpFastMulBits
 	fpFastDivBits
+	fpFastFMABits
 	fpFastExactFloatingBits
 	fpFastLiteralBits
 )
@@ -252,6 +256,18 @@ func executeFloatingPointFast(source string) (ExecutionResult, bool) {
 			)
 			nextAssertion++
 			responses = append(responses, Acknowledged{CommandIndex: command.commandIndex})
+		case fpFastFMA:
+			relation := smt.NewFloatingPointFMARelation(
+				command.exponentBits, command.significandBits,
+				command.symbolID, command.secondSymbolID, command.thirdSymbolID,
+				command.mode, command.value,
+			)
+			relation.Negated = command.negated
+			solver = smt.AssertFloatingPointFMARelation(
+				nextAssertion, solver, relation,
+			)
+			nextAssertion++
+			responses = append(responses, Acknowledged{CommandIndex: command.commandIndex})
 		case fpFastPredicate:
 			relation := smt.NewFloatingPointRelation(
 				command.exponentBits, command.significandBits,
@@ -405,6 +421,7 @@ func (scanner *fpFastScanner) formula(
 	}
 	command := fpFastCommand{
 		symbolID: derived.symbolID, secondSymbolID: derived.secondSymbolID,
+		thirdSymbolID:   derived.thirdSymbolID,
 		exponentBits:    derived.exponentBits,
 		significandBits: derived.significandBits,
 		value:           literal.value, mode: derived.mode,
@@ -425,6 +442,8 @@ func (scanner *fpFastScanner) formula(
 		command.kind = fpFastMul
 	case fpFastDivBits:
 		command.kind = fpFastDiv
+	case fpFastFMABits:
+		command.kind = fpFastFMA
 	default:
 		return fpFastCommand{}, false
 	}
@@ -591,6 +610,34 @@ func (scanner *fpFastScanner) operand(
 		return fpFastOperand{
 			kind:     kind,
 			symbolID: left.id, secondSymbolID: right.id,
+			exponentBits:    left.exponentBits,
+			significandBits: left.significandBits,
+			mode:            mode,
+		}, true
+	case "fp.fma":
+		modeToken, modeOK := scanner.atom()
+		leftToken, leftOK := scanner.atom()
+		rightToken, rightOK := scanner.atom()
+		addendToken, addendOK := scanner.atom()
+		if !modeOK || !leftOK || !rightOK || !addendOK {
+			return fpFastOperand{}, false
+		}
+		mode, modeFound := fpFastRoundingMode(scanner.text(modeToken))
+		left, leftFound := fpFastFindSymbol(scanner.text(leftToken), symbols)
+		right, rightFound := fpFastFindSymbol(scanner.text(rightToken), symbols)
+		addend, addendFound := fpFastFindSymbol(scanner.text(addendToken), symbols)
+		if !modeFound || !leftFound || !rightFound || !addendFound ||
+			left.exponentBits != right.exponentBits ||
+			left.significandBits != right.significandBits ||
+			left.exponentBits != addend.exponentBits ||
+			left.significandBits != addend.significandBits ||
+			!scanner.right() || !scanner.right() {
+			return fpFastOperand{}, false
+		}
+		return fpFastOperand{
+			kind:     fpFastFMABits,
+			symbolID: left.id, secondSymbolID: right.id,
+			thirdSymbolID:   addend.id,
 			exponentBits:    left.exponentBits,
 			significandBits: left.significandBits,
 			mode:            mode,
