@@ -561,6 +561,14 @@ func FloatingPointFMA(mode FloatingPointRoundingMode, left FloatingPointValue, r
 	return floatingPointFMA(floatingPointRoundingModeCode(mode), left, right, addend)
 }
 
+// FloatingPointSqrt implements exact SMT-LIB fp.sqrt rounding for arbitrary
+// valid floating-point formats.
+//
+//goplus:dep FloatingPointSqrt(0 e nat, 0 s nat, mode FloatingPointRoundingMode, value FloatingPointValue[e, s]) FloatingPointValue[e, s]
+func FloatingPointSqrt(mode FloatingPointRoundingMode, value FloatingPointValue) FloatingPointValue {
+	return floatingPointSqrt(floatingPointRoundingModeCode(mode), value)
+}
+
 func floatingPointSignificandNonzero(bits BitVectorValue, significandBits int) bool {
 	for index := 0; index < significandBits-1; index++ {
 		if bits.Bit(index) {

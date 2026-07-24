@@ -401,6 +401,126 @@ func floatingPointFMA(
 	)
 }
 
+func floatingPointSqrt(
+	mode uint8,
+	value FloatingPointValue,
+) FloatingPointValue {
+	if mode < 1 || mode > 5 {
+		panic("smt: invalid floating-point rounding mode")
+	}
+	exponentBits := FloatingPointExponentBits(value)
+	significandBits := FloatingPointSignificandBits(value)
+	if FloatingPointIsNaN(value) {
+		return FloatingPointNaN(exponentBits, significandBits)
+	}
+	if FloatingPointIsZero(value) {
+		return value
+	}
+	if FloatingPointIsNegative(value) {
+		return FloatingPointNaN(exponentBits, significandBits)
+	}
+	if FloatingPointIsInfinite(value) {
+		return value
+	}
+	total := exponentBits + significandBits
+	if significandBits <= 31 && total <= 64 {
+		raw, inline := FloatingPointBits(value).Uint64()
+		if inline {
+			if root, ok := floatingPointSqrtUint64(
+				mode, exponentBits, significandBits, raw,
+			); ok {
+				return root
+			}
+		}
+	}
+	finite := decodeFloatingPointFinite(value)
+	return floatingPointRoundExactSqrt(
+		mode, exponentBits, significandBits,
+		finite.magnitude, finite.scale,
+	)
+}
+
+func floatingPointSqrtUint64(
+	mode uint8,
+	exponentBits, significandBits int,
+	raw uint64,
+) (FloatingPointValue, bool) {
+	fractionBits := significandBits - 1
+	exponentMask := uint64(1)<<exponentBits - 1
+	fractionMask := uint64(1)<<fractionBits - 1
+	bias := int64(uint64(1)<<(exponentBits-1) - 1)
+	exponent := raw >> fractionBits & exponentMask
+	magnitude := raw & fractionMask
+	scale := int64(1) - bias - int64(fractionBits)
+	if exponent != 0 {
+		magnitude |= uint64(1) << fractionBits
+		scale = int64(exponent) - bias - int64(fractionBits)
+	}
+	logarithm := scale + int64(bits.Len64(magnitude)-1)
+	topExponent := logarithm / 2
+	if logarithm < 0 && logarithm&1 != 0 {
+		topExponent--
+	}
+	minimumNormal := int64(1) - bias
+	if topExponent < minimumNormal {
+		return FloatingPointValue{}, false
+	}
+	quantum := topExponent - int64(fractionBits)
+	power := scale - 2*quantum
+	if power < 0 || power >= 64 ||
+		bits.Len64(magnitude)+int(power) > 64 {
+		return FloatingPointValue{}, false
+	}
+	radicand := magnitude << uint(power)
+	units := floatingPointRoundedSqrtUint64(mode, radicand)
+	if bits.Len64(units) > significandBits {
+		units >>= 1
+		topExponent++
+	}
+	exponentField := uint64(topExponent + bias)
+	fraction := units & fractionMask
+	return FloatingPointFromUint64(
+		exponentBits, significandBits,
+		exponentField<<fractionBits|fraction,
+	), true
+}
+
+func floatingPointRoundedSqrtUint64(mode uint8, radicand uint64) uint64 {
+	var low uint64
+	high := uint64(1) << 32
+	for high-low > 1 {
+		middle := low + (high-low)/2
+		if middle <= radicand/middle {
+			low = middle
+		} else {
+			high = middle
+		}
+	}
+	if low*low == radicand {
+		return low
+	}
+	increment := mode == 3
+	if mode == 1 || mode == 2 {
+		midpoint := low<<1 | 1
+		rightHigh, rightLow := bits.Mul64(midpoint, midpoint)
+		leftHigh, leftLow := radicand>>62, radicand<<2
+		comparison := 0
+		if leftHigh < rightHigh ||
+			leftHigh == rightHigh && leftLow < rightLow {
+			comparison = -1
+		} else if leftHigh > rightHigh ||
+			leftHigh == rightHigh && leftLow > rightLow {
+			comparison = 1
+		}
+		increment = comparison > 0 ||
+			comparison == 0 && (mode == 2 || low&1 != 0)
+	}
+	if increment {
+		low++
+	}
+	return low
+}
+
 func floatingPointFMAUint64(
 	mode uint8,
 	exponentBits, significandBits int,
@@ -947,6 +1067,156 @@ func floatingPointRoundExactRational(
 		exponentBits, significandBits, negative,
 		exponentField, significand,
 	)
+}
+
+func floatingPointRoundExactSqrt(
+	mode uint8,
+	exponentBits, significandBits int,
+	magnitude, scale *big.Int,
+) FloatingPointValue {
+	fractionBits := significandBits - 1
+	bias := floatingPointBias(exponentBits)
+	minimumNormal := new(big.Int).Sub(big.NewInt(1), bias)
+	maximumNormal := new(big.Int).Set(bias)
+	logarithm := new(big.Int).Add(
+		scale, big.NewInt(int64(magnitude.BitLen()-1)),
+	)
+	topExponent := new(big.Int).Rsh(logarithm, 1)
+	quantum := new(big.Int).Sub(
+		topExponent, big.NewInt(int64(fractionBits)),
+	)
+	subnormal := topExponent.Cmp(minimumNormal) < 0
+	if subnormal {
+		quantum.Sub(minimumNormal, big.NewInt(int64(fractionBits)))
+	}
+	units := floatingPointRoundedSqrt(
+		mode, magnitude, scale, quantum, significandBits,
+	)
+	if units.Sign() == 0 {
+		return floatingPointZero(exponentBits, significandBits, false)
+	}
+	if subnormal {
+		if units.BitLen() >= significandBits {
+			return floatingPointEncode(
+				exponentBits, significandBits, false,
+				big.NewInt(1), new(big.Int),
+			)
+		}
+		return floatingPointEncode(
+			exponentBits, significandBits, false,
+			new(big.Int), units,
+		)
+	}
+	if units.BitLen() > significandBits {
+		units.Rsh(units, 1)
+		topExponent.Add(topExponent, big.NewInt(1))
+	}
+	if topExponent.Cmp(maximumNormal) > 0 {
+		return floatingPointOverflow(
+			mode, exponentBits, significandBits, false,
+		)
+	}
+	exponentField := new(big.Int).Add(topExponent, bias)
+	units.SetBit(units, fractionBits, 0)
+	return floatingPointEncode(
+		exponentBits, significandBits, false, exponentField, units,
+	)
+}
+
+func floatingPointRoundedSqrt(
+	mode uint8,
+	magnitude, scale, quantum *big.Int,
+	significandBits int,
+) *big.Int {
+	power := new(big.Int).Sub(
+		scale, new(big.Int).Lsh(new(big.Int).Set(quantum), 1),
+	)
+	var floor *big.Int
+	var exact bool
+	var midpointComparison int
+	if power.Sign() >= 0 {
+		if !power.IsInt64() {
+			panic("smt: floating-point square-root shift exceeds implementation limits")
+		}
+		radicand := new(big.Int).Lsh(
+			new(big.Int).Set(magnitude), uint(power.Int64()),
+		)
+		floor = new(big.Int).Sqrt(radicand)
+		square := new(big.Int).Mul(
+			new(big.Int).Set(floor), floor,
+		)
+		exact = square.Cmp(radicand) == 0
+		midpoint := new(big.Int).Add(
+			new(big.Int).Lsh(new(big.Int).Set(floor), 1),
+			big.NewInt(1),
+		)
+		midpoint.Mul(midpoint, midpoint)
+		midpointComparison = new(big.Int).Lsh(radicand, 2).Cmp(midpoint)
+	} else {
+		count := new(big.Int).Neg(power)
+		upper := new(big.Int).Lsh(
+			big.NewInt(1), uint(significandBits+1),
+		)
+		low, high := new(big.Int), upper
+		one := big.NewInt(1)
+		for new(big.Int).Sub(high, low).Cmp(one) > 0 {
+			middle := new(big.Int).Rsh(
+				new(big.Int).Add(low, high), 1,
+			)
+			square := new(big.Int).Mul(
+				new(big.Int).Set(middle), middle,
+			)
+			if compareShiftedInteger(square, count, magnitude) <= 0 {
+				low = middle
+			} else {
+				high = middle
+			}
+		}
+		floor = low
+		square := new(big.Int).Mul(new(big.Int).Set(floor), floor)
+		exact = compareShiftedInteger(square, count, magnitude) == 0
+		midpoint := new(big.Int).Add(
+			new(big.Int).Lsh(new(big.Int).Set(floor), 1),
+			big.NewInt(1),
+		)
+		midpoint.Mul(midpoint, midpoint)
+		midpointComparison = -compareShiftedInteger(
+			midpoint, count, new(big.Int).Lsh(new(big.Int).Set(magnitude), 2),
+		)
+	}
+	if exact {
+		return floor
+	}
+	increment := mode == 3
+	if mode == 1 || mode == 2 {
+		increment = midpointComparison > 0 ||
+			midpointComparison == 0 && (mode == 2 || floor.Bit(0) != 0)
+	}
+	if increment {
+		floor.Add(floor, big.NewInt(1))
+	}
+	return floor
+}
+
+func compareShiftedInteger(
+	value, shift, target *big.Int,
+) int {
+	if value.Sign() == 0 {
+		return -target.Sign()
+	}
+	shiftedBits := new(big.Int).Add(
+		big.NewInt(int64(value.BitLen())), shift,
+	)
+	targetBits := big.NewInt(int64(target.BitLen()))
+	if comparison := shiftedBits.Cmp(targetBits); comparison != 0 {
+		return comparison
+	}
+	if !shift.IsInt64() {
+		return 1
+	}
+	return new(big.Int).Lsh(
+		new(big.Int).Set(value), uint(shift.Int64()),
+	).Cmp(target)
 }
 
 func floatingPointRoundExactRationalUint64(

@@ -254,6 +254,12 @@ func FloatingPointFMA(0 e nat, 0 s nat, mode FloatingPointRoundingMode, left Flo
 	return floatingPointFMA(floatingPointRoundingModeCode(mode), left, right, addend)
 }
 
+// FloatingPointSqrt implements exact SMT-LIB fp.sqrt rounding for arbitrary
+// valid floating-point formats.
+func FloatingPointSqrt(0 e nat, 0 s nat, mode FloatingPointRoundingMode, value FloatingPointValue[e, s]) FloatingPointValue[e, s] {
+	return floatingPointSqrt(floatingPointRoundingModeCode(mode), value)
+}
+
 func floatingPointSignificandNonzero(bits BitVectorValue, significandBits int) bool {
 	for index := 0; index < significandBits-1; index++ {
 		if bits.Bit(index) { return true }

@@ -18,6 +18,7 @@ const (
 	fpFastMul
 	fpFastDiv
 	fpFastFMA
+	fpFastSqrt
 	fpFastPredicate
 	fpFastComparison
 	fpFastEquality
@@ -83,6 +84,7 @@ const (
 	fpFastMulBits
 	fpFastDivBits
 	fpFastFMABits
+	fpFastSqrtBits
 	fpFastExactFloatingBits
 	fpFastLiteralBits
 )
@@ -268,6 +270,17 @@ func executeFloatingPointFast(source string) (ExecutionResult, bool) {
 			)
 			nextAssertion++
 			responses = append(responses, Acknowledged{CommandIndex: command.commandIndex})
+		case fpFastSqrt:
+			relation := smt.NewFloatingPointSqrtRelation(
+				command.exponentBits, command.significandBits,
+				command.symbolID, command.mode, command.value,
+			)
+			relation.Negated = command.negated
+			solver = smt.AssertFloatingPointSqrtRelation(
+				nextAssertion, solver, relation,
+			)
+			nextAssertion++
+			responses = append(responses, Acknowledged{CommandIndex: command.commandIndex})
 		case fpFastPredicate:
 			relation := smt.NewFloatingPointRelation(
 				command.exponentBits, command.significandBits,
@@ -444,6 +457,8 @@ func (scanner *fpFastScanner) formula(
 		command.kind = fpFastDiv
 	case fpFastFMABits:
 		command.kind = fpFastFMA
+	case fpFastSqrtBits:
+		command.kind = fpFastSqrt
 	default:
 		return fpFastCommand{}, false
 	}
@@ -554,6 +569,24 @@ func (scanner *fpFastScanner) operand(
 		}
 		return fpFastOperand{
 			kind: fpFastRoundedBits, symbolID: found.id,
+			exponentBits:    found.exponentBits,
+			significandBits: found.significandBits,
+			mode:            roundingMode,
+		}, true
+	case "fp.sqrt":
+		mode, modeOK := scanner.atom()
+		symbol, symbolOK := scanner.atom()
+		if !modeOK || !symbolOK {
+			return fpFastOperand{}, false
+		}
+		roundingMode, roundingModeOK := fpFastRoundingMode(scanner.text(mode))
+		found, foundOK := fpFastFindSymbol(scanner.text(symbol), symbols)
+		if !roundingModeOK || !foundOK ||
+			!scanner.right() || !scanner.right() {
+			return fpFastOperand{}, false
+		}
+		return fpFastOperand{
+			kind: fpFastSqrtBits, symbolID: found.id,
 			exponentBits:    found.exponentBits,
 			significandBits: found.significandBits,
 			mode:            roundingMode,

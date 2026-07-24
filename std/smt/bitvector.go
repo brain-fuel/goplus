@@ -228,7 +228,7 @@ func containsBitVectorTheory(term Term[BoolSort]) bool {
 		return true
 	case bitVectorUnsignedAddOverflow[BoolSort], bitVectorSignedAddOverflow[BoolSort], bitVectorUnsignedSubOverflow[BoolSort], bitVectorSignedSubOverflow[BoolSort], bitVectorUnsignedMulOverflow[BoolSort], bitVectorSignedMulOverflow[BoolSort], bitVectorSignedDivOverflow[BoolSort], bitVectorNegOverflow[BoolSort]:
 		return true
-	case BitVectorRelation, BitVectorConjunction, BitVectorIntegerRelation, BitVectorMixedConjunction, BitVectorEUFRelation, BitVectorEUFConjunction, FloatingPointRelation, FloatingPointComparisonRelation, FloatingPointMinMaxRelation, FloatingPointRoundToIntegralRelation, FloatingPointAddRelation, FloatingPointSubRelation, FloatingPointMulRelation, FloatingPointDivRelation, FloatingPointFMARelation:
+	case BitVectorRelation, BitVectorConjunction, BitVectorIntegerRelation, BitVectorMixedConjunction, BitVectorEUFRelation, BitVectorEUFConjunction, FloatingPointRelation, FloatingPointComparisonRelation, FloatingPointMinMaxRelation, FloatingPointRoundToIntegralRelation, FloatingPointAddRelation, FloatingPointSubRelation, FloatingPointMulRelation, FloatingPointDivRelation, FloatingPointFMARelation, FloatingPointSqrtRelation:
 		return true
 	}
 	return false
@@ -356,6 +356,8 @@ type compactBitVectorProblem struct {
 	divs            [4]FloatingPointDivRelation
 	fmaCount        int
 	fmas            [4]FloatingPointFMARelation
+	sqrtCount       int
+	sqrts           [4]FloatingPointSqrtRelation
 }
 
 func (problem *compactBitVectorProblem) add(term Term[BoolSort], negated bool) bool {
@@ -457,6 +459,14 @@ func (problem *compactBitVectorProblem) add(term Term[BoolSort], negated bool) b
 		value.Negated = value.Negated != negated
 		problem.fmas[problem.fmaCount] = value
 		problem.fmaCount++
+		return true
+	case FloatingPointSqrtRelation:
+		if problem.sqrtCount == len(problem.sqrts) {
+			return false
+		}
+		value.Negated = value.Negated != negated
+		problem.sqrts[problem.sqrtCount] = value
+		problem.sqrtCount++
 		return true
 	case BitVectorRelation:
 		if problem.relationCount == len(problem.relations) {
@@ -924,6 +934,30 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 			),
 		)
 		holds := EqualBitVectorValue(FloatingPointBits(fused), relation.Value)
+		if holds == relation.Negated {
+			return checkOutcome{status: checkUnsat}, true
+		}
+	}
+	for _, relation := range problem.sqrts[:problem.sqrtCount] {
+		var assigned BitVectorValue
+		found := false
+		for index := 0; index < assignmentCount; index++ {
+			if assignments[index].id == relation.SymbolID {
+				assigned, found = assignments[index].value, true
+				break
+			}
+		}
+		total := relation.ExponentBits + relation.SignificandBits
+		if !found || assigned.Width() != total {
+			return checkOutcome{}, false
+		}
+		root := floatingPointSqrt(
+			relation.Mode,
+			FloatingPointFromBits(
+				relation.ExponentBits, relation.SignificandBits, assigned,
+			),
+		)
+		holds := EqualBitVectorValue(FloatingPointBits(root), relation.Value)
 		if holds == relation.Negated {
 			return checkOutcome{status: checkUnsat}, true
 		}

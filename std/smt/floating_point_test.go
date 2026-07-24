@@ -597,6 +597,76 @@ func TestFloatingPointFMAExtremeBinary128Gap(t *testing.T) {
 	}
 }
 
+func TestFloatingPointSqrtBinary32(t *testing.T) {
+	modes := []FloatingPointRoundingMode{
+		RoundNearestTiesToEven(),
+		RoundNearestTiesToAway(),
+		RoundTowardPositive(),
+		RoundTowardNegative(),
+		RoundTowardZero(),
+	}
+	want := [5]uint64{
+		0x3fb504f3, 0x3fb504f3, 0x3fb504f4, 0x3fb504f3, 0x3fb504f3,
+	}
+	for index, mode := range modes {
+		root := FloatingPointSqrt(
+			mode, FloatingPointFromUint64(8, 24, 0x40000000),
+		)
+		got, inline := FloatingPointBits(root).Uint64()
+		if !inline || got != want[index] {
+			t.Fatalf("sqrt(2) mode %d=%#x,%v, want %#x,true", index, got, inline, want[index])
+		}
+	}
+	exact := FloatingPointSqrt(
+		RoundNearestTiesToEven(),
+		FloatingPointFromUint64(8, 24, 0x40800000),
+	)
+	got, _ := FloatingPointBits(exact).Uint64()
+	if got != 0x40000000 {
+		t.Fatalf("sqrt(4)=%#x, want 0x40000000", got)
+	}
+}
+
+func TestFloatingPointSqrtSpecialValues(t *testing.T) {
+	negativeZero := FloatingPointNegativeZero(8, 24)
+	if root := FloatingPointSqrt(
+		RoundNearestTiesToEven(), negativeZero,
+	); !EqualBitVectorValue(FloatingPointBits(root), FloatingPointBits(negativeZero)) {
+		t.Fatal("sqrt(-zero) must preserve negative zero")
+	}
+	if !FloatingPointIsNaN(FloatingPointSqrt(
+		RoundNearestTiesToEven(),
+		FloatingPointFromUint64(8, 24, 0xbf800000),
+	)) {
+		t.Fatal("sqrt(negative finite) must produce NaN")
+	}
+	infinity := FloatingPointPositiveInfinity(8, 24)
+	if root := FloatingPointSqrt(
+		RoundNearestTiesToEven(), infinity,
+	); !FloatingPointIsInfinite(root) || FloatingPointIsNegative(root) {
+		t.Fatal("sqrt(+infinity) must be +infinity")
+	}
+}
+
+func TestFloatingPointSqrtBinary128(t *testing.T) {
+	four := FloatingPointFromComponents(
+		15, 113,
+		NewBitVectorUint64(1, 0),
+		NewBitVectorUint64(15, 0x4001),
+		NewBitVectorUint64(112, 0),
+	)
+	two := FloatingPointFromComponents(
+		15, 113,
+		NewBitVectorUint64(1, 0),
+		NewBitVectorUint64(15, 0x4000),
+		NewBitVectorUint64(112, 0),
+	)
+	root := FloatingPointSqrt(RoundNearestTiesToEven(), four)
+	if !EqualBitVectorValue(FloatingPointBits(root), FloatingPointBits(two)) {
+		t.Fatalf("binary128 sqrt(4)=%v, want %v", FloatingPointBits(root), FloatingPointBits(two))
+	}
+}
+
 func TestFloatingPointGroundAbsAndNeg(t *testing.T) {
 	tests := []struct {
 		name string

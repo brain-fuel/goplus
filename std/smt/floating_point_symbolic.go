@@ -159,6 +159,19 @@ type FloatingPointFMARelation struct {
 
 func (FloatingPointFMARelation) isTerm(BoolSort) {}
 
+// FloatingPointSqrtRelation constrains the exact rounded IEEE bits of fp.sqrt
+// over one assigned floating-point symbol.
+type FloatingPointSqrtRelation struct {
+	ExponentBits    int
+	SignificandBits int
+	SymbolID        int
+	Mode            uint8
+	Value           BitVectorValue
+	Negated         bool
+}
+
+func (FloatingPointSqrtRelation) isTerm(BoolSort) {}
+
 type floatingPointRoundToIntegralBitVector struct {
 	exponentBits    int
 	significandBits int
@@ -321,6 +334,24 @@ func NewFloatingPointFMARelation(
 		ExponentBits: exponentBits, SignificandBits: significandBits,
 		LeftSymbolID: leftSymbolID, RightSymbolID: rightSymbolID,
 		AddendSymbolID: addendSymbolID, Mode: modeCode, Value: value,
+	}
+}
+
+func NewFloatingPointSqrtRelation(
+	exponentBits, significandBits, symbolID int,
+	mode FloatingPointRoundingMode,
+	value BitVectorValue,
+) FloatingPointSqrtRelation {
+	modeCode := floatingPointRoundingModeCode(mode)
+	if exponentBits < 2 || significandBits < 2 {
+		panic("smt: invalid floating-point format")
+	}
+	if value.Width() != exponentBits+significandBits {
+		panic("smt: floating-point square-root result width mismatch")
+	}
+	return FloatingPointSqrtRelation{
+		ExponentBits: exponentBits, SignificandBits: significandBits,
+		SymbolID: symbolID, Mode: modeCode, Value: value,
 	}
 }
 
@@ -650,6 +681,22 @@ func AssertFloatingPointFMARelation(
 	assertion int,
 	solver Solver,
 	relation FloatingPointFMARelation,
+) Solver {
+	if assertion < 0 {
+		panic("smt: negative assertion identity")
+	}
+	nextContext := runtimeContextID(solver.contextID, assertion)
+	return solverValue{
+		contextID: nextContext,
+		depth:     solver.depth,
+		state:     solver.state.asserted(relation),
+	}
+}
+
+func AssertFloatingPointSqrtRelation(
+	assertion int,
+	solver Solver,
+	relation FloatingPointSqrtRelation,
 ) Solver {
 	if assertion < 0 {
 		panic("smt: negative assertion identity")

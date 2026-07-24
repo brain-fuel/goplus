@@ -46,6 +46,7 @@ type dynamicTerm struct {
 	floatingPointMul     *dynamicFloatingPointMul
 	floatingPointDiv     *dynamicFloatingPointDiv
 	floatingPointFMA     *dynamicFloatingPointFMA
+	floatingPointSqrt    *dynamicFloatingPointSqrt
 	floatingPointSymbol  int
 	uninterpreted        smt.Term[smt.UninterpretedSort]
 	arrayIntInt          smt.Term[smt.ArraySort[smt.IntSort, smt.IntSort]]
@@ -102,6 +103,12 @@ type dynamicFloatingPointFMA struct {
 	exponentBits, significandBits               int
 	leftSymbolID, rightSymbolID, addendSymbolID int
 	mode                                        smt.FloatingPointRoundingMode
+}
+
+type dynamicFloatingPointSqrt struct {
+	exponentBits, significandBits int
+	symbolID                      int
+	mode                          smt.FloatingPointRoundingMode
 }
 
 type dynamicDatatypeMatch struct {
@@ -2374,6 +2381,7 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 			floatingPointMul:    terms[0].floatingPointMul,
 			floatingPointDiv:    terms[0].floatingPointDiv,
 			floatingPointFMA:    terms[0].floatingPointFMA,
+			floatingPointSqrt:   terms[0].floatingPointSqrt,
 			bitVectorSymbol:     terms[0].floatingPointSymbol,
 		}, nil
 	}
@@ -2577,6 +2585,42 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 				rightSymbolID:  right.floatingPointSymbol,
 				addendSymbolID: addend.floatingPointSymbol,
 				mode:           terms[0].roundingMode,
+			},
+		}, nil
+	}
+	if operator == "fp.sqrt" && len(terms) == 2 &&
+		terms[0].sort == sortRoundingMode &&
+		terms[1].sort == sortFloatingPoint {
+		value := terms[1]
+		if value.bitVectorExact {
+			root := smt.FloatingPointSqrt(
+				terms[0].roundingMode,
+				smt.FloatingPointFromBits(
+					value.exponentBits, value.significandBits,
+					value.bitVectorValue,
+				),
+			)
+			bits := smt.FloatingPointBits(root)
+			return dynamicTerm{
+				sort: sortFloatingPoint, bitWidth: value.bitWidth,
+				exponentBits:    value.exponentBits,
+				significandBits: value.significandBits,
+				bitVector:       smt.BitVectorTerm(bits),
+				bitVectorExact:  true, bitVectorValue: bits,
+			}, nil
+		}
+		if value.floatingPointSymbol == 0 {
+			return dynamicTerm{}, fmt.Errorf("fp.sqrt currently requires a ground value or direct symbol")
+		}
+		return dynamicTerm{
+			sort: sortFloatingPoint, bitWidth: value.bitWidth,
+			exponentBits:    value.exponentBits,
+			significandBits: value.significandBits,
+			floatingPointSqrt: &dynamicFloatingPointSqrt{
+				exponentBits:    value.exponentBits,
+				significandBits: value.significandBits,
+				symbolID:        value.floatingPointSymbol,
+				mode:            terms[0].roundingMode,
 			},
 		}, nil
 	}
@@ -3249,6 +3293,21 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 						relation.leftSymbolID, relation.rightSymbolID,
 						relation.addendSymbolID, relation.mode,
 						exact.bitVectorValue,
+					),
+				}, nil
+			}
+			root, exact := terms[0], terms[1]
+			if root.floatingPointSqrt == nil {
+				root, exact = terms[1], terms[0]
+			}
+			if root.floatingPointSqrt != nil && exact.bitVectorExact &&
+				root.bitWidth == exact.bitWidth {
+				relation := root.floatingPointSqrt
+				return dynamicTerm{
+					sort: sortBool,
+					boolean: smt.NewFloatingPointSqrtRelation(
+						relation.exponentBits, relation.significandBits,
+						relation.symbolID, relation.mode, exact.bitVectorValue,
 					),
 				}, nil
 			}
