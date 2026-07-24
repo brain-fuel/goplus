@@ -88,6 +88,9 @@ type FloatingPointRoundToIntegralRelation struct {
 
 func (FloatingPointRoundToIntegralRelation) isTerm(BoolSort) {}
 
+// FloatingPointToBitVectorRelation constrains an indexed signed or unsigned
+// conversion. An unconstrained FP source can use an integer-derived,
+// forward-validated preimage when the result lies in the conversion image.
 type FloatingPointToBitVectorRelation struct {
 	ExponentBits    int
 	SignificandBits int

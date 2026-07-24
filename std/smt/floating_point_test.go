@@ -808,6 +808,66 @@ func TestFloatingPointToSignedBitVectorBinary128(t *testing.T) {
 	}
 }
 
+func TestFloatingPointToBitVectorSynthesizesUnconstrainedSource(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		signed bool
+		target uint64
+		want   uint64
+	}{
+		{"unsigned", false, 3, 0x40400000},
+		{"signed-negative", true, 0xfd, 0xc0400000},
+		{"zero", false, 0, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			relation := NewFloatingPointToBitVectorRelation(
+				8, 24, 8, 1, RoundNearestTiesToEven(),
+				test.signed, NewBitVectorUint64(8, test.target),
+			)
+			result, ok := Check(AssertFloatingPointToBitVectorRelation(
+				1, New(), relation,
+			)).(Satisfiable)
+			if !ok {
+				t.Fatal("expected synthesized fp.to_bv source")
+			}
+			source, found := FloatingPointSymbolModelBits(result.Value, 1)
+			raw, inline := source.Uint64()
+			if !found || !inline || raw != test.want {
+				t.Fatalf("source=%#x, found=%v, want %#x", raw, found, test.want)
+			}
+		})
+	}
+}
+
+func TestFloatingPointToBitVectorLeavesNonimageUnknown(t *testing.T) {
+	relation := NewFloatingPointToBitVectorRelation(
+		8, 24, 32, 1, RoundNearestTiesToEven(), false,
+		NewBitVectorUint64(32, 0x01000001),
+	)
+	if _, ok := Check(AssertFloatingPointToBitVectorRelation(
+		1, New(), relation,
+	)).(Unknown); !ok {
+		t.Fatal("nonimage fp.to_bv result must remain unknown")
+	}
+}
+
+func TestFloatingPointToBitVectorSynthesizesWideBinary128Source(t *testing.T) {
+	target := IntegerToBitVectorValue(130, NewIntegerValue(-128))
+	relation := NewFloatingPointToBitVectorRelation(
+		15, 113, 130, 1, RoundNearestTiesToEven(), true, target,
+	)
+	result, ok := Check(AssertFloatingPointToBitVectorRelation(
+		1, New(), relation,
+	)).(Satisfiable)
+	if !ok {
+		t.Fatal("expected synthesized wide binary128 fp.to_bv source")
+	}
+	source, found := FloatingPointSymbolModelBits(result.Value, 1)
+	if !found || source.Width() != 128 {
+		t.Fatal("binary128 fp.to_bv source missing from model")
+	}
+}
+
 func TestFloatingPointFromBitVectorModes(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -671,6 +671,43 @@ func synthesizeFloatingPointFormatPreimage(
 	return BitVectorValue{}, false
 }
 
+func synthesizeFloatingPointToBitVectorPreimage(
+	relation FloatingPointToBitVectorRelation,
+) (BitVectorValue, bool) {
+	if relation.Value.Width() != relation.Width {
+		return BitVectorValue{}, false
+	}
+	integer := BitVectorToIntegerValue(relation.Value, relation.Signed)
+	target := RationalFromInteger(integer)
+	validate := func(candidate FloatingPointValue) (BitVectorValue, bool) {
+		converted, valid := floatingPointToBitVector(
+			relation.Mode, relation.Width, candidate, relation.Signed,
+		)
+		if valid && EqualBitVectorValue(converted, relation.Value) {
+			return FloatingPointBits(candidate), true
+		}
+		return BitVectorValue{}, false
+	}
+	for candidateMode := uint8(1); candidateMode <= 5; candidateMode++ {
+		candidate := floatingPointFromRational(
+			candidateMode,
+			relation.ExponentBits,
+			relation.SignificandBits,
+			target,
+		)
+		if bits, ok := validate(candidate); ok {
+			return bits, true
+		}
+		if bits, ok := validate(floatingPointNextDown(candidate)); ok {
+			return bits, true
+		}
+		if bits, ok := validate(floatingPointNextUp(candidate)); ok {
+			return bits, true
+		}
+	}
+	return BitVectorValue{}, false
+}
+
 func (problem *compactBitVectorProblem) add(term Term[BoolSort], negated bool) bool {
 	switch value := term.(type) {
 	case And:
@@ -988,6 +1025,34 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 		}
 		candidate, synthesized :=
 			synthesizeFloatingPointFormatPreimage(relation)
+		if !synthesized || assignmentCount == len(assignments) {
+			return checkOutcome{}, false
+		}
+		assignments[assignmentCount] = compactBitVectorAssignment{
+			id: relation.SymbolID, value: candidate,
+			fixed: NotBitVectorValue(
+				NewBitVectorUint64(candidate.Width(), 0),
+			),
+		}
+		assignmentCount++
+	}
+	// Interpret a fixed fp.to_[us]bv result as its indexed integer, construct
+	// nearby floating-point candidates, and commit only a source whose exact
+	// conversion is defined and matches every result bit. Integers outside the
+	// conversion image remain unknown.
+	for _, relation := range problem.fpConversions[:problem.fpConversionCount] {
+		found := false
+		for index := 0; index < assignmentCount; index++ {
+			if assignments[index].id == relation.SymbolID {
+				found = true
+				break
+			}
+		}
+		if found || relation.Negated {
+			continue
+		}
+		candidate, synthesized :=
+			synthesizeFloatingPointToBitVectorPreimage(relation)
 		if !synthesized || assignmentCount == len(assignments) {
 			return checkOutcome{}, false
 		}
