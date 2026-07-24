@@ -136,4 +136,18 @@ func TestSortedTermsAcrossPackageBoundary(t *testing.T) {
 		t.Fatalf("unexpected datatype update diagnostic: %s", out)
 	}
 
+	floatingPointPositive := "package main\nimport \"goforge.dev/goplus/std/smt\"\nfunc main() { left := smt.FloatingPointFromUint64(8, 24, 0x3f800000); right := smt.FloatingPointFromUint64(8, 24, 0x40000000); _ = smt.FloatingPointEqual(left, right) }\n"
+	if out, err := compile(t, floatingPointPositive); err != nil {
+		t.Fatalf("same-format floating-point equality failed: %v\n%s", err, out)
+	}
+
+	floatingPointNegative := "package main\nimport \"goforge.dev/goplus/std/smt\"\nfunc main() { left := smt.FloatingPointFromUint64(8, 24, 0x3f800000); right := smt.FloatingPointFromUint64(5, 11, 0x3c00); _ = smt.FloatingPointEqual(left, right) }\n"
+	out, err = compile(t, floatingPointNegative)
+	if err == nil {
+		t.Fatalf("mixed-format floating-point equality unexpectedly compiled:\n%s", out)
+	}
+	if !strings.Contains(out, "dependent index mismatch") && !strings.Contains(out, "same instantiation") {
+		t.Fatalf("unexpected floating-point diagnostic: %s", out)
+	}
+
 }
