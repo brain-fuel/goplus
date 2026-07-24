@@ -48,6 +48,20 @@ type RealBinaryComparison struct {
 
 func (RealBinaryComparison) isTerm(BoolSort) {}
 
+// RealTernaryComparison compares one Real×Real×Real->Real application with
+// an exact rational bound without boxing the application tree.
+type RealTernaryComparison struct {
+	FunctionID        int
+	FirstArgumentID   int
+	SecondArgumentID  int
+	ThirdArgumentID   int
+	Bound             Rational
+	ApplicationOnLeft bool
+	Strict            bool
+}
+
+func (RealTernaryComparison) isTerm(BoolSort) {}
+
 func (LinearRealConstraint) isTerm(BoolSort) {}
 
 // LinearRealSystem is an allocation-conscious conjunction of normalized
@@ -217,7 +231,9 @@ func containsRealTheory(term Term[BoolSort]) bool {
 			}
 		}
 	case TheoryConjunction:
-		if value.RealCount != 0 || value.SymbolEqualityCount != 0 || value.UnaryComparisonCount != 0 || value.BinaryComparisonCount != 0 {
+		if value.RealCount != 0 || value.SymbolEqualityCount != 0 ||
+			value.UnaryComparisonCount != 0 || value.BinaryComparisonCount != 0 ||
+			value.TernaryComparisonCount != 0 {
 			return true
 		}
 		terms, _ := value.atomValues()
@@ -252,7 +268,7 @@ func containsRealTheory(term Term[BoolSort]) bool {
 		return true
 	case RealUnaryEquality:
 		return true
-	case RealSymbolEquality, RealUnaryComparison, RealBinaryComparison:
+	case RealSymbolEquality, RealUnaryComparison, RealBinaryComparison, RealTernaryComparison:
 		return true
 	}
 	return false

@@ -690,6 +690,10 @@ func DeclareIntTernaryFunction(id int, name string) SortedTernaryFunction[IntSor
 	return SortedTernaryFunction[IntSort, IntSort, IntSort, IntSort].sortedTernaryFunctionValue(-2, -2, -2, -2, id, name)
 }
 
+func DeclareRealTernaryFunction(id int, name string) SortedTernaryFunction[RealSort, RealSort, RealSort, RealSort] {
+	return SortedTernaryFunction[RealSort, RealSort, RealSort, RealSort].sortedTernaryFunctionValue(-1, -1, -1, -1, id, name)
+}
+
 func ApplySortedTernary[A any, B any, C any, R any](function SortedTernaryFunction[A, B, C, R], first Term[A], second Term[B], third Term[C]) Term[R] {
 	return Term[R].sortedTernaryApplication(function, first, second, third, -1)
 }

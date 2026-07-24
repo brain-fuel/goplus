@@ -149,6 +149,8 @@ type dynamicBinaryFunction struct {
 
 type dynamicTernaryFunction struct {
 	integerValue smt.SortedTernaryFunction[smt.IntSort, smt.IntSort, smt.IntSort, smt.IntSort]
+	real         bool
+	realValue    smt.SortedTernaryFunction[smt.RealSort, smt.RealSort, smt.RealSort, smt.RealSort]
 }
 
 type executor struct {
@@ -1396,10 +1398,22 @@ func (executor *executor) declareTernary(index int, declaration DeclareFun) {
 	second, secondOK := atomText(declaration.Domain[1])
 	third, thirdOK := atomText(declaration.Domain[2])
 	rangeName, rangeOK := atomText(declaration.Range)
+	if firstOK && secondOK && thirdOK && rangeOK &&
+		first == "Real" && second == "Real" && third == "Real" &&
+		rangeName == "Real" {
+		executor.nextSymbol++
+		executor.ternaryFunctions[declaration.Name] = dynamicTernaryFunction{
+			real: true,
+			realValue: smt.DeclareRealTernaryFunction(
+				executor.nextSymbol, declaration.Name,
+			),
+		}
+		executor.acknowledge(index)
+		return
+	}
 	if !firstOK || !secondOK || !thirdOK || !rangeOK ||
-		first != "Int" || second != "Int" || third != "Int" ||
-		rangeName != "Int" {
-		executor.fail(index, declaration.At, "ternary functions currently require Int arguments and Int range")
+		first != "Int" || second != "Int" || third != "Int" || rangeName != "Int" {
+		executor.fail(index, declaration.At, "ternary functions currently require uniform Int or Real arguments and range")
 		return
 	}
 	executor.nextSymbol++
@@ -1821,6 +1835,20 @@ func (executor *executor) term(expression SExpr) (dynamicTerm, error) {
 	if function, found := executor.ternaryFunctions[operator]; found {
 		if len(terms) != 3 {
 			return dynamicTerm{}, fmt.Errorf("ill-sorted application %s", operator)
+		}
+		if function.real {
+			for _, term := range terms {
+				if term.sort != sortReal {
+					return dynamicTerm{}, fmt.Errorf("ill-sorted application %s", operator)
+				}
+			}
+			return dynamicTerm{
+				sort: sortReal,
+				real: smt.ApplySortedTernary(
+					function.realValue,
+					terms[0].real, terms[1].real, terms[2].real,
+				),
+			}, nil
 		}
 		for _, term := range terms {
 			if term.integer == nil || term.sort != sortInt && term.sort != sortNumber {

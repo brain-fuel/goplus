@@ -4,23 +4,26 @@ package smt
 // compatibility layer has already normalized affine real constraints while
 // retaining other Boolean atoms and their polarity.
 type TheoryConjunction struct {
-	AtomCount                 int
-	Atoms                     [4]Term[BoolSort]
-	AtomNegated               [4]bool
-	OverflowAtoms             []Term[BoolSort]
-	OverflowNegated           []bool
-	RealCount                 int
-	Reals                     [4]LinearRealConstraint
-	OverflowReals             []LinearRealConstraint
-	SymbolEqualityCount       int
-	SymbolEqualities          [4]RealSymbolEquality
-	OverflowSymbolEqualities  []RealSymbolEquality
-	UnaryComparisonCount      int
-	UnaryComparisons          [4]RealUnaryComparison
-	OverflowUnaryComparisons  []RealUnaryComparison
-	BinaryComparisonCount     int
-	BinaryComparisons         [4]RealBinaryComparison
-	OverflowBinaryComparisons []RealBinaryComparison
+	AtomCount                  int
+	Atoms                      [4]Term[BoolSort]
+	AtomNegated                [4]bool
+	OverflowAtoms              []Term[BoolSort]
+	OverflowNegated            []bool
+	RealCount                  int
+	Reals                      [4]LinearRealConstraint
+	OverflowReals              []LinearRealConstraint
+	SymbolEqualityCount        int
+	SymbolEqualities           [4]RealSymbolEquality
+	OverflowSymbolEqualities   []RealSymbolEquality
+	UnaryComparisonCount       int
+	UnaryComparisons           [4]RealUnaryComparison
+	OverflowUnaryComparisons   []RealUnaryComparison
+	BinaryComparisonCount      int
+	BinaryComparisons          [4]RealBinaryComparison
+	OverflowBinaryComparisons  []RealBinaryComparison
+	TernaryComparisonCount     int
+	TernaryComparisons         [4]RealTernaryComparison
+	OverflowTernaryComparisons []RealTernaryComparison
 }
 
 func (conjunction TheoryConjunction) symbolEqualityValues() []RealSymbolEquality {
@@ -42,6 +45,13 @@ func (conjunction TheoryConjunction) binaryComparisonValues() []RealBinaryCompar
 		return conjunction.OverflowBinaryComparisons[:conjunction.BinaryComparisonCount]
 	}
 	return conjunction.BinaryComparisons[:conjunction.BinaryComparisonCount]
+}
+
+func (conjunction TheoryConjunction) ternaryComparisonValues() []RealTernaryComparison {
+	if conjunction.OverflowTernaryComparisons != nil {
+		return conjunction.OverflowTernaryComparisons[:conjunction.TernaryComparisonCount]
+	}
+	return conjunction.TernaryComparisons[:conjunction.TernaryComparisonCount]
 }
 
 func (TheoryConjunction) isTerm(BoolSort) {}
@@ -78,7 +88,8 @@ func containsSharedRealEUF(term Term[BoolSort]) bool {
 		}
 		return false
 	case TheoryConjunction:
-		if value.UnaryComparisonCount != 0 || value.BinaryComparisonCount != 0 {
+		if value.UnaryComparisonCount != 0 || value.BinaryComparisonCount != 0 ||
+			value.TernaryComparisonCount != 0 {
 			return true
 		}
 		terms, _ := value.atomValues()
@@ -137,6 +148,8 @@ func containsSortedRealApplication(term Term[RealSort]) bool {
 		return true
 	case sortedBinaryApplication[RealSort]:
 		return true
+	case sortedTernaryApplication[RealSort]:
+		return true
 	case RealAdd:
 		for _, item := range value.Values {
 			if containsSortedRealApplication(item) {
@@ -185,6 +198,11 @@ func solveSharedRealEUF(assertions []Term[BoolSort]) (checkOutcome, bool) {
 		left := problem.realUnaryApplication(application.functionID, application.firstArgumentID)
 		if application.arity == 2 {
 			left = problem.realBinaryApplication(application.functionID, application.firstArgumentID, application.secondArgumentID)
+		} else if application.arity == 3 {
+			left = problem.realTernaryApplication(
+				application.functionID, application.firstArgumentID,
+				application.secondArgumentID, application.thirdArgumentID,
+			)
 		}
 		right := problem.ensureNode(eufNode{sortID: -1, symbolID: application.resultID})
 		problem.equalities = append(problem.equalities, eufPair{left: left, right: right})
@@ -342,6 +360,11 @@ func (purifier *sharedRealPurifier) collectBooleanSymbols(term Term[BoolSort]) {
 			purifier.markUsed(comparison.FirstArgumentID)
 			purifier.markUsed(comparison.SecondArgumentID)
 		}
+		for _, comparison := range value.ternaryComparisonValues() {
+			purifier.markUsed(comparison.FirstArgumentID)
+			purifier.markUsed(comparison.SecondArgumentID)
+			purifier.markUsed(comparison.ThirdArgumentID)
+		}
 	case Not:
 		purifier.collectBooleanSymbols(value.Value)
 	case sortedUnaryApplication[BoolSort]:
@@ -384,6 +407,10 @@ func (purifier *sharedRealPurifier) collectBooleanSymbols(term Term[BoolSort]) {
 	case RealBinaryComparison:
 		purifier.markUsed(value.FirstArgumentID)
 		purifier.markUsed(value.SecondArgumentID)
+	case RealTernaryComparison:
+		purifier.markUsed(value.FirstArgumentID)
+		purifier.markUsed(value.SecondArgumentID)
+		purifier.markUsed(value.ThirdArgumentID)
 	case RealSymbolEquality:
 		purifier.markUsed(value.LeftID)
 		purifier.markUsed(value.RightID)
@@ -427,6 +454,16 @@ func (purifier *sharedRealPurifier) collectRealSymbols(term Term[RealSort]) {
 		}
 		if second, ok := value.second.(Term[RealSort]); ok {
 			purifier.collectRealSymbols(second)
+		}
+	case sortedTernaryApplication[RealSort]:
+		if first, ok := value.first.(Term[RealSort]); ok {
+			purifier.collectRealSymbols(first)
+		}
+		if second, ok := value.second.(Term[RealSort]); ok {
+			purifier.collectRealSymbols(second)
+		}
+		if third, ok := value.third.(Term[RealSort]); ok {
+			purifier.collectRealSymbols(third)
 		}
 	case If[RealSort]:
 		purifier.collectRealSymbols(value.Then)
@@ -478,6 +515,9 @@ func (purifier *sharedRealPurifier) add(term Term[BoolSort], negated bool) bool 
 		}
 		for _, comparison := range value.binaryComparisonValues() {
 			purifier.appendBinaryComparison(comparison)
+		}
+		for _, comparison := range value.ternaryComparisonValues() {
+			purifier.appendTernaryComparison(comparison)
 		}
 		return true
 	case Not:
@@ -573,6 +613,12 @@ func (purifier *sharedRealPurifier) add(term Term[BoolSort], negated bool) bool 
 		}
 		purifier.appendBinaryComparison(value)
 		return true
+	case RealTernaryComparison:
+		if negated {
+			return false
+		}
+		purifier.appendTernaryComparison(value)
+		return true
 	}
 	return purifier.partition.add(term, negated)
 }
@@ -593,6 +639,23 @@ func (purifier *sharedRealPurifier) appendUnaryComparison(value RealUnaryCompari
 
 func (purifier *sharedRealPurifier) appendBinaryComparison(value RealBinaryComparison) {
 	result := purifier.binaryApplication(value.FunctionID, value.FirstArgumentID, value.SecondArgumentID)
+	constraint := LinearRealConstraint{Count: 1, Strict: value.Strict}
+	constraint.Symbols[0] = result.ID
+	if value.ApplicationOnLeft {
+		constraint.Coefficients[0] = NewRational(1, 1)
+		constraint.Constant = rationalNeg(value.Bound)
+	} else {
+		constraint.Coefficients[0] = NewRational(-1, 1)
+		constraint.Constant = value.Bound
+	}
+	purifier.partition.compactReals.append(constraint)
+}
+
+func (purifier *sharedRealPurifier) appendTernaryComparison(value RealTernaryComparison) {
+	result := purifier.ternaryApplication(
+		value.FunctionID, value.FirstArgumentID,
+		value.SecondArgumentID, value.ThirdArgumentID,
+	)
 	constraint := LinearRealConstraint{Count: 1, Strict: value.Strict}
 	constraint.Symbols[0] = result.ID
 	if value.ApplicationOnLeft {
@@ -665,6 +728,23 @@ func (purifier *sharedRealPurifier) real(term Term[RealSort]) (Term[RealSort], b
 			return nil, false
 		}
 		return purifier.binaryApplication(function.iD, firstSymbol.ID, secondSymbol.ID), true
+	case sortedTernaryApplication[RealSort]:
+		function, ok := value.function.(sortedTernaryFunctionValue[RealSort, RealSort, RealSort, RealSort])
+		first, firstOK := value.first.(Term[RealSort])
+		second, secondOK := value.second.(Term[RealSort])
+		third, thirdOK := value.third.(Term[RealSort])
+		if !ok || !firstOK || !secondOK || !thirdOK || value.rangeKind != -1 {
+			return nil, false
+		}
+		firstSymbol, firstOK := purifier.realArgument(first)
+		secondSymbol, secondOK := purifier.realArgument(second)
+		thirdSymbol, thirdOK := purifier.realArgument(third)
+		if !firstOK || !secondOK || !thirdOK {
+			return nil, false
+		}
+		return purifier.ternaryApplication(
+			function.iD, firstSymbol.ID, secondSymbol.ID, thirdSymbol.ID,
+		), true
 	default:
 		return nil, false
 	}
@@ -684,21 +764,38 @@ func (purifier *sharedRealPurifier) realArgument(argument Term[RealSort]) (RealS
 }
 
 func (purifier *sharedRealPurifier) unaryApplication(functionID, argumentID int) RealSymbol {
-	return purifier.application(1, functionID, argumentID, 0)
+	return purifier.application(1, functionID, argumentID, 0, 0)
 }
 
 func (purifier *sharedRealPurifier) binaryApplication(functionID, firstArgumentID, secondArgumentID int) RealSymbol {
-	return purifier.application(2, functionID, firstArgumentID, secondArgumentID)
+	return purifier.application(2, functionID, firstArgumentID, secondArgumentID, 0)
 }
 
-func (purifier *sharedRealPurifier) application(arity uint8, functionID, firstArgumentID, secondArgumentID int) RealSymbol {
+func (purifier *sharedRealPurifier) ternaryApplication(
+	functionID, firstArgumentID, secondArgumentID, thirdArgumentID int,
+) RealSymbol {
+	return purifier.application(
+		3, functionID, firstArgumentID, secondArgumentID, thirdArgumentID,
+	)
+}
+
+func (purifier *sharedRealPurifier) application(
+	arity uint8, functionID, firstArgumentID, secondArgumentID, thirdArgumentID int,
+) RealSymbol {
 	for _, application := range purifier.applicationValues() {
-		if application.arity == arity && application.functionID == functionID && application.firstArgumentID == firstArgumentID && application.secondArgumentID == secondArgumentID {
+		if application.arity == arity && application.functionID == functionID &&
+			application.firstArgumentID == firstArgumentID &&
+			application.secondArgumentID == secondArgumentID &&
+			application.thirdArgumentID == thirdArgumentID {
 			return RealSymbol{ID: application.resultID}
 		}
 	}
 	result := RealSymbol{ID: purifier.fresh()}
-	purifier.appendApplication(purifiedApplication{arity: arity, functionID: functionID, firstArgumentID: firstArgumentID, secondArgumentID: secondArgumentID, resultID: result.ID})
+	purifier.appendApplication(purifiedApplication{
+		arity: arity, functionID: functionID,
+		firstArgumentID: firstArgumentID, secondArgumentID: secondArgumentID,
+		thirdArgumentID: thirdArgumentID, resultID: result.ID,
+	})
 	return result
 }
 

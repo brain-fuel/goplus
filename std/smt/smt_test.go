@@ -1766,6 +1766,26 @@ func TestSharedRealPredicatesExchangeLRAEquality(t *testing.T) {
 	}
 }
 
+func TestSharedRealTernaryFunctionArithmetic(t *testing.T) {
+	x := RealSymbol{ID: 1}
+	y := RealSymbol{ID: 2}
+	z := RealSymbol{ID: 3}
+	zero := Real{Value: NewRational(0, 1)}
+	function := DeclareRealTernaryFunction(4, "combine3")
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: y},
+		RealLessEqual{
+			Left: ApplySortedTernary(function, x, y, z), Right: zero,
+		},
+		RealLess{
+			Left: zero, Right: ApplySortedTernary(function, y, x, z),
+		},
+	}}
+	if result := Check(Assert(1, New(), formula)); func() bool { _, ok := result.(Unsatisfiable); return ok }() == false {
+		t.Fatalf("result=%T", result)
+	}
+}
+
 func TestSharedRealEUFExchangesLRAImpliedEquality(t *testing.T) {
 	x := RealSymbol{ID: 1, Name: "x"}
 	y := RealSymbol{ID: 2, Name: "y"}

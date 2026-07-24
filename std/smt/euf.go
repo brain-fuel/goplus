@@ -102,7 +102,8 @@ func containsEUF(term Term[BoolSort]) bool {
 			}
 		}
 	case TheoryConjunction:
-		if value.UnaryComparisonCount != 0 || value.BinaryComparisonCount != 0 {
+		if value.UnaryComparisonCount != 0 || value.BinaryComparisonCount != 0 ||
+			value.TernaryComparisonCount != 0 {
 			return true
 		}
 		terms, _ := value.atomValues()
@@ -147,6 +148,8 @@ func containsEUF(term Term[BoolSort]) bool {
 		return true
 	case RealBinaryComparison:
 		return true
+	case RealTernaryComparison:
+		return true
 	case IntegerUnaryComparison, IntegerBinaryComparison, IntegerTernaryComparison:
 		return true
 	}
@@ -189,7 +192,7 @@ func (problem *eufProblem) compactBitVectorTerm(term BitVectorEUFTerm) (int, boo
 
 func isEUFTerm(term any) bool {
 	switch term.(type) {
-	case uninterpretedValue[UninterpretedSort], unaryApplication[UninterpretedSort], binaryApplication[UninterpretedSort], sortedUnaryApplication[RealSort], sortedBinaryApplication[RealSort], sortedUnaryApplication[IntSort], sortedBinaryApplication[IntSort], sortedTernaryApplication[IntSort], sortedUnaryApplication[BoolSort], sortedBinaryApplication[BoolSort], sortedUnaryApplication[BitVecSort], sortedBinaryApplication[BitVecSort]:
+	case uninterpretedValue[UninterpretedSort], unaryApplication[UninterpretedSort], binaryApplication[UninterpretedSort], sortedUnaryApplication[RealSort], sortedBinaryApplication[RealSort], sortedTernaryApplication[RealSort], sortedUnaryApplication[IntSort], sortedBinaryApplication[IntSort], sortedTernaryApplication[IntSort], sortedUnaryApplication[BoolSort], sortedBinaryApplication[BoolSort], sortedUnaryApplication[BitVecSort], sortedBinaryApplication[BitVecSort]:
 		return true
 	default:
 		return false
@@ -458,6 +461,26 @@ func (problem *eufProblem) term(term any) (int, bool) {
 			return 0, false
 		}
 		node = eufNode{kind: 2, sortID: function.rangeKind, functionID: function.iD, firstSortID: function.firstKind, secondSortID: function.secondKind, first: first, second: second}
+	case sortedTernaryApplication[RealSort]:
+		function, ok := value.function.(sortedTernaryFunctionValue[RealSort, RealSort, RealSort, RealSort])
+		if !ok || value.rangeKind != -1 {
+			return 0, false
+		}
+		first, firstOK := problem.term(value.first)
+		second, secondOK := problem.term(value.second)
+		third, thirdOK := problem.term(value.third)
+		if !firstOK || !secondOK || !thirdOK ||
+			problem.nodes[first].sortID != function.firstKind ||
+			problem.nodes[second].sortID != function.secondKind ||
+			problem.nodes[third].sortID != function.thirdKind {
+			return 0, false
+		}
+		node = eufNode{
+			kind: 4, sortID: function.rangeKind, functionID: function.iD,
+			firstSortID: function.firstKind, secondSortID: function.secondKind,
+			thirdSortID: function.thirdKind,
+			first:       first, second: second, third: third,
+		}
 	case sortedUnaryApplication[IntSort]:
 		function, ok := value.function.(sortedUnaryFunctionValue[IntSort, IntSort])
 		if !ok || value.rangeKind != -1 {
@@ -584,6 +607,19 @@ func (problem *eufProblem) realBinaryApplication(functionID, firstID, secondID i
 	first := problem.ensureNode(eufNode{sortID: -1, symbolID: firstID})
 	second := problem.ensureNode(eufNode{sortID: -1, symbolID: secondID})
 	return problem.ensureNode(eufNode{kind: 2, sortID: -1, functionID: functionID, firstSortID: -1, secondSortID: -1, first: first, second: second})
+}
+
+func (problem *eufProblem) realTernaryApplication(
+	functionID, firstID, secondID, thirdID int,
+) int {
+	first := problem.ensureNode(eufNode{sortID: -1, symbolID: firstID})
+	second := problem.ensureNode(eufNode{sortID: -1, symbolID: secondID})
+	third := problem.ensureNode(eufNode{sortID: -1, symbolID: thirdID})
+	return problem.ensureNode(eufNode{
+		kind: 4, sortID: -1, functionID: functionID,
+		firstSortID: -1, secondSortID: -1, thirdSortID: -1,
+		first: first, second: second, third: third,
+	})
 }
 
 func (problem *eufProblem) ensureNode(node eufNode) int {

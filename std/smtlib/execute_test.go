@@ -1937,6 +1937,25 @@ func TestExecuteRealPredicateCongruence(t *testing.T) {
 	}
 }
 
+func TestExecuteTernaryRealFunctionArithmetic(t *testing.T) {
+	source := `(set-logic QF_UFLRA)
+(declare-const x Real)
+(declare-const y Real)
+(declare-const z Real)
+(declare-fun combine3 (Real Real Real) Real)
+(assert (= x y))
+(assert (<= (combine3 x y z) 0))
+(assert (< 0 (combine3 y x z)))
+(check-sat)`
+	result, ok := Execute(source).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(source))
+	}
+	if _, ok := result.Responses[len(result.Responses)-1].(Unsatisfiable); !ok {
+		t.Fatalf("last response=%#v", result.Responses[len(result.Responses)-1])
+	}
+}
+
 func TestExecuteConditionalIntegerFunctionArithmetic(t *testing.T) {
 	for _, source := range []string{
 		`(set-logic QF_UFLIA)
