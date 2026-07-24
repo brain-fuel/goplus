@@ -213,6 +213,28 @@ type IntegerAffineThreeSquareSystem struct {
 
 func (IntegerAffineThreeSquareSystem) isTerm(BoolSort) {}
 
+// IntegerAffineThreeSquareBound represents
+// (a*x+b)^2+(c*y+d)^2+(e*z+f)^2 <(=) k when Lower is false and
+// k <(=) (a*x+b)^2+(c*y+d)^2+(e*z+f)^2 when Lower is true.
+type IntegerAffineThreeSquareBound struct {
+	First, Second, Third IntegerAffineFactor
+	Bound                IntegerValue
+	Lower                bool
+	Strict               bool
+}
+
+func (IntegerAffineThreeSquareBound) isTerm(BoolSort) {}
+
+// IntegerAffineThreeSquareBoundSystem is an allocation-free conjunction of
+// three-square bounds.
+type IntegerAffineThreeSquareBoundSystem struct {
+	Count    int
+	Inline   [4]IntegerAffineThreeSquareBound
+	Overflow []IntegerAffineThreeSquareBound
+}
+
+func (IntegerAffineThreeSquareBoundSystem) isTerm(BoolSort) {}
+
 // IntegerSquareBound represents x² <(=) k when Lower is false and
 // k <(=) x² when Lower is true.
 type IntegerSquareBound struct {
@@ -316,35 +338,37 @@ func (values *nonlinearIntegerCandidates) add(value IntegerValue) bool {
 }
 
 type nonlinearIntegerProblem struct {
-	symbolCount         int
-	symbols             [nonlinearIntegerSymbolLimit]int
-	candidates          [nonlinearIntegerSymbolLimit]nonlinearIntegerCandidates
-	domainComplete      [nonlinearIntegerSymbolLimit]bool
-	relationCount       int
-	relations           [nonlinearIntegerRelationLimit]nonlinearIntegerProductRelation
-	boundCount          int
-	bounds              [nonlinearIntegerRelationLimit]IntegerAffineSquareBound
-	productBoundCount   int
-	productBounds       [nonlinearIntegerRelationLimit]IntegerAffineProductBound
-	cubeCount           int
-	cubes               [nonlinearIntegerRelationLimit]IntegerAffineCubeRelation
-	cubeBoundCount      int
-	cubeBounds          [nonlinearIntegerRelationLimit]IntegerAffineCubeBound
-	cubeHasLower        [nonlinearIntegerSymbolLimit]bool
-	cubeHasUpper        [nonlinearIntegerSymbolLimit]bool
-	cubeLower           [nonlinearIntegerSymbolLimit]IntegerValue
-	cubeUpper           [nonlinearIntegerSymbolLimit]IntegerValue
-	powerCount          int
-	powers              [nonlinearIntegerRelationLimit]IntegerAffinePowerRelation
-	powerBoundCount     int
-	powerBounds         [nonlinearIntegerRelationLimit]IntegerAffinePowerBound
-	twoSquareCount      int
-	twoSquares          [nonlinearIntegerRelationLimit]IntegerAffineTwoSquareRelation
-	twoSquareBoundCount int
-	twoSquareBounds     [nonlinearIntegerRelationLimit]IntegerAffineTwoSquareBound
-	threeSquareCount    int
-	threeSquares        [nonlinearIntegerRelationLimit]IntegerAffineThreeSquareRelation
-	impossible          bool
+	symbolCount           int
+	symbols               [nonlinearIntegerSymbolLimit]int
+	candidates            [nonlinearIntegerSymbolLimit]nonlinearIntegerCandidates
+	domainComplete        [nonlinearIntegerSymbolLimit]bool
+	relationCount         int
+	relations             [nonlinearIntegerRelationLimit]nonlinearIntegerProductRelation
+	boundCount            int
+	bounds                [nonlinearIntegerRelationLimit]IntegerAffineSquareBound
+	productBoundCount     int
+	productBounds         [nonlinearIntegerRelationLimit]IntegerAffineProductBound
+	cubeCount             int
+	cubes                 [nonlinearIntegerRelationLimit]IntegerAffineCubeRelation
+	cubeBoundCount        int
+	cubeBounds            [nonlinearIntegerRelationLimit]IntegerAffineCubeBound
+	cubeHasLower          [nonlinearIntegerSymbolLimit]bool
+	cubeHasUpper          [nonlinearIntegerSymbolLimit]bool
+	cubeLower             [nonlinearIntegerSymbolLimit]IntegerValue
+	cubeUpper             [nonlinearIntegerSymbolLimit]IntegerValue
+	powerCount            int
+	powers                [nonlinearIntegerRelationLimit]IntegerAffinePowerRelation
+	powerBoundCount       int
+	powerBounds           [nonlinearIntegerRelationLimit]IntegerAffinePowerBound
+	twoSquareCount        int
+	twoSquares            [nonlinearIntegerRelationLimit]IntegerAffineTwoSquareRelation
+	twoSquareBoundCount   int
+	twoSquareBounds       [nonlinearIntegerRelationLimit]IntegerAffineTwoSquareBound
+	threeSquareCount      int
+	threeSquares          [nonlinearIntegerRelationLimit]IntegerAffineThreeSquareRelation
+	threeSquareBoundCount int
+	threeSquareBounds     [nonlinearIntegerRelationLimit]IntegerAffineThreeSquareBound
+	impossible            bool
 }
 
 func solveNonlinearIntegerAssertions(
@@ -360,7 +384,8 @@ func solveNonlinearIntegerAssertions(
 		problem.productBoundCount == 0 && problem.cubeCount == 0 &&
 		problem.cubeBoundCount == 0 && problem.powerCount == 0 &&
 		problem.powerBoundCount == 0 && problem.twoSquareCount == 0 &&
-		problem.twoSquareBoundCount == 0 && problem.threeSquareCount == 0 {
+		problem.twoSquareBoundCount == 0 && problem.threeSquareCount == 0 &&
+		problem.threeSquareBoundCount == 0 {
 		return checkOutcome{}, false
 	}
 	if problem.impossible {
@@ -614,6 +639,28 @@ func (problem *nonlinearIntegerProblem) boolean(
 			}
 		}
 		return true
+	case IntegerAffineThreeSquareBound:
+		if negated {
+			value.Lower = !value.Lower
+			value.Strict = !value.Strict
+		}
+		return problem.addAffineThreeSquareBound(value)
+	case IntegerAffineThreeSquareBoundSystem:
+		if negated || value.Count < 0 {
+			return false
+		}
+		bounds := value.Overflow
+		if value.Count <= len(value.Inline) {
+			bounds = value.Inline[:value.Count]
+		} else if len(bounds) != value.Count {
+			return false
+		}
+		for _, bound := range bounds {
+			if !problem.addAffineThreeSquareBound(bound) {
+				return false
+			}
+		}
+		return true
 	case IntegerSquareBound:
 		if negated {
 			value.Lower = !value.Lower
@@ -710,9 +757,29 @@ func (problem *nonlinearIntegerProblem) boolean(
 func (problem *nonlinearIntegerProblem) squareComparison(
 	left, right Term[IntSort], strict, negated bool,
 ) bool {
+	first, second, third, target, ok :=
+		nonlinearIntegerAffineThreeSquareEquality(left, right)
+	lower := false
+	if !ok {
+		first, second, third, target, ok =
+			nonlinearIntegerAffineThreeSquareEquality(right, left)
+		lower = true
+	}
+	if ok {
+		if negated {
+			lower = !lower
+			strict = !strict
+		}
+		return problem.addAffineThreeSquareBound(
+			IntegerAffineThreeSquareBound{
+				First: first, Second: second, Third: third,
+				Bound: target, Lower: lower, Strict: strict,
+			},
+		)
+	}
 	leftSquare, rightSquare, target, ok :=
 		nonlinearIntegerAffineTwoSquareEquality(left, right)
-	lower := false
+	lower = false
 	if !ok {
 		leftSquare, rightSquare, target, ok =
 			nonlinearIntegerAffineTwoSquareEquality(right, left)
@@ -1248,6 +1315,99 @@ func (problem *nonlinearIntegerProblem) addThreeSquareCandidates(
 		}
 	}
 	return complete
+}
+
+func (problem *nonlinearIntegerProblem) addAffineThreeSquareBound(
+	bound IntegerAffineThreeSquareBound,
+) bool {
+	if problem.threeSquareBoundCount == len(problem.threeSquareBounds) {
+		return false
+	}
+	first, firstAdded := problem.ensureSymbol(bound.First.SymbolID)
+	second, secondAdded := problem.ensureSymbol(bound.Second.SymbolID)
+	third, thirdAdded := problem.ensureSymbol(bound.Third.SymbolID)
+	if !firstAdded || !secondAdded || !thirdAdded {
+		return false
+	}
+	factors := [3]struct {
+		position int
+		factor   IntegerAffineFactor
+	}{
+		{first, bound.First},
+		{second, bound.Second},
+		{third, bound.Third},
+	}
+	zero := IntegerValue{}
+	if bound.Lower {
+		for _, item := range factors {
+			problem.addAffineFactorCandidate(
+				item.position, item.factor, zero,
+			)
+		}
+		if CompareIntegerValue(bound.Bound, zero) > 0 {
+			minimum := integerSquareRoot(bound.Bound)
+			exact := CompareIntegerValue(
+				MultiplyIntegerValue(minimum, minimum), bound.Bound,
+			) == 0
+			if bound.Strict || !exact {
+				minimum = AddIntegerValue(
+					minimum, NewIntegerValue(1),
+				)
+			}
+			for _, item := range factors {
+				for _, candidate := range [2]IntegerValue{
+					minimum, NegateIntegerValue(minimum),
+				} {
+					problem.addAffineFactorCandidate(
+						item.position, item.factor, candidate,
+					)
+				}
+			}
+			large := AddIntegerValue(
+				AddIntegerValue(
+					absoluteIntegerValue(bound.Bound),
+					absoluteIntegerValue(bound.First.Offset),
+				),
+				AddIntegerValue(
+					AddIntegerValue(
+						absoluteIntegerValue(bound.Second.Offset),
+						absoluteIntegerValue(bound.Third.Offset),
+					),
+					NewIntegerValue(3),
+				),
+			)
+			problem.candidates[first].add(large)
+			problem.candidates[first].add(NegateIntegerValue(large))
+			problem.candidates[second].add(IntegerValue{})
+			problem.candidates[third].add(IntegerValue{})
+		}
+	} else if CompareIntegerValue(bound.Bound, zero) < 0 ||
+		bound.Strict && CompareIntegerValue(bound.Bound, zero) == 0 {
+		problem.impossible = true
+	} else {
+		maximum := integerSquareRoot(bound.Bound)
+		if bound.Strict && CompareIntegerValue(
+			MultiplyIntegerValue(maximum, maximum), bound.Bound,
+		) == 0 {
+			maximum = AddIntegerValue(maximum, NewIntegerValue(-1))
+		}
+		complete := true
+		for _, item := range factors {
+			if !problem.addAffineSquareRange(
+				item.position, item.factor, maximum,
+			) {
+				complete = false
+			}
+		}
+		if complete {
+			problem.domainComplete[first] = true
+			problem.domainComplete[second] = true
+			problem.domainComplete[third] = true
+		}
+	}
+	problem.threeSquareBounds[problem.threeSquareBoundCount] = bound
+	problem.threeSquareBoundCount++
+	return true
 }
 
 func (problem *nonlinearIntegerProblem) addAffineTwoSquareBound(
@@ -2570,6 +2730,45 @@ func (problem *nonlinearIntegerProblem) valid(
 		)
 		holds := CompareIntegerValue(sum, relation.Target) == 0
 		if holds == relation.Negated {
+			return false
+		}
+	}
+	for _, bound := range problem.threeSquareBounds[:problem.threeSquareBoundCount] {
+		first := problem.symbolPosition(bound.First.SymbolID)
+		second := problem.symbolPosition(bound.Second.SymbolID)
+		third := problem.symbolPosition(bound.Third.SymbolID)
+		if first < 0 || second < 0 || third < 0 ||
+			!assigned[first] || !assigned[second] || !assigned[third] {
+			continue
+		}
+		firstValue := evaluateIntegerAffineFactor(
+			bound.First, values[first],
+		)
+		secondValue := evaluateIntegerAffineFactor(
+			bound.Second, values[second],
+		)
+		thirdValue := evaluateIntegerAffineFactor(
+			bound.Third, values[third],
+		)
+		sum := AddIntegerValue(
+			AddIntegerValue(
+				MultiplyIntegerValue(firstValue, firstValue),
+				MultiplyIntegerValue(secondValue, secondValue),
+			),
+			MultiplyIntegerValue(thirdValue, thirdValue),
+		)
+		comparison := CompareIntegerValue(sum, bound.Bound)
+		holds := comparison <= 0
+		if bound.Strict {
+			holds = comparison < 0
+		}
+		if bound.Lower {
+			holds = comparison >= 0
+			if bound.Strict {
+				holds = comparison > 0
+			}
+		}
+		if !holds {
 			return false
 		}
 	}

@@ -1228,6 +1228,128 @@ func TestNonlinearIntegerAffineThreeSquareRelations(t *testing.T) {
 	}
 }
 
+func TestNonlinearIntegerAffineThreeSquareBounds(t *testing.T) {
+	x := IntSymbol{ID: 126, Name: "x"}
+	y := IntSymbol{ID: 127, Name: "y"}
+	z := IntSymbol{ID: 128, Name: "z"}
+	first := Add{Values: []Term[IntSort]{
+		ScaleInteger(NewIntegerValue(2), x),
+		IntegerTerm(NewIntegerValue(1)),
+	}}
+	second := ScaleInteger(NewIntegerValue(2), y)
+	third := Add{Values: []Term[IntSort]{
+		ScaleInteger(NewIntegerValue(3), z),
+		IntegerTerm(NewIntegerValue(-1)),
+	}}
+	sum := Add{Values: []Term[IntSort]{
+		MultiplyInteger(first, first),
+		MultiplyInteger(second, second),
+		MultiplyInteger(third, third),
+	}}
+	shell := And{Values: []Term[BoolSort]{
+		Less{Left: IntegerTerm(NewIntegerValue(5)), Right: sum},
+		Less{Left: sum, Right: IntegerTerm(NewIntegerValue(7))},
+	}}
+	checked := Check(Assert(1, New(), shell))
+	result, ok := checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("affine three-square shell=%#v", checked)
+	}
+	xValue, xFound := IntegerModelValue(result.Value, x)
+	yValue, yFound := IntegerModelValue(result.Value, y)
+	zValue, zFound := IntegerModelValue(result.Value, z)
+	firstValue := AddIntegerValue(
+		MultiplyIntegerValue(NewIntegerValue(2), xValue),
+		NewIntegerValue(1),
+	)
+	secondValue := MultiplyIntegerValue(NewIntegerValue(2), yValue)
+	thirdValue := AddIntegerValue(
+		MultiplyIntegerValue(NewIntegerValue(3), zValue),
+		NewIntegerValue(-1),
+	)
+	sumValue := AddIntegerValue(
+		AddIntegerValue(
+			MultiplyIntegerValue(firstValue, firstValue),
+			MultiplyIntegerValue(secondValue, secondValue),
+		),
+		MultiplyIntegerValue(thirdValue, thirdValue),
+	)
+	if !xFound || !yFound || !zFound ||
+		CompareIntegerValue(sumValue, NewIntegerValue(5)) <= 0 ||
+		CompareIntegerValue(sumValue, NewIntegerValue(7)) >= 0 {
+		t.Fatalf(
+			"three-square shell model x=%v/%v y=%v/%v z=%v/%v",
+			xValue, xFound, yValue, yFound, zValue, zFound,
+		)
+	}
+
+	emptyShell := And{Values: []Term[BoolSort]{
+		Less{Left: IntegerTerm(NewIntegerValue(5)), Right: sum},
+		Less{Left: sum, Right: IntegerTerm(NewIntegerValue(6))},
+	}}
+	got := Check(Assert(2, New(), emptyShell))
+	if _, ok := got.(Unsatisfiable); !ok {
+		t.Fatalf("empty three-square shell=%#v", got)
+	}
+
+	negated := Not{Value: LessEqual{
+		Left: sum, Right: IntegerTerm(NewIntegerValue(6)),
+	}}
+	checked = Check(Assert(3, New(), negated))
+	result, ok = checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("negated three-square bound=%#v", checked)
+	}
+
+	largeShell := And{Values: []Term[BoolSort]{
+		LessEqual{
+			Left: IntegerTerm(NewIntegerValue(10001)), Right: sum,
+		},
+		LessEqual{
+			Left: sum, Right: IntegerTerm(NewIntegerValue(10000)),
+		},
+	}}
+	got = Check(Assert(4, New(), largeShell))
+	if _, ok := got.(Unknown); !ok {
+		t.Fatalf("large three-square shell=%#v", got)
+	}
+
+	wideRoot, err := ParseIntegerValue("1267650600228229401496703205376")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wideBound := MultiplyIntegerValue(wideRoot, wideRoot)
+	wideSum := Add{Values: []Term[IntSort]{
+		MultiplyInteger(x, x),
+		MultiplyInteger(y, y),
+		MultiplyInteger(z, z),
+	}}
+	wideShell := And{Values: []Term[BoolSort]{
+		LessEqual{Left: IntegerTerm(wideBound), Right: wideSum},
+		LessEqual{Left: wideSum, Right: IntegerTerm(wideBound)},
+	}}
+	checked = Check(Assert(5, New(), wideShell))
+	result, ok = checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("wide three-square shell=%#v", checked)
+	}
+	xValue, xFound = IntegerModelValue(result.Value, x)
+	yValue, yFound = IntegerModelValue(result.Value, y)
+	zValue, zFound = IntegerModelValue(result.Value, z)
+	if !xFound || !yFound || !zFound || CompareIntegerValue(
+		AddIntegerValue(
+			AddIntegerValue(
+				MultiplyIntegerValue(xValue, xValue),
+				MultiplyIntegerValue(yValue, yValue),
+			),
+			MultiplyIntegerValue(zValue, zValue),
+		),
+		wideBound,
+	) != 0 {
+		t.Fatalf("wide three-square shell model x=%v y=%v z=%v", xValue, yValue, zValue)
+	}
+}
+
 func TestNonlinearIntegerAffineFactorProducts(t *testing.T) {
 	x := IntSymbol{ID: 110, Name: "x"}
 	y := IntSymbol{ID: 111, Name: "y"}
