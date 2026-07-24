@@ -2462,6 +2462,39 @@ func TestExecuteUnconstrainedFloatingPointOrdering(t *testing.T) {
 	}
 }
 
+func TestExecuteUnconstrainedFloatingPointEquality(t *testing.T) {
+	script := `(set-logic QF_FP)
+(declare-const equalLeft (_ FloatingPoint 15 113))
+(declare-const equalRight (_ FloatingPoint 15 113))
+(declare-const distinctLeft (_ FloatingPoint 15 113))
+(declare-const distinctRight (_ FloatingPoint 15 113))
+(assert (fp.eq equalLeft equalRight))
+(assert (not (fp.eq distinctLeft distinctRight)))
+(check-sat)`
+	fast, recognized := executeFloatingPointFast(script)
+	if !recognized {
+		t.Fatal("unconstrained equality did not use the streaming executor")
+	}
+	result, ok := fast.(Executed)
+	if !ok {
+		t.Fatalf("streaming execution=%#v", fast)
+	}
+	if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+		t.Fatalf("streaming result=%#v", result)
+	}
+	parsed, ok := Parse(script).(Parsed)
+	if !ok {
+		t.Fatal("general parse failed")
+	}
+	responses, errors := executeCommands(parsed.Commands)
+	if len(errors) != 0 {
+		t.Fatalf("general execution errors=%#v", errors)
+	}
+	if _, ok := responses[len(responses)-1].(Satisfiable); !ok {
+		t.Fatalf("general result=%#v", responses)
+	}
+}
+
 func TestExecuteNestedGroundFloatingPointOrdering(t *testing.T) {
 	script := `(set-logic QF_FP)
 (assert (fp.gt
@@ -3923,6 +3956,45 @@ func BenchmarkExecuteUnconstrainedFloatingPointOrdering(b *testing.B) {
 (declare-const lower (_ FloatingPoint 8 24))
 (assert (fp.lt left right))
 (assert (not (fp.leq upper lower)))
+(check-sat)`
+	b.Run("stream", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			result, ok := Execute(script).(Executed)
+			if !ok {
+				b.Fatal("execution failed")
+			}
+			if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
+	b.Run("general", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			parsed, ok := Parse(script).(Parsed)
+			if !ok {
+				b.Fatal("parse failed")
+			}
+			responses, errors := executeCommands(parsed.Commands)
+			if len(errors) != 0 {
+				b.Fatal("execution failed")
+			}
+			if _, ok := responses[len(responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
+}
+
+func BenchmarkExecuteUnconstrainedFloatingPointEquality(b *testing.B) {
+	script := `(set-logic QF_FP)
+(declare-const equalLeft (_ FloatingPoint 8 24))
+(declare-const equalRight (_ FloatingPoint 8 24))
+(declare-const distinctLeft (_ FloatingPoint 8 24))
+(declare-const distinctRight (_ FloatingPoint 8 24))
+(assert (fp.eq equalLeft equalRight))
+(assert (not (fp.eq distinctLeft distinctRight)))
 (check-sat)`
 	b.Run("stream", func(b *testing.B) {
 		b.ReportAllocs()
