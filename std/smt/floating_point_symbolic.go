@@ -238,8 +238,8 @@ type FloatingPointFMARelation struct {
 
 func (FloatingPointFMARelation) isTerm(BoolSort) {}
 
-// FloatingPointSqrtRelation constrains the exact rounded IEEE bits of fp.sqrt
-// over one assigned floating-point symbol.
+// FloatingPointSqrtRelation constrains the exact rounded IEEE bits of fp.sqrt.
+// An unconstrained source can use an exact, validated target-square preimage.
 type FloatingPointSqrtRelation struct {
 	ExponentBits    int
 	SignificandBits int

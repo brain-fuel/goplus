@@ -500,6 +500,69 @@ func synthesizeFloatingPointFMAIdentity(
 	return true
 }
 
+func synthesizeFloatingPointSqrtPreimage(
+	relation FloatingPointSqrtRelation,
+) (BitVectorValue, bool, bool) {
+	total := relation.ExponentBits + relation.SignificandBits
+	if relation.Value.Width() != total {
+		return BitVectorValue{}, false, false
+	}
+	target := FloatingPointFromBits(
+		relation.ExponentBits, relation.SignificandBits, relation.Value,
+	)
+	// A nonzero negative value cannot be produced by fp.sqrt. Negative zero is
+	// deliberately retained: sqrt(-0) is -0, and NaNs are handled by exact
+	// candidate validation below.
+	if FloatingPointIsNegative(target) &&
+		!FloatingPointIsZero(target) &&
+		!FloatingPointIsNaN(target) {
+		return BitVectorValue{}, false, true
+	}
+	validate := func(candidate FloatingPointValue) (BitVectorValue, bool) {
+		root := floatingPointSqrt(relation.Mode, candidate)
+		if EqualBitVectorValue(FloatingPointBits(root), relation.Value) {
+			return FloatingPointBits(candidate), true
+		}
+		return BitVectorValue{}, false
+	}
+	// Preserve -0 directly: squaring it would erase its sign. Ordinary
+	// results try the overwhelmingly common nearest square first, avoiding an
+	// otherwise redundant sqrt(target) validation on the hot path.
+	if FloatingPointIsZero(target) && FloatingPointIsNegative(target) {
+		candidate, ok := validate(target)
+		return candidate, ok, false
+	}
+	// Rounded squares, their adjacent representations, and a final fixed-point
+	// candidate supply compact exact witnesses without claiming completeness
+	// when none validates.
+	square := floatingPointMul(1, target, target)
+	if candidate, ok := validate(square); ok {
+		return candidate, true, false
+	}
+	if candidate, ok := validate(floatingPointNextDown(square)); ok {
+		return candidate, true, false
+	}
+	if candidate, ok := validate(floatingPointNextUp(square)); ok {
+		return candidate, true, false
+	}
+	for squareMode := uint8(2); squareMode <= 5; squareMode++ {
+		square = floatingPointMul(squareMode, target, target)
+		if candidate, ok := validate(square); ok {
+			return candidate, true, false
+		}
+		if candidate, ok := validate(floatingPointNextDown(square)); ok {
+			return candidate, true, false
+		}
+		if candidate, ok := validate(floatingPointNextUp(square)); ok {
+			return candidate, true, false
+		}
+	}
+	if candidate, ok := validate(target); ok {
+		return candidate, true, false
+	}
+	return BitVectorValue{}, false, false
+}
+
 func (problem *compactBitVectorProblem) add(term Term[BoolSort], negated bool) bool {
 	switch value := term.(type) {
 	case And:
@@ -796,6 +859,36 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 		assignments[assignmentCount] = compactBitVectorAssignment{
 			id:    relation.SymbolID,
 			value: relation.Value,
+			fixed: NotBitVectorValue(NewBitVectorUint64(total, 0)),
+		}
+		assignmentCount++
+	}
+	// Invert fp.sqrt through exact kernel-validated target-square candidates.
+	// Unsupported image points fall back to the general solver; only
+	// nonzero negative result patterns are proved impossible here.
+	for _, relation := range problem.sqrts[:problem.sqrtCount] {
+		found := false
+		for index := 0; index < assignmentCount; index++ {
+			if assignments[index].id == relation.SymbolID {
+				found = true
+				break
+			}
+		}
+		if found || relation.Negated {
+			continue
+		}
+		candidate, synthesized, impossible :=
+			synthesizeFloatingPointSqrtPreimage(relation)
+		if impossible {
+			return checkOutcome{status: checkUnsat}, true
+		}
+		if !synthesized || assignmentCount == len(assignments) {
+			return checkOutcome{}, false
+		}
+		total := relation.ExponentBits + relation.SignificandBits
+		assignments[assignmentCount] = compactBitVectorAssignment{
+			id:    relation.SymbolID,
+			value: candidate,
 			fixed: NotBitVectorValue(NewBitVectorUint64(total, 0)),
 		}
 		assignmentCount++

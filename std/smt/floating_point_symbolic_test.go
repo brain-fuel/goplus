@@ -705,6 +705,79 @@ func TestSymbolicFloatingPointSqrtRelation(t *testing.T) {
 	}
 }
 
+func TestSymbolicFloatingPointSqrtSynthesizesUnconstrainedSource(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		target uint64
+	}{
+		{"finite", 0x3fb504f3},
+		{"negative-zero", 0x80000000},
+		{"positive-infinity", 0x7f800000},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			relation := NewFloatingPointSqrtRelation(
+				8, 24, 1, RoundNearestTiesToEven(),
+				NewBitVectorUint64(32, test.target),
+			)
+			result, ok := Check(AssertFloatingPointSqrtRelation(
+				1, New(), relation,
+			)).(Satisfiable)
+			if !ok {
+				t.Fatalf("expected synthesized fp.sqrt model")
+			}
+			source, found := FloatingPointSymbolModelBits(result.Value, 1)
+			if !found {
+				t.Fatal("synthesized fp.sqrt source missing from model")
+			}
+			root := FloatingPointSqrt(
+				RoundNearestTiesToEven(),
+				FloatingPointFromBits(8, 24, source),
+			)
+			if actual, inline := FloatingPointBits(root).Uint64(); !inline || actual != test.target {
+				t.Fatalf("sqrt(model source)=%#x, want %#x", actual, test.target)
+			}
+		})
+	}
+}
+
+func TestSymbolicFloatingPointSqrtRejectsNegativeResult(t *testing.T) {
+	relation := NewFloatingPointSqrtRelation(
+		8, 24, 1, RoundNearestTiesToEven(),
+		NewBitVectorUint64(32, 0xbf800000),
+	)
+	if _, ok := Check(AssertFloatingPointSqrtRelation(
+		1, New(), relation,
+	)).(Unsatisfiable); !ok {
+		t.Fatal("expected negative nonzero fp.sqrt result to be unsatisfiable")
+	}
+}
+
+func TestSymbolicFloatingPointSqrtSynthesizesBinary128Source(t *testing.T) {
+	target := FloatingPointBits(FloatingPointFromRational(
+		15, 113, RoundNearestTiesToEven(), NewRational(2, 1),
+	))
+	relation := NewFloatingPointSqrtRelation(
+		15, 113, 1, RoundNearestTiesToEven(), target,
+	)
+	result, ok := Check(AssertFloatingPointSqrtRelation(
+		1, New(), relation,
+	)).(Satisfiable)
+	if !ok {
+		t.Fatal("expected synthesized binary128 fp.sqrt model")
+	}
+	source, found := FloatingPointSymbolModelBits(result.Value, 1)
+	if !found {
+		t.Fatal("synthesized binary128 fp.sqrt source missing from model")
+	}
+	root := FloatingPointSqrt(
+		RoundNearestTiesToEven(),
+		FloatingPointFromBits(15, 113, source),
+	)
+	if !EqualBitVectorValue(FloatingPointBits(root), target) {
+		t.Fatalf("sqrt(model source)=%v, want %v", FloatingPointBits(root), target)
+	}
+}
+
 func TestSymbolicFloatingPointRemRelation(t *testing.T) {
 	leftBits := NewBitVectorUint64(32, 0x40400000)
 	rightBits := NewBitVectorUint64(32, 0x40000000)
