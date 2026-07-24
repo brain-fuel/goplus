@@ -246,6 +246,63 @@ func FloatingPointPredicateBitVectorTerm(
 	}
 }
 
+// FloatingPointEqualBitVectorTerms implements SMT-LIB fp.eq for arbitrary
+// same-format IEEE bit-vector terms.
+func FloatingPointEqualBitVectorTerms(
+	exponentBits, significandBits int,
+	left, right Term[BitVecSort],
+) Term[BoolSort] {
+	if exponentBits < 2 {
+		panic("smt: floating-point exponent width must be at least 2")
+	}
+	if significandBits < 2 {
+		panic("smt: floating-point significand width must be at least 2")
+	}
+	leftNaN := floatingPointNaNBitVectorTerm(
+		exponentBits, significandBits, left,
+	)
+	rightNaN := floatingPointNaNBitVectorTerm(
+		exponentBits, significandBits, right,
+	)
+	bothZero := And{Values: []Term[BoolSort]{
+		floatingPointZeroBitVectorTerm(exponentBits, significandBits, left),
+		floatingPointZeroBitVectorTerm(exponentBits, significandBits, right),
+	}}
+	return And{Values: []Term[BoolSort]{
+		Not{Value: leftNaN},
+		Not{Value: rightNaN},
+		Or{Values: []Term[BoolSort]{
+			Equal{Left: left, Right: right},
+			bothZero,
+		}},
+	}}
+}
+
+// FloatingPointComparisonBitVectorTerms implements SMT-LIB fp.lt/fp.leq for
+// arbitrary same-format IEEE bit-vector terms.
+func FloatingPointComparisonBitVectorTerms(
+	exponentBits, significandBits int,
+	left, right Term[BitVecSort],
+	comparison uint8,
+) Term[BoolSort] {
+	if comparison < FloatingPointComparisonLess ||
+		comparison > FloatingPointComparisonLessOrEqual {
+		panic("smt: invalid floating-point comparison")
+	}
+	less := floatingPointLessBitVectorTerm(
+		exponentBits, significandBits, left, right,
+	)
+	if comparison == FloatingPointComparisonLess {
+		return less
+	}
+	return Or{Values: []Term[BoolSort]{
+		less,
+		FloatingPointEqualBitVectorTerms(
+			exponentBits, significandBits, left, right,
+		),
+	}}
+}
+
 // AssertFloatingPointRelation preserves the concrete compact relation across
 // the Go boundary instead of first boxing it through a general term builder.
 func AssertFloatingPointRelation(assertion int, solver Solver, relation FloatingPointRelation) Solver {

@@ -2373,6 +2373,60 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 			),
 		}, nil
 	}
+	if comparison, reverse, equality, ok := floatingPointComparisonOperator(
+		operator,
+	); ok && len(terms) == 2 &&
+		terms[0].sort == sortFloatingPoint &&
+		terms[1].sort == sortFloatingPoint &&
+		terms[0].exponentBits == terms[1].exponentBits &&
+		terms[0].significandBits == terms[1].significandBits {
+		left, right := terms[0], terms[1]
+		if reverse {
+			left, right = right, left
+		}
+		if left.bitVectorExact && right.bitVectorExact {
+			leftValue := smt.FloatingPointFromBits(
+				left.exponentBits, left.significandBits, left.bitVectorValue,
+			)
+			rightValue := smt.FloatingPointFromBits(
+				right.exponentBits, right.significandBits, right.bitVectorValue,
+			)
+			holds := smt.FloatingPointEqual(leftValue, rightValue)
+			if !equality {
+				holds = smt.FloatingPointLessThan(leftValue, rightValue)
+				if comparison == smt.FloatingPointComparisonLessOrEqual {
+					holds = smt.FloatingPointLessOrEqual(leftValue, rightValue)
+				}
+			}
+			return dynamicTerm{
+				sort: sortBool, boolean: smt.Bool{Value: holds},
+			}, nil
+		}
+		if !equality && left.floatingPointSymbol != 0 &&
+			right.floatingPointSymbol != 0 {
+			return dynamicTerm{
+				sort: sortBool,
+				boolean: smt.NewFloatingPointComparisonRelation(
+					left.exponentBits, left.significandBits,
+					left.floatingPointSymbol, right.floatingPointSymbol,
+					comparison,
+				),
+			}, nil
+		}
+		var term smt.Term[smt.BoolSort]
+		if equality {
+			term = smt.FloatingPointEqualBitVectorTerms(
+				left.exponentBits, left.significandBits,
+				left.bitVector, right.bitVector,
+			)
+		} else {
+			term = smt.FloatingPointComparisonBitVectorTerms(
+				left.exponentBits, left.significandBits,
+				left.bitVector, right.bitVector, comparison,
+			)
+		}
+		return dynamicTerm{sort: sortBool, boolean: term}, nil
+	}
 	if operator == "select" && len(terms) == 2 && terms[0].sort == sortArrayBitVec && terms[1].sort == sortBitVector && terms[1].bitWidth == terms[0].arrayIndexWidth {
 		return dynamicTerm{sort: sortBitVector, bitWidth: terms[0].arrayElementWidth, bitVector: smt.Select(terms[0].arrayBitVec, terms[1].bitVector)}, nil
 	}
@@ -3065,6 +3119,25 @@ func floatingPointPredicateOperator(operator string) (uint8, bool) {
 		return smt.FloatingPointPredicatePositive, true
 	default:
 		return 0, false
+	}
+}
+
+func floatingPointComparisonOperator(
+	operator string,
+) (comparison uint8, reverse, equality, ok bool) {
+	switch operator {
+	case "fp.eq":
+		return 0, false, true, true
+	case "fp.lt":
+		return smt.FloatingPointComparisonLess, false, false, true
+	case "fp.leq":
+		return smt.FloatingPointComparisonLessOrEqual, false, false, true
+	case "fp.gt":
+		return smt.FloatingPointComparisonLess, true, false, true
+	case "fp.geq":
+		return smt.FloatingPointComparisonLessOrEqual, true, false, true
+	default:
+		return 0, false, false, false
 	}
 }
 

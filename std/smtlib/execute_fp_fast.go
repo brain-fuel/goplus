@@ -13,17 +13,21 @@ const (
 	fpFastAssign
 	fpFastRound
 	fpFastPredicate
+	fpFastComparison
+	fpFastEquality
 	fpFastCheck
 )
 
 type fpFastCommand struct {
 	kind                          uint8
-	symbolID, exponentBits        int
+	symbolID, secondSymbolID      int
+	exponentBits                  int
 	significandBits, commandIndex int
-	name                          string
+	name, secondName              string
 	value                         smt.BitVectorValue
 	mode                          smt.FloatingPointRoundingMode
 	predicate                     uint8
+	comparison                    uint8
 	negated                       bool
 }
 
@@ -184,6 +188,32 @@ func executeFloatingPointFast(source string) (ExecutionResult, bool) {
 			)
 			nextAssertion++
 			responses = append(responses, Acknowledged{CommandIndex: command.commandIndex})
+		case fpFastComparison:
+			relation := smt.NewFloatingPointComparisonRelation(
+				command.exponentBits, command.significandBits,
+				command.symbolID, command.secondSymbolID, command.comparison,
+			)
+			relation.Negated = command.negated
+			solver = smt.AssertFloatingPointComparisonRelation(
+				nextAssertion, solver, relation,
+			)
+			nextAssertion++
+			responses = append(responses, Acknowledged{CommandIndex: command.commandIndex})
+		case fpFastEquality:
+			total := command.exponentBits + command.significandBits
+			equality := smt.FloatingPointEqualBitVectorTerms(
+				command.exponentBits, command.significandBits,
+				smt.BitVecConst(total, command.symbolID, command.name),
+				smt.BitVecConst(
+					total, command.secondSymbolID, command.secondName,
+				),
+			)
+			if command.negated {
+				equality = smt.Not{Value: equality}
+			}
+			solver = smt.Assert(nextAssertion, solver, equality)
+			nextAssertion++
+			responses = append(responses, Acknowledged{CommandIndex: command.commandIndex})
 		case fpFastCheck:
 			switch result := smt.Check(solver).(type) {
 			case smt.Satisfiable:
@@ -234,6 +264,36 @@ func (scanner *fpFastScanner) formula(
 			exponentBits:    found.exponentBits,
 			significandBits: found.significandBits,
 			predicate:       predicate,
+		}, true
+	}
+	if comparison, reverse, equality, comparisonOK :=
+		floatingPointComparisonOperator(scanner.text(operator)); comparisonOK {
+		leftToken, leftOK := scanner.atom()
+		rightToken, rightOK := scanner.atom()
+		if !leftOK || !rightOK || !scanner.right() {
+			return fpFastCommand{}, false
+		}
+		left, leftFound := fpFastFindSymbol(scanner.text(leftToken), symbols)
+		right, rightFound := fpFastFindSymbol(scanner.text(rightToken), symbols)
+		if !leftFound || !rightFound ||
+			left.exponentBits != right.exponentBits ||
+			left.significandBits != right.significandBits {
+			return fpFastCommand{}, false
+		}
+		if reverse {
+			left, right = right, left
+		}
+		kind := fpFastComparison
+		if equality {
+			kind = fpFastEquality
+		}
+		return fpFastCommand{
+			kind:     kind,
+			symbolID: left.id, secondSymbolID: right.id,
+			name: left.name, secondName: right.name,
+			exponentBits:    left.exponentBits,
+			significandBits: left.significandBits,
+			comparison:      comparison,
 		}, true
 	}
 	if scanner.text(operator) != "=" {

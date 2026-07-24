@@ -2345,6 +2345,77 @@ func TestExecuteNestedGroundFloatingPointClassification(t *testing.T) {
 	}
 }
 
+func TestExecuteFloatingPointEqualityAndOrdering(t *testing.T) {
+	script := `(set-logic QF_FP)
+(assert (fp.eq ((_ to_fp 8 24) #x00000000)
+               ((_ to_fp 8 24) #x80000000)))
+(assert (not (fp.eq ((_ to_fp 8 24) #x7fc12345)
+                    ((_ to_fp 8 24) #x7fc12345))))
+(assert (fp.lt ((_ to_fp 8 24) #xbf800000)
+               ((_ to_fp 8 24) #x3f800000)))
+(assert (fp.leq ((_ to_fp 8 24) #x80000000)
+                ((_ to_fp 8 24) #x00000000)))
+(assert (fp.gt ((_ to_fp 8 24) #x3f800000)
+               ((_ to_fp 8 24) #xbf800000)))
+(assert (fp.geq ((_ to_fp 8 24) #x00000000)
+                ((_ to_fp 8 24) #x80000000)))
+(check-sat)`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("execute=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+		t.Fatalf("result=%#v", result)
+	}
+}
+
+func TestStreamFloatingPointEqualityAndOrdering(t *testing.T) {
+	script := `(set-logic QF_FP)
+(declare-const left (_ FloatingPoint 8 24))
+(declare-const right (_ FloatingPoint 8 24))
+(assert (= (fp.to_ieee_bv left) #xbf800000))
+(assert (= (fp.to_ieee_bv right) #x3f800000))
+(assert (fp.lt left right))
+(assert (fp.leq left right))
+(assert (fp.gt right left))
+(assert (fp.geq right left))
+(assert (not (fp.eq left right)))
+(check-sat)`
+	fast, recognized := executeFloatingPointFast(script)
+	if !recognized {
+		t.Fatal("symbolic order did not use the streaming executor")
+	}
+	result := fast.(Executed)
+	if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+		t.Fatalf("result=%#v", result)
+	}
+}
+
+func TestExecuteNestedGroundFloatingPointOrdering(t *testing.T) {
+	script := `(set-logic QF_FP)
+(assert (fp.gt
+  (fp.roundToIntegral RNE ((_ to_fp 8 24) #x3fc00000))
+  ((_ to_fp 8 24) #x3f800000)))
+(check-sat)`
+	result, ok := Execute(script).(Executed)
+	if !ok {
+		t.Fatalf("execute=%#v", Execute(script))
+	}
+	if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+		t.Fatalf("result=%#v", result)
+	}
+}
+
+func TestRejectMixedFloatingPointComparisonFormats(t *testing.T) {
+	script := `(set-logic QF_FP)
+(assert (fp.lt ((_ to_fp 8 24) #x3f800000)
+               ((_ to_fp 5 11) #x3c00)))
+(check-sat)`
+	if _, ok := Execute(script).(ExecutionFailed); !ok {
+		t.Fatalf("mixed formats unexpectedly accepted: %#v", Execute(script))
+	}
+}
+
 func BenchmarkExecuteFloatingPointRoundToIntegral(b *testing.B) {
 	script := `(set-logic QF_FP)
 (declare-const x (_ FloatingPoint 8 24))
@@ -2368,6 +2439,44 @@ func BenchmarkExecuteFloatingPointClassification(b *testing.B) {
 (declare-const x (_ FloatingPoint 8 24))
 (assert (= (fp.to_ieee_bv x) #x7fc12345))
 (assert (fp.isNaN x))
+(check-sat)`
+	b.Run("stream", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			result, ok := Execute(script).(Executed)
+			if !ok {
+				b.Fatal("execution failed")
+			}
+			if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
+	b.Run("general", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			parsed, ok := Parse(script).(Parsed)
+			if !ok {
+				b.Fatal("parse failed")
+			}
+			responses, errors := executeCommands(parsed.Commands)
+			if len(errors) != 0 {
+				b.Fatal("execution failed")
+			}
+			if _, ok := responses[len(responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
+}
+
+func BenchmarkExecuteFloatingPointOrdering(b *testing.B) {
+	script := `(set-logic QF_FP)
+(declare-const left (_ FloatingPoint 8 24))
+(declare-const right (_ FloatingPoint 8 24))
+(assert (= (fp.to_ieee_bv left) #xbf800000))
+(assert (= (fp.to_ieee_bv right) #x3f800000))
+(assert (fp.lt left right))
 (check-sat)`
 	b.Run("stream", func(b *testing.B) {
 		b.ReportAllocs()

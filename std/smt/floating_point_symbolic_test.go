@@ -57,6 +57,30 @@ func TestFloatingPointPredicateBitVectorTerms(t *testing.T) {
 	}
 }
 
+func TestFloatingPointEqualityAndOrderBitVectorTerms(t *testing.T) {
+	positiveZero := BitVectorTerm(NewBitVectorUint64(32, 0))
+	negativeZero := BitVectorTerm(NewBitVectorUint64(32, 0x80000000))
+	negativeOne := BitVectorTerm(NewBitVectorUint64(32, 0xbf800000))
+	positiveOne := BitVectorTerm(NewBitVectorUint64(32, 0x3f800000))
+	nan := BitVectorTerm(NewBitVectorUint64(32, 0x7fc12345))
+	laws := []Term[BoolSort]{
+		FloatingPointEqualBitVectorTerms(8, 24, positiveZero, negativeZero),
+		FloatingPointComparisonBitVectorTerms(
+			8, 24, negativeOne, positiveOne, FloatingPointComparisonLess,
+		),
+		FloatingPointComparisonBitVectorTerms(
+			8, 24, negativeOne, positiveOne, FloatingPointComparisonLessOrEqual,
+		),
+		Not{Value: FloatingPointEqualBitVectorTerms(8, 24, nan, nan)},
+		Not{Value: FloatingPointComparisonBitVectorTerms(
+			8, 24, nan, positiveOne, FloatingPointComparisonLess,
+		)},
+	}
+	if _, ok := Check(Assert(1, New(), And{Values: laws})).(Satisfiable); !ok {
+		t.Fatal("arbitrary-term floating-point equality/order laws must be satisfiable")
+	}
+}
+
 func TestNegatedSymbolicFloatingPointClassification(t *testing.T) {
 	relation := NewFloatingPointRelation(8, 24, 1, FloatingPointPredicateNaN)
 	relation.Negated = true
