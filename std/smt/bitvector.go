@@ -636,6 +636,40 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 			assignmentCount++
 		}
 	}
+	// fp.roundToIntegral has an exact, inexpensive inverse on its image:
+	// every fixed point is its own preimage, and no non-fixed point can be a
+	// rounded result. Use that fact to synthesize previously unconstrained
+	// source symbols before generic bit-vector predicates choose arbitrary
+	// source bits.
+	for _, relation := range problem.rounds[:problem.roundCount] {
+		found := false
+		for index := 0; index < assignmentCount; index++ {
+			if assignments[index].id == relation.SymbolID {
+				found = true
+				break
+			}
+		}
+		if found || relation.Negated {
+			continue
+		}
+		total := relation.ExponentBits + relation.SignificandBits
+		if relation.Value.Width() != total || assignmentCount == len(assignments) {
+			return checkOutcome{}, false
+		}
+		target := FloatingPointFromBits(
+			relation.ExponentBits, relation.SignificandBits, relation.Value,
+		)
+		rounded := floatingPointRoundToIntegral(relation.Mode, target)
+		if !EqualBitVectorValue(FloatingPointBits(rounded), relation.Value) {
+			return checkOutcome{status: checkUnsat}, true
+		}
+		assignments[assignmentCount] = compactBitVectorAssignment{
+			id:    relation.SymbolID,
+			value: relation.Value,
+			fixed: NotBitVectorValue(NewBitVectorUint64(total, 0)),
+		}
+		assignmentCount++
+	}
 	// Width-changing extract relations can constrain a symbol without first
 	// assigning its entire source value. Synthesize a deterministic source
 	// pattern directly so common classification workloads stay on the compact

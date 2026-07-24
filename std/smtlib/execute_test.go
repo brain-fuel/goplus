@@ -2254,6 +2254,47 @@ func TestExecuteFloatingPointRoundToIntegral(t *testing.T) {
 	}
 }
 
+func TestExecuteFloatingPointRoundToIntegralSynthesizesSource(t *testing.T) {
+	satisfiable := `(set-logic QF_FP)
+(declare-const x (_ FloatingPoint 8 24))
+(assert (= (fp.to_ieee_bv (fp.roundToIntegral RNE x)) #x40000000))
+(check-sat)`
+	result, ok := Execute(satisfiable).(Executed)
+	if !ok {
+		t.Fatalf("streaming execute=%#v", Execute(satisfiable))
+	}
+	if _, recognized := executeFloatingPointFast(satisfiable); !recognized {
+		t.Fatal("unconstrained fp.roundToIntegral did not use streaming execution")
+	}
+	if _, ok := result.Responses[3].(Satisfiable); !ok {
+		t.Fatalf("streaming check=%#v", result.Responses[3])
+	}
+
+	parsed, ok := Parse(satisfiable).(Parsed)
+	if !ok {
+		t.Fatal("general parse failed")
+	}
+	responses, errors := executeCommands(parsed.Commands)
+	if len(errors) != 0 {
+		t.Fatalf("general execution errors=%#v", errors)
+	}
+	if _, ok := responses[3].(Satisfiable); !ok {
+		t.Fatalf("general check=%#v", responses[3])
+	}
+
+	unsatisfiable := `(set-logic QF_FP)
+(declare-const x (_ FloatingPoint 8 24))
+(assert (= (fp.to_ieee_bv (fp.roundToIntegral RNE x)) #x3fc00000))
+(check-sat)`
+	result, ok = Execute(unsatisfiable).(Executed)
+	if !ok {
+		t.Fatalf("unsatisfiable execute=%#v", Execute(unsatisfiable))
+	}
+	if _, ok := result.Responses[len(result.Responses)-1].(Unsatisfiable); !ok {
+		t.Fatalf("non-integral result=%#v", result.Responses)
+	}
+}
+
 func TestExecuteFloatingPointRoundToIntegralLongRoundingModeName(t *testing.T) {
 	script := `(set-logic QF_FP)
 (assert (= (fp.to_ieee_bv
@@ -3311,6 +3352,43 @@ func BenchmarkExecuteFloatingPointRoundToIntegral(b *testing.B) {
 			b.Fatal("unexpected result")
 		}
 	}
+}
+
+func BenchmarkExecuteUnconstrainedFloatingPointRoundToIntegral(b *testing.B) {
+	script := `(set-logic QF_FP)
+(declare-const x (_ FloatingPoint 8 24))
+(declare-const y (_ FloatingPoint 8 24))
+(assert (= (fp.to_ieee_bv (fp.roundToIntegral RNE x)) #x40000000))
+(assert (= (fp.to_ieee_bv (fp.roundToIntegral RTN y)) #xc0000000))
+(check-sat)`
+	b.Run("stream", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			result, ok := Execute(script).(Executed)
+			if !ok {
+				b.Fatal("execution failed")
+			}
+			if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
+	b.Run("general", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			parsed, ok := Parse(script).(Parsed)
+			if !ok {
+				b.Fatal("parse failed")
+			}
+			responses, errors := executeCommands(parsed.Commands)
+			if len(errors) != 0 {
+				b.Fatal("execution failed")
+			}
+			if _, ok := responses[len(responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
 }
 
 func BenchmarkExecuteFloatingPointClassification(b *testing.B) {

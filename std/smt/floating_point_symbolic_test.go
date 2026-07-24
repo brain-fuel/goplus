@@ -211,6 +211,33 @@ func TestCompactFloatingPointRoundToIntegralWithAssignedSymbol(t *testing.T) {
 	}
 }
 
+func TestCompactFloatingPointRoundToIntegralSynthesizesUnconstrainedSymbol(t *testing.T) {
+	relation := NewFloatingPointRoundToIntegralRelation(
+		8, 24, 1, RoundNearestTiesToEven(),
+		NewBitVectorUint64(32, 0x40000000),
+	)
+	result, ok := Check(AssertFloatingPointRoundToIntegralRelation(
+		1, New(), relation,
+	)).(Satisfiable)
+	if !ok {
+		t.Fatalf("expected synthesized fp.roundToIntegral model, got %#v", Check(
+			AssertFloatingPointRoundToIntegralRelation(1, New(), relation),
+		))
+	}
+	bits, found := FloatingPointSymbolModelBits(result.Value, 1)
+	value, inline := bits.Uint64()
+	if !found || !inline || value != 0x40000000 {
+		t.Fatalf("unexpected synthesized source: %#x/%v/%v", value, found, inline)
+	}
+
+	relation.Value = NewBitVectorUint64(32, 0x3fc00000)
+	if _, ok := Check(AssertFloatingPointRoundToIntegralRelation(
+		1, New(), relation,
+	)).(Unsatisfiable); !ok {
+		t.Fatal("non-integral value cannot be an fp.roundToIntegral result")
+	}
+}
+
 func TestFloatingPointRoundToIntegralDerivedModel(t *testing.T) {
 	solver := New()
 	solver = Assert(1, solver, BitVectorRelation{
