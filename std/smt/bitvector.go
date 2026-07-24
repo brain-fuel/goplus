@@ -605,6 +605,27 @@ func synthesizeFloatingPointRemIdentity(
 	return true, false
 }
 
+func synthesizeFloatingPointToRealPreimage(
+	relation FloatingPointToRealRelation,
+) (int, BitVectorValue, bool) {
+	if relation.Negated || relation.Comparison != 0 || relation.Count != 1 ||
+		relation.RealCount != 0 {
+		return 0, BitVectorValue{}, false
+	}
+	term := relation.values()[0]
+	target := DivideRational(
+		NegateRational(relation.Constant), term.Coefficient,
+	)
+	candidate := floatingPointFromRational(
+		1, term.ExponentBits, term.SignificandBits, target,
+	)
+	converted, valid := floatingPointToRational(candidate)
+	if !valid || CompareRational(converted, target) != 0 {
+		return 0, BitVectorValue{}, false
+	}
+	return term.SymbolID, FloatingPointBits(candidate), true
+}
+
 func (problem *compactBitVectorProblem) add(term Term[BoolSort], negated bool) bool {
 	switch value := term.(type) {
 	case And:
@@ -902,6 +923,40 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 			id:    relation.SymbolID,
 			value: relation.Value,
 			fixed: NotBitVectorValue(NewBitVectorUint64(total, 0)),
+		}
+		assignmentCount++
+	}
+	// A single-term fp.to_real equality has an exact finite preimage precisely
+	// when its solved rational target is representable in the source format.
+	// Round once to obtain a candidate, then require exact rational equality
+	// before committing the source bits.
+	for _, relation := range problem.toReals[:problem.toRealCount] {
+		if relation.Negated || relation.Comparison != 0 ||
+			relation.Count != 1 ||
+			relation.RealCount != 0 {
+			continue
+		}
+		symbolID := relation.values()[0].SymbolID
+		found := false
+		for index := 0; index < assignmentCount; index++ {
+			if assignments[index].id == symbolID {
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+		_, candidate, synthesized :=
+			synthesizeFloatingPointToRealPreimage(relation)
+		if !synthesized || assignmentCount == len(assignments) {
+			return checkOutcome{}, false
+		}
+		assignments[assignmentCount] = compactBitVectorAssignment{
+			id: symbolID, value: candidate,
+			fixed: NotBitVectorValue(
+				NewBitVectorUint64(candidate.Width(), 0),
+			),
 		}
 		assignmentCount++
 	}

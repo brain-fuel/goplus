@@ -1013,6 +1013,75 @@ func TestFloatingPointToRealRelation(t *testing.T) {
 	}
 }
 
+func TestFloatingPointToRealSynthesizesUnconstrainedSource(t *testing.T) {
+	relation := NewFloatingPointToRealRelation(
+		8, 24, 1, NewRational(3, 2),
+	)
+	result, ok := Check(AssertFloatingPointToRealRelation(
+		1, New(), relation,
+	)).(Satisfiable)
+	if !ok {
+		t.Fatal("expected exact fp.to_real preimage")
+	}
+	bits, found := FloatingPointSymbolModelBits(result.Value, 1)
+	raw, inline := bits.Uint64()
+	if !found || !inline || raw != 0x3fc00000 {
+		t.Fatalf("source bits=%#x, found=%v", raw, found)
+	}
+
+	unrepresentable := NewFloatingPointToRealRelation(
+		8, 24, 1, NewRational(1, 10),
+	)
+	if _, ok := Check(AssertFloatingPointToRealRelation(
+		1, New(), unrepresentable,
+	)).(Unknown); !ok {
+		t.Fatal("unrepresentable finite preimage must remain unknown")
+	}
+}
+
+func TestFloatingPointToRealSynthesizesBinary128Source(t *testing.T) {
+	relation := NewFloatingPointToRealRelation(
+		15, 113, 1, NewRational(-7, 4),
+	)
+	result, ok := Check(AssertFloatingPointToRealRelation(
+		1, New(), relation,
+	)).(Satisfiable)
+	if !ok {
+		t.Fatal("expected exact binary128 fp.to_real preimage")
+	}
+	bits, found := FloatingPointSymbolModelBits(result.Value, 1)
+	if !found || bits.Width() != 128 {
+		t.Fatal("binary128 source missing from model")
+	}
+	converted, valid := FloatingPointToRational(
+		FloatingPointFromBits(15, 113, bits),
+	)
+	if !valid || CompareRational(converted, NewRational(-7, 4)) != 0 {
+		t.Fatalf("binary128 source converts to %v", converted)
+	}
+}
+
+func TestFloatingPointToRealSynthesizesAffinePreimage(t *testing.T) {
+	relation := NewFloatingPointToRealInlineRelation(
+		[4]FloatingPointToRealTerm{{
+			ExponentBits: 8, SignificandBits: 24, SymbolID: 1,
+			Coefficient: NewRational(2, 1),
+		}},
+		1, NewRational(1, 2), 0,
+	)
+	result, ok := Check(AssertFloatingPointToRealRelation(
+		1, New(), relation,
+	)).(Satisfiable)
+	if !ok {
+		t.Fatal("expected exact affine fp.to_real preimage")
+	}
+	bits, found := FloatingPointSymbolModelBits(result.Value, 1)
+	raw, inline := bits.Uint64()
+	if !found || !inline || raw != 0xbe800000 {
+		t.Fatalf("affine source bits=%#x, found=%v", raw, found)
+	}
+}
+
 func TestFloatingPointToRealAffineRelation(t *testing.T) {
 	solver := Assert(1, New(), BitVectorRelation{
 		Width: 32, SymbolID: 1,

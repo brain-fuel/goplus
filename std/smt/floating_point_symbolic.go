@@ -127,6 +127,10 @@ type FloatingPointFormatConversionRelation struct {
 
 func (FloatingPointFormatConversionRelation) isTerm(BoolSort) {}
 
+// FloatingPointToRealRelation constrains exact affine combinations of finite
+// fp.to_real values. A single-term equality can synthesize an unconstrained
+// source when its rational target is exactly representable in the indexed
+// format.
 type FloatingPointToRealRelation struct {
 	Count        int
 	Terms        [4]FloatingPointToRealTerm

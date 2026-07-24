@@ -3280,6 +3280,35 @@ func TestExecuteSymbolicFloatingPointToReal(t *testing.T) {
 	}
 }
 
+func TestExecuteUnconstrainedFloatingPointToReal(t *testing.T) {
+	script := `(set-logic QF_FP)
+(declare-const x (_ FloatingPoint 8 24))
+(assert (= (fp.to_real x) 1.5))
+(check-sat)`
+	fast, recognized := executeFloatingPointFast(script)
+	if !recognized {
+		t.Fatal("unconstrained fp.to_real script did not use streaming execution")
+	}
+	result, ok := fast.(Executed)
+	if !ok {
+		t.Fatalf("streaming execution=%#v", fast)
+	}
+	if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+		t.Fatalf("streaming result=%#v", result)
+	}
+	parsed, ok := Parse(script).(Parsed)
+	if !ok {
+		t.Fatal("general parse failed")
+	}
+	responses, errors := executeCommands(parsed.Commands)
+	if len(errors) != 0 {
+		t.Fatalf("general execution errors=%#v", errors)
+	}
+	if _, ok := responses[len(responses)-1].(Satisfiable); !ok {
+		t.Fatalf("general result=%#v", responses)
+	}
+}
+
 func TestExecuteAffineFloatingPointToReal(t *testing.T) {
 	script := `(set-logic QF_FP)
 (declare-const x (_ FloatingPoint 8 24))
@@ -4456,6 +4485,47 @@ func BenchmarkExecuteFloatingPointToReal(b *testing.B) {
 (assert (= (fp.to_ieee_bv larger) #x40600000))
 (assert (= (fp.to_real positive) 1.5))
 (assert (= (fp.to_real larger) 3.5))
+(check-sat)`
+	b.Run("stream", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			result, ok := Execute(script).(Executed)
+			if !ok {
+				b.Fatal("stream execution failed")
+			}
+			if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
+	b.Run("general", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			parsed, ok := Parse(script).(Parsed)
+			if !ok {
+				b.Fatal("parse failed")
+			}
+			responses, errors := executeCommands(parsed.Commands)
+			if len(errors) != 0 {
+				b.Fatal("general executor rejected script")
+			}
+			if _, ok := responses[len(responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
+}
+
+func BenchmarkExecuteUnconstrainedFloatingPointToReal(b *testing.B) {
+	script := `(set-logic QF_FP)
+(declare-const positive (_ FloatingPoint 8 24))
+(declare-const negative (_ FloatingPoint 8 24))
+(declare-const integer (_ FloatingPoint 8 24))
+(declare-const fraction (_ FloatingPoint 8 24))
+(assert (= (fp.to_real positive) 1.5))
+(assert (= (fp.to_real negative) (- 3.5)))
+(assert (= (fp.to_real integer) 2.0))
+(assert (= (fp.to_real fraction) (- 0.5)))
 (check-sat)`
 	b.Run("stream", func(b *testing.B) {
 		b.ReportAllocs()
