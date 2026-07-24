@@ -1350,6 +1350,118 @@ func TestNonlinearIntegerAffineThreeSquareBounds(t *testing.T) {
 	}
 }
 
+func TestNonlinearIntegerAffineFourSquareRelations(t *testing.T) {
+	x := IntSymbol{ID: 129, Name: "x"}
+	y := IntSymbol{ID: 130, Name: "y"}
+	z := IntSymbol{ID: 131, Name: "z"}
+	w := IntSymbol{ID: 132, Name: "w"}
+	first := Add{Values: []Term[IntSort]{
+		ScaleInteger(NewIntegerValue(2), x),
+		IntegerTerm(NewIntegerValue(1)),
+	}}
+	second := ScaleInteger(NewIntegerValue(2), y)
+	third := Add{Values: []Term[IntSort]{
+		ScaleInteger(NewIntegerValue(3), z),
+		IntegerTerm(NewIntegerValue(-1)),
+	}}
+	fourth := Add{Values: []Term[IntSort]{
+		ScaleInteger(NewIntegerValue(2), w),
+		IntegerTerm(NewIntegerValue(1)),
+	}}
+	sum := Add{Values: []Term[IntSort]{
+		MultiplyInteger(first, first),
+		MultiplyInteger(second, second),
+		MultiplyInteger(third, third),
+		MultiplyInteger(fourth, fourth),
+	}}
+	checked := Check(Assert(1, New(), Equal{
+		Left: sum, Right: IntegerTerm(NewIntegerValue(7)),
+	}))
+	result, ok := checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("affine four-square relation=%#v", checked)
+	}
+	xValue, xFound := IntegerModelValue(result.Value, x)
+	yValue, yFound := IntegerModelValue(result.Value, y)
+	zValue, zFound := IntegerModelValue(result.Value, z)
+	wValue, wFound := IntegerModelValue(result.Value, w)
+	values := [4]IntegerValue{
+		AddIntegerValue(
+			MultiplyIntegerValue(NewIntegerValue(2), xValue),
+			NewIntegerValue(1),
+		),
+		MultiplyIntegerValue(NewIntegerValue(2), yValue),
+		AddIntegerValue(
+			MultiplyIntegerValue(NewIntegerValue(3), zValue),
+			NewIntegerValue(-1),
+		),
+		AddIntegerValue(
+			MultiplyIntegerValue(NewIntegerValue(2), wValue),
+			NewIntegerValue(1),
+		),
+	}
+	sumValue := IntegerValue{}
+	for _, value := range values {
+		sumValue = AddIntegerValue(
+			sumValue, MultiplyIntegerValue(value, value),
+		)
+	}
+	if !xFound || !yFound || !zFound || !wFound ||
+		CompareIntegerValue(sumValue, NewIntegerValue(7)) != 0 {
+		t.Fatalf(
+			"four-square model x=%v/%v y=%v/%v z=%v/%v w=%v/%v",
+			xValue, xFound, yValue, yFound, zValue, zFound, wValue, wFound,
+		)
+	}
+	impossible := Check(Assert(2, New(), Equal{
+		Left: sum, Right: IntegerTerm(NewIntegerValue(4)),
+	}))
+	if _, ok := impossible.(Unsatisfiable); !ok {
+		t.Fatalf("affine four-square non-image=%#v", impossible)
+	}
+	got := Check(Assert(3, New(), Not{Value: Equal{
+		Left: sum, Right: IntegerTerm(NewIntegerValue(7)),
+	}}))
+	if _, ok := got.(Satisfiable); !ok {
+		t.Fatalf("affine four-square disequality=%#v", got)
+	}
+	conflict := And{Values: []Term[BoolSort]{
+		Equal{Left: sum, Right: IntegerTerm(NewIntegerValue(7))},
+		Equal{Left: IntegerTerm(NewIntegerValue(8)), Right: sum},
+	}}
+	got = Check(Assert(4, New(), conflict))
+	if _, ok := got.(Unsatisfiable); !ok {
+		t.Fatalf("affine four-square conflict=%#v", got)
+	}
+
+	wideRoot, err := ParseIntegerValue("1267650600228229401496703205376")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wideTarget := MultiplyIntegerValue(wideRoot, wideRoot)
+	wideSum := Add{Values: []Term[IntSort]{
+		MultiplyInteger(x, x),
+		MultiplyInteger(y, y),
+		MultiplyInteger(z, z),
+		MultiplyInteger(w, w),
+	}}
+	checked = Check(Assert(5, New(), Equal{
+		Left: wideSum, Right: IntegerTerm(wideTarget),
+	}))
+	if _, ok := checked.(Satisfiable); !ok {
+		t.Fatalf("wide four-square relation=%#v", checked)
+	}
+	overLimit := Check(Assert(6, New(), Equal{
+		Left: wideSum,
+		Right: IntegerTerm(AddIntegerValue(
+			wideTarget, NewIntegerValue(10000),
+		)),
+	}))
+	if _, ok := overLimit.(Unknown); !ok {
+		t.Fatalf("over-limit four-square relation=%#v", overLimit)
+	}
+}
+
 func TestNonlinearIntegerAffineFactorProducts(t *testing.T) {
 	x := IntSymbol{ID: 110, Name: "x"}
 	y := IntSymbol{ID: 111, Name: "y"}

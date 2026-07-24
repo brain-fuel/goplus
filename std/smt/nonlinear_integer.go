@@ -6,12 +6,13 @@ import (
 )
 
 const (
-	nonlinearIntegerSymbolLimit    = 8
-	nonlinearIntegerRelationLimit  = 8
-	nonlinearIntegerCandidateLimit = 64
-	nonlinearIntegerSearchLimit    = 4096
-	nonlinearIntegerDivisorLimit   = 4096
-	nonlinearIntegerPowerLimit     = 16
+	nonlinearIntegerSymbolLimit         = 8
+	nonlinearIntegerRelationLimit       = 8
+	nonlinearIntegerCandidateLimit      = 64
+	nonlinearIntegerSearchLimit         = 4096
+	nonlinearIntegerDivisorLimit        = 4096
+	nonlinearIntegerPowerLimit          = 16
+	nonlinearIntegerFourSquareRootLimit = 64
 )
 
 type nonlinearIntegerProductRelation struct {
@@ -235,6 +236,26 @@ type IntegerAffineThreeSquareBoundSystem struct {
 
 func (IntegerAffineThreeSquareBoundSystem) isTerm(BoolSort) {}
 
+// IntegerAffineFourSquareRelation is the compact form
+// (a*x+b)^2+(c*y+d)^2+(e*z+f)^2+(g*w+h)^2 = k (or != k).
+type IntegerAffineFourSquareRelation struct {
+	First, Second, Third, Fourth IntegerAffineFactor
+	Target                       IntegerValue
+	Negated                      bool
+}
+
+func (IntegerAffineFourSquareRelation) isTerm(BoolSort) {}
+
+// IntegerAffineFourSquareSystem is an allocation-free conjunction of
+// four-square relations.
+type IntegerAffineFourSquareSystem struct {
+	Count    int
+	Inline   [4]IntegerAffineFourSquareRelation
+	Overflow []IntegerAffineFourSquareRelation
+}
+
+func (IntegerAffineFourSquareSystem) isTerm(BoolSort) {}
+
 // IntegerSquareBound represents x² <(=) k when Lower is false and
 // k <(=) x² when Lower is true.
 type IntegerSquareBound struct {
@@ -368,6 +389,8 @@ type nonlinearIntegerProblem struct {
 	threeSquares          [nonlinearIntegerRelationLimit]IntegerAffineThreeSquareRelation
 	threeSquareBoundCount int
 	threeSquareBounds     [nonlinearIntegerRelationLimit]IntegerAffineThreeSquareBound
+	fourSquareCount       int
+	fourSquares           [nonlinearIntegerRelationLimit]IntegerAffineFourSquareRelation
 	impossible            bool
 }
 
@@ -385,7 +408,7 @@ func solveNonlinearIntegerAssertions(
 		problem.cubeBoundCount == 0 && problem.powerCount == 0 &&
 		problem.powerBoundCount == 0 && problem.twoSquareCount == 0 &&
 		problem.twoSquareBoundCount == 0 && problem.threeSquareCount == 0 &&
-		problem.threeSquareBoundCount == 0 {
+		problem.threeSquareBoundCount == 0 && problem.fourSquareCount == 0 {
 		return checkOutcome{}, false
 	}
 	if problem.impossible {
@@ -657,6 +680,27 @@ func (problem *nonlinearIntegerProblem) boolean(
 		}
 		for _, bound := range bounds {
 			if !problem.addAffineThreeSquareBound(bound) {
+				return false
+			}
+		}
+		return true
+	case IntegerAffineFourSquareRelation:
+		if negated {
+			value.Negated = !value.Negated
+		}
+		return problem.addAffineFourSquareRelation(value)
+	case IntegerAffineFourSquareSystem:
+		if negated || value.Count < 0 {
+			return false
+		}
+		relations := value.Overflow
+		if value.Count <= len(value.Inline) {
+			relations = value.Inline[:value.Count]
+		} else if len(relations) != value.Count {
+			return false
+		}
+		for _, relation := range relations {
+			if !problem.addAffineFourSquareRelation(relation) {
 				return false
 			}
 		}
@@ -1049,7 +1093,21 @@ func (problem *nonlinearIntegerProblem) addAffineSquareRange(
 func (problem *nonlinearIntegerProblem) equality(
 	left, right any, negated bool,
 ) bool {
-	first, second, third, target, ok :=
+	first, second, third, fourth, target, ok :=
+		nonlinearIntegerAffineFourSquareEquality(left, right)
+	if !ok {
+		first, second, third, fourth, target, ok =
+			nonlinearIntegerAffineFourSquareEquality(right, left)
+	}
+	if ok {
+		return problem.addAffineFourSquareRelation(
+			IntegerAffineFourSquareRelation{
+				First: first, Second: second, Third: third, Fourth: fourth,
+				Target: target, Negated: negated,
+			},
+		)
+	}
+	first, second, third, target, ok =
 		nonlinearIntegerAffineThreeSquareEquality(left, right)
 	if !ok {
 		first, second, third, target, ok =
@@ -1310,6 +1368,163 @@ func (problem *nonlinearIntegerProblem) addThreeSquareCandidates(
 					third, thirdFactor, candidate,
 				) {
 					complete = false
+				}
+			}
+		}
+	}
+	return complete
+}
+
+func equalIntegerAffineFactorQuartet(
+	leftFirst, leftSecond, leftThird, leftFourth,
+	rightFirst, rightSecond, rightThird, rightFourth IntegerAffineFactor,
+) bool {
+	left := [4]IntegerAffineFactor{
+		leftFirst, leftSecond, leftThird, leftFourth,
+	}
+	right := [4]IntegerAffineFactor{
+		rightFirst, rightSecond, rightThird, rightFourth,
+	}
+	var used [4]bool
+	for _, factor := range left {
+		found := false
+		for index, candidate := range right {
+			if !used[index] && equalIntegerAffineFactor(factor, candidate) {
+				used[index], found = true, true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func (problem *nonlinearIntegerProblem) addAffineFourSquareRelation(
+	value IntegerAffineFourSquareRelation,
+) bool {
+	if problem.fourSquareCount == len(problem.fourSquares) {
+		return false
+	}
+	for _, existing := range problem.fourSquares[:problem.fourSquareCount] {
+		if !equalIntegerAffineFactorQuartet(
+			existing.First, existing.Second, existing.Third, existing.Fourth,
+			value.First, value.Second, value.Third, value.Fourth,
+		) {
+			continue
+		}
+		sameTarget := CompareIntegerValue(existing.Target, value.Target) == 0
+		if (!existing.Negated && !value.Negated && !sameTarget) ||
+			(sameTarget && existing.Negated != value.Negated) {
+			problem.impossible = true
+			return true
+		}
+	}
+	first, firstAdded := problem.ensureSymbol(value.First.SymbolID)
+	second, secondAdded := problem.ensureSymbol(value.Second.SymbolID)
+	third, thirdAdded := problem.ensureSymbol(value.Third.SymbolID)
+	fourth, fourthAdded := problem.ensureSymbol(value.Fourth.SymbolID)
+	if !firstAdded || !secondAdded || !thirdAdded || !fourthAdded {
+		return false
+	}
+	if value.Negated {
+		for candidate := 0; candidate <= 2*(problem.fourSquareCount+1); candidate++ {
+			problem.candidates[first].add(NewIntegerValue(int64(candidate)))
+		}
+		problem.candidates[second].add(IntegerValue{})
+		problem.candidates[third].add(IntegerValue{})
+		problem.candidates[fourth].add(IntegerValue{})
+	} else if CompareIntegerValue(value.Target, IntegerValue{}) < 0 {
+		problem.impossible = true
+	} else {
+		complete := problem.addFourSquareCandidates(
+			first, second, third, fourth,
+			value.First, value.Second, value.Third, value.Fourth,
+			value.Target,
+		)
+		if complete {
+			problem.domainComplete[first] = true
+			problem.domainComplete[second] = true
+			problem.domainComplete[third] = true
+			problem.domainComplete[fourth] = true
+		}
+	}
+	problem.fourSquares[problem.fourSquareCount] = value
+	problem.fourSquareCount++
+	return true
+}
+
+func (problem *nonlinearIntegerProblem) addFourSquareCandidates(
+	first, second, third, fourth int,
+	firstFactor, secondFactor, thirdFactor, fourthFactor IntegerAffineFactor,
+	target IntegerValue,
+) bool {
+	root := integerSquareRoot(target)
+	items := [4]struct {
+		position int
+		factor   IntegerAffineFactor
+	}{
+		{first, firstFactor}, {second, secondFactor},
+		{third, thirdFactor}, {fourth, fourthFactor},
+	}
+	for _, item := range items {
+		problem.addAffineFactorCandidate(item.position, item.factor, root)
+		problem.addAffineFactorCandidate(
+			item.position, item.factor, NegateIntegerValue(root),
+		)
+		problem.addAffineFactorCandidate(
+			item.position, item.factor, IntegerValue{},
+		)
+	}
+	inline, ok := root.Int64()
+	if !ok || inline > nonlinearIntegerFourSquareRootLimit {
+		return false
+	}
+	complete := true
+	for firstValue := int64(0); firstValue <= inline; firstValue++ {
+		firstSquare := firstValue * firstValue
+		secondMaximum, _ := integerSquareRoot(
+			AddIntegerValue(target, NewIntegerValue(-firstSquare)),
+		).Int64()
+		for secondValue := int64(0); secondValue <= secondMaximum; secondValue++ {
+			secondSquare := secondValue * secondValue
+			thirdMaximum, _ := integerSquareRoot(
+				AddIntegerValue(
+					target,
+					NewIntegerValue(-firstSquare-secondSquare),
+				),
+			).Int64()
+			for thirdValue := int64(0); thirdValue <= thirdMaximum; thirdValue++ {
+				remainder := AddIntegerValue(
+					target,
+					NewIntegerValue(
+						-firstSquare-secondSquare-thirdValue*thirdValue,
+					),
+				)
+				fourthValue := integerSquareRoot(remainder)
+				if CompareIntegerValue(
+					MultiplyIntegerValue(fourthValue, fourthValue),
+					remainder,
+				) != 0 {
+					continue
+				}
+				values := [4]IntegerValue{
+					NewIntegerValue(firstValue),
+					NewIntegerValue(secondValue),
+					NewIntegerValue(thirdValue),
+					fourthValue,
+				}
+				for index, item := range items {
+					for _, candidate := range [2]IntegerValue{
+						values[index], NegateIntegerValue(values[index]),
+					} {
+						if !problem.addAffineFactorCandidate(
+							item.position, item.factor, candidate,
+						) {
+							complete = false
+						}
+					}
 				}
 			}
 		}
@@ -2330,6 +2545,42 @@ func nonlinearIntegerAffineThreeSquareEquality(
 	return first, second, third, target, ok
 }
 
+func nonlinearIntegerAffineFourSquareEquality(
+	sumTerm, targetTerm any,
+) (
+	IntegerAffineFactor, IntegerAffineFactor,
+	IntegerAffineFactor, IntegerAffineFactor,
+	IntegerValue, bool,
+) {
+	sumExpression, ok := sumTerm.(Add)
+	if !ok || len(sumExpression.Values) != 4 {
+		return IntegerAffineFactor{}, IntegerAffineFactor{},
+			IntegerAffineFactor{}, IntegerAffineFactor{},
+			IntegerValue{}, false
+	}
+	var factors [4]IntegerAffineFactor
+	for index, term := range sumExpression.Values {
+		factor, exponent, factorOK := nonlinearIntegerAffinePower(term)
+		if !factorOK || exponent != 2 {
+			return IntegerAffineFactor{}, IntegerAffineFactor{},
+				IntegerAffineFactor{}, IntegerAffineFactor{},
+				IntegerValue{}, false
+		}
+		factors[index] = factor
+	}
+	targetExpression, ok := targetTerm.(Term[IntSort])
+	if !ok {
+		return IntegerAffineFactor{}, IntegerAffineFactor{},
+			IntegerAffineFactor{}, IntegerAffineFactor{},
+			IntegerValue{}, false
+	}
+	target, ok := evaluateInteger(
+		targetExpression,
+		booleanModel{}, integerModel{}, rationalModel{},
+	)
+	return factors[0], factors[1], factors[2], factors[3], target, ok
+}
+
 func nonlinearIntegerAffinePower(
 	term Term[IntSort],
 ) (IntegerAffineFactor, int, bool) {
@@ -2769,6 +3020,43 @@ func (problem *nonlinearIntegerProblem) valid(
 			}
 		}
 		if !holds {
+			return false
+		}
+	}
+	for _, relation := range problem.fourSquares[:problem.fourSquareCount] {
+		first := problem.symbolPosition(relation.First.SymbolID)
+		second := problem.symbolPosition(relation.Second.SymbolID)
+		third := problem.symbolPosition(relation.Third.SymbolID)
+		fourth := problem.symbolPosition(relation.Fourth.SymbolID)
+		if first < 0 || second < 0 || third < 0 || fourth < 0 ||
+			!assigned[first] || !assigned[second] ||
+			!assigned[third] || !assigned[fourth] {
+			continue
+		}
+		firstValue := evaluateIntegerAffineFactor(
+			relation.First, values[first],
+		)
+		secondValue := evaluateIntegerAffineFactor(
+			relation.Second, values[second],
+		)
+		thirdValue := evaluateIntegerAffineFactor(
+			relation.Third, values[third],
+		)
+		fourthValue := evaluateIntegerAffineFactor(
+			relation.Fourth, values[fourth],
+		)
+		sum := AddIntegerValue(
+			AddIntegerValue(
+				MultiplyIntegerValue(firstValue, firstValue),
+				MultiplyIntegerValue(secondValue, secondValue),
+			),
+			AddIntegerValue(
+				MultiplyIntegerValue(thirdValue, thirdValue),
+				MultiplyIntegerValue(fourthValue, fourthValue),
+			),
+		)
+		holds := CompareIntegerValue(sum, relation.Target) == 0
+		if holds == relation.Negated {
 			return false
 		}
 	}
