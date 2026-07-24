@@ -63,6 +63,18 @@ type FloatingPointComparisonRelation struct {
 
 func (FloatingPointComparisonRelation) isTerm(BoolSort) {}
 
+// FloatingPointEqualityRelation is the compact solver-neutral form of fp.eq
+// between two same-format floating-point symbols.
+type FloatingPointEqualityRelation struct {
+	ExponentBits    int
+	SignificandBits int
+	LeftSymbolID    int
+	RightSymbolID   int
+	Negated         bool
+}
+
+func (FloatingPointEqualityRelation) isTerm(BoolSort) {}
+
 // FloatingPointMinMaxRelation constrains the exact IEEE bits selected by
 // fp.min/fp.max over two same-format symbols.
 type FloatingPointMinMaxRelation struct {
@@ -338,6 +350,19 @@ func NewFloatingPointComparisonRelation(
 		ExponentBits: exponentBits, SignificandBits: significandBits,
 		LeftSymbolID: leftSymbolID, RightSymbolID: rightSymbolID,
 		Comparison: comparison,
+	}
+}
+
+func NewFloatingPointEqualityRelation(
+	exponentBits, significandBits, leftSymbolID, rightSymbolID int,
+) FloatingPointEqualityRelation {
+	if exponentBits < 2 || significandBits < 2 ||
+		leftSymbolID <= 0 || rightSymbolID <= 0 {
+		panic("smt: invalid floating-point equality")
+	}
+	return FloatingPointEqualityRelation{
+		ExponentBits: exponentBits, SignificandBits: significandBits,
+		LeftSymbolID: leftSymbolID, RightSymbolID: rightSymbolID,
 	}
 }
 
@@ -907,6 +932,22 @@ func AssertFloatingPointComparisonRelation(
 	assertion int,
 	solver Solver,
 	relation FloatingPointComparisonRelation,
+) Solver {
+	if assertion < 0 {
+		panic("smt: negative assertion identity")
+	}
+	nextContext := runtimeContextID(solver.contextID, assertion)
+	return solverValue{
+		contextID: nextContext,
+		depth:     solver.depth,
+		state:     solver.state.asserted(relation),
+	}
+}
+
+func AssertFloatingPointEqualityRelation(
+	assertion int,
+	solver Solver,
+	relation FloatingPointEqualityRelation,
 ) Solver {
 	if assertion < 0 {
 		panic("smt: negative assertion identity")

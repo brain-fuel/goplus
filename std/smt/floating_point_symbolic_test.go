@@ -237,6 +237,77 @@ func TestUnconstrainedFloatingPointComparisonCanonicalModels(t *testing.T) {
 	}
 }
 
+func TestUnconstrainedFloatingPointEqualityCanonicalModels(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		negated bool
+		same    bool
+	}{
+		{"equal", false, false},
+		{"not equal", true, false},
+		{"self equal", false, true},
+		{"self not equal through NaN", true, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rightID := 2
+			if test.same {
+				rightID = 1
+			}
+			relation := NewFloatingPointEqualityRelation(15, 113, 1, rightID)
+			relation.Negated = test.negated
+			result, ok := Check(AssertFloatingPointEqualityRelation(
+				1, New(), relation,
+			)).(Satisfiable)
+			if !ok {
+				t.Fatal("expected satisfiable binary128 equality")
+			}
+			leftBits, leftFound := FloatingPointSymbolModelBits(result.Value, 1)
+			rightBits, rightFound := FloatingPointSymbolModelBits(result.Value, rightID)
+			if !leftFound || !rightFound ||
+				leftBits.Width() != 128 || rightBits.Width() != 128 {
+				t.Fatal("canonical equality model is incomplete")
+			}
+			holds := FloatingPointEqual(
+				FloatingPointFromBits(15, 113, leftBits),
+				FloatingPointFromBits(15, 113, rightBits),
+			)
+			if holds == test.negated {
+				t.Fatal("model does not satisfy equality polarity")
+			}
+		})
+	}
+}
+
+func TestTwoIndependentFloatingPointEqualities(t *testing.T) {
+	first := NewFloatingPointEqualityRelation(8, 24, 1, 2)
+	second := NewFloatingPointEqualityRelation(8, 24, 3, 4)
+	second.Negated = true
+	solver := AssertFloatingPointEqualityRelation(1, New(), first)
+	solver = AssertFloatingPointEqualityRelation(2, solver, second)
+	result, ok := Check(solver).(Satisfiable)
+	if !ok {
+		t.Fatal("expected paired independent equality model")
+	}
+	for _, relation := range []FloatingPointEqualityRelation{first, second} {
+		left, leftFound := FloatingPointSymbolModelBits(
+			result.Value, relation.LeftSymbolID,
+		)
+		right, rightFound := FloatingPointSymbolModelBits(
+			result.Value, relation.RightSymbolID,
+		)
+		if !leftFound || !rightFound {
+			t.Fatal("paired equality model is incomplete")
+		}
+		holds := FloatingPointEqual(
+			FloatingPointFromBits(8, 24, left),
+			FloatingPointFromBits(8, 24, right),
+		)
+		if holds == relation.Negated {
+			t.Fatal("paired equality model has wrong polarity")
+		}
+	}
+}
+
 func TestCompactFloatingPointMinMaxWithAssignedSymbols(t *testing.T) {
 	solver := New()
 	solver = Assert(1, solver, BitVectorRelation{

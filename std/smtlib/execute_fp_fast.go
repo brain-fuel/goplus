@@ -582,18 +582,14 @@ func executeFloatingPointFast(source string) (ExecutionResult, bool) {
 			nextAssertion++
 			responses = append(responses, Acknowledged{CommandIndex: command.commandIndex})
 		case fpFastEquality:
-			total := command.exponentBits + command.significandBits
-			equality := smt.FloatingPointEqualBitVectorTerms(
+			relation := smt.NewFloatingPointEqualityRelation(
 				command.exponentBits, command.significandBits,
-				smt.BitVecConst(total, command.symbolID, command.name),
-				smt.BitVecConst(
-					total, command.secondSymbolID, command.secondName,
-				),
+				command.symbolID, command.secondSymbolID,
 			)
-			if command.negated {
-				equality = smt.Not{Value: equality}
-			}
-			solver = smt.Assert(nextAssertion, solver, equality)
+			relation.Negated = command.negated
+			solver = smt.AssertFloatingPointEqualityRelation(
+				nextAssertion, solver, relation,
+			)
 			nextAssertion++
 			responses = append(responses, Acknowledged{CommandIndex: command.commandIndex})
 		case fpFastGroundEquality:

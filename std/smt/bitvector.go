@@ -240,7 +240,7 @@ func containsBitVectorTheory(term Term[BoolSort]) bool {
 		return true
 	case bitVectorUnsignedAddOverflow[BoolSort], bitVectorSignedAddOverflow[BoolSort], bitVectorUnsignedSubOverflow[BoolSort], bitVectorSignedSubOverflow[BoolSort], bitVectorUnsignedMulOverflow[BoolSort], bitVectorSignedMulOverflow[BoolSort], bitVectorSignedDivOverflow[BoolSort], bitVectorNegOverflow[BoolSort]:
 		return true
-	case BitVectorRelation, BitVectorConjunction, BitVectorIntegerRelation, BitVectorMixedConjunction, BitVectorEUFRelation, BitVectorEUFConjunction, FloatingPointRelation, FloatingPointComparisonRelation, FloatingPointMinMaxRelation, FloatingPointRoundToIntegralRelation, FloatingPointToBitVectorRelation, FloatingPointFromBitVectorRelation, FloatingPointFormatConversionRelation, FloatingPointToRealRelation, FloatingPointAddRelation, FloatingPointSubRelation, FloatingPointMulRelation, FloatingPointDivRelation, FloatingPointFMARelation, FloatingPointSqrtRelation, FloatingPointRemRelation:
+	case BitVectorRelation, BitVectorConjunction, BitVectorIntegerRelation, BitVectorMixedConjunction, BitVectorEUFRelation, BitVectorEUFConjunction, FloatingPointRelation, FloatingPointEqualityRelation, FloatingPointComparisonRelation, FloatingPointMinMaxRelation, FloatingPointRoundToIntegralRelation, FloatingPointToBitVectorRelation, FloatingPointFromBitVectorRelation, FloatingPointFormatConversionRelation, FloatingPointToRealRelation, FloatingPointAddRelation, FloatingPointSubRelation, FloatingPointMulRelation, FloatingPointDivRelation, FloatingPointFMARelation, FloatingPointSqrtRelation, FloatingPointRemRelation:
 		return true
 	}
 	return false
@@ -352,6 +352,8 @@ type compactBitVectorProblem struct {
 	relations         [8]BitVectorRelation
 	conversionCount   int
 	conversions       [8]compactBitVectorIntegerRelation
+	equalityCount     int
+	equalities        [4]FloatingPointEqualityRelation
 	comparisonCount   int
 	comparisons       [4]FloatingPointComparisonRelation
 	minMaxCount       int
@@ -840,6 +842,14 @@ func (problem *compactBitVectorProblem) add(term Term[BoolSort], negated bool) b
 		problem.comparisons[problem.comparisonCount] = value
 		problem.comparisonCount++
 		return true
+	case FloatingPointEqualityRelation:
+		if problem.equalityCount == len(problem.equalities) {
+			return false
+		}
+		value.Negated = value.Negated != negated
+		problem.equalities[problem.equalityCount] = value
+		problem.equalityCount++
+		return true
 	case FloatingPointMinMaxRelation:
 		if problem.minMaxCount == len(problem.minMax) {
 			return false
@@ -1026,6 +1036,59 @@ func compactConversionOperands(left, right Term[IntSort]) (bitVectorToInteger[In
 	return bitVectorToInteger[IntSort]{}, IntegerValue{}, false, false
 }
 
+func synthesizeStandaloneFloatingPointEquality(
+	assignments *[4]compactBitVectorAssignment,
+	assignmentCount *int,
+	relation FloatingPointEqualityRelation,
+) bool {
+	for index := 0; index < *assignmentCount; index++ {
+		if assignments[index].id == relation.LeftSymbolID ||
+			assignments[index].id == relation.RightSymbolID {
+			return false
+		}
+	}
+	total := relation.ExponentBits + relation.SignificandBits
+	fixed := NotBitVectorValue(NewBitVectorUint64(total, 0))
+	left := FloatingPointPositiveZero(
+		relation.ExponentBits, relation.SignificandBits,
+	)
+	right := left
+	if relation.Negated {
+		if relation.LeftSymbolID == relation.RightSymbolID {
+			left = FloatingPointNaN(
+				relation.ExponentBits, relation.SignificandBits,
+			)
+			right = left
+		} else {
+			right = floatingPointFromRational(
+				1, relation.ExponentBits, relation.SignificandBits,
+				NewRational(1, 1),
+			)
+		}
+	}
+	if FloatingPointEqual(left, right) == relation.Negated {
+		return false
+	}
+	required := 2
+	if relation.LeftSymbolID == relation.RightSymbolID {
+		required = 1
+	}
+	if *assignmentCount+required > len(assignments) {
+		return false
+	}
+	assignments[*assignmentCount] = compactBitVectorAssignment{
+		id: relation.LeftSymbolID, value: FloatingPointBits(left), fixed: fixed,
+	}
+	*assignmentCount++
+	if required == 2 {
+		assignments[*assignmentCount] = compactBitVectorAssignment{
+			id: relation.RightSymbolID, value: FloatingPointBits(right), fixed: fixed,
+		}
+		*assignmentCount++
+	}
+	return true
+}
+
 func synthesizeStandaloneFloatingPointComparison(
 	assignments *[4]compactBitVectorAssignment,
 	assignmentCount *int,
@@ -1189,6 +1252,35 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 			assignmentCount++
 		}
 	}
+	// Up to two independent IEEE-754 equality atoms have constant-size
+	// canonical models. Equality is deliberately not bit equality: signed
+	// zeroes compare equal and NaNs, including a NaN with itself, do not.
+	if problem.equalityCount > 0 &&
+		problem.equalityCount <= 2 &&
+		problem.relationCount == 0 &&
+		problem.conversionCount == 0 &&
+		problem.comparisonCount == 0 &&
+		problem.minMaxCount == 0 &&
+		problem.roundCount == 0 &&
+		problem.fpConversionCount == 0 &&
+		problem.fromBVCount == 0 &&
+		problem.formatCount == 0 &&
+		problem.toRealCount == 0 &&
+		problem.addCount == 0 &&
+		problem.subCount == 0 &&
+		problem.mulCount == 0 &&
+		problem.divCount == 0 &&
+		problem.fmaCount == 0 &&
+		problem.sqrtCount == 0 &&
+		problem.remCount == 0 {
+		for _, relation := range problem.equalities[:problem.equalityCount] {
+			if !synthesizeStandaloneFloatingPointEquality(
+				&assignments, &assignmentCount, relation,
+			) {
+				return checkOutcome{}, false
+			}
+		}
+	}
 	// Up to two independent floating-point order atoms have constant-size
 	// canonical models in every valid format. Construct them directly instead
 	// of allocating the general bit-blast graph. Shared or mixed comparison
@@ -1198,6 +1290,7 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 		problem.comparisonCount <= 2 &&
 		problem.relationCount == 0 &&
 		problem.conversionCount == 0 &&
+		problem.equalityCount == 0 &&
 		problem.minMaxCount == 0 &&
 		problem.roundCount == 0 &&
 		problem.fpConversionCount == 0 &&
@@ -1233,6 +1326,7 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 		problem.minMaxCount <= 2 &&
 		problem.relationCount == 0 &&
 		problem.conversionCount == 0 &&
+		problem.equalityCount == 0 &&
 		problem.comparisonCount == 0 &&
 		problem.roundCount == 0 &&
 		problem.fpConversionCount == 0 &&
@@ -1687,6 +1781,34 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 			holds = comparison <= 0
 		}
 		if holds == conversion.negated {
+			return checkOutcome{status: checkUnsat}, true
+		}
+	}
+	for _, relation := range problem.equalities[:problem.equalityCount] {
+		var left, right BitVectorValue
+		leftFound, rightFound := false, false
+		for index := 0; index < assignmentCount; index++ {
+			switch assignments[index].id {
+			case relation.LeftSymbolID:
+				left, leftFound = assignments[index].value, true
+			case relation.RightSymbolID:
+				right, rightFound = assignments[index].value, true
+			}
+		}
+		total := relation.ExponentBits + relation.SignificandBits
+		if !leftFound || !rightFound ||
+			left.Width() != total || right.Width() != total {
+			return checkOutcome{}, false
+		}
+		holds := FloatingPointEqual(
+			FloatingPointFromBits(
+				relation.ExponentBits, relation.SignificandBits, left,
+			),
+			FloatingPointFromBits(
+				relation.ExponentBits, relation.SignificandBits, right,
+			),
+		)
+		if holds == relation.Negated {
 			return checkOutcome{status: checkUnsat}, true
 		}
 	}
@@ -2326,6 +2448,8 @@ func (encoder *bitVectorEncoder) boolean(term Term[BoolSort]) (int, bool) {
 		return encoder.boolean(expandBitVectorRelation(value))
 	case FloatingPointRelation:
 		return encoder.boolean(expandFloatingPointRelation(value))
+	case FloatingPointEqualityRelation:
+		return encoder.boolean(expandFloatingPointEqualityRelation(value))
 	case FloatingPointComparisonRelation:
 		return encoder.boolean(expandFloatingPointComparisonRelation(value))
 	case FloatingPointMinMaxRelation:
@@ -2553,6 +2677,22 @@ func expandFloatingPointRelation(value FloatingPointRelation) Term[BoolSort] {
 			Not{Value: signSet},
 		}}
 	}
+	if value.Negated {
+		return Not{Value: term}
+	}
+	return term
+}
+
+func expandFloatingPointEqualityRelation(
+	value FloatingPointEqualityRelation,
+) Term[BoolSort] {
+	total := value.ExponentBits + value.SignificandBits
+	term := FloatingPointEqualBitVectorTerms(
+		value.ExponentBits,
+		value.SignificandBits,
+		BitVecConst(total, value.LeftSymbolID, ""),
+		BitVecConst(total, value.RightSymbolID, ""),
+	)
 	if value.Negated {
 		return Not{Value: term}
 	}

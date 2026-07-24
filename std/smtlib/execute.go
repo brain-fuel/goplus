@@ -2865,8 +2865,16 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 				sort: sortBool, boolean: smt.Bool{Value: holds},
 			}, nil
 		}
-		if !equality && left.floatingPointSymbol != 0 &&
-			right.floatingPointSymbol != 0 {
+		if left.floatingPointSymbol != 0 && right.floatingPointSymbol != 0 {
+			if equality {
+				return dynamicTerm{
+					sort: sortBool,
+					boolean: smt.NewFloatingPointEqualityRelation(
+						left.exponentBits, left.significandBits,
+						left.floatingPointSymbol, right.floatingPointSymbol,
+					),
+				}, nil
+			}
 			return dynamicTerm{
 				sort: sortBool,
 				boolean: smt.NewFloatingPointComparisonRelation(
