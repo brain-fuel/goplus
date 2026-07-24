@@ -42,6 +42,7 @@ type dynamicTerm struct {
 	floatingPointRound   *dynamicFloatingPointRound
 	floatingPointMinMax  *dynamicFloatingPointMinMax
 	floatingPointAdd     *dynamicFloatingPointAdd
+	floatingPointSub     *dynamicFloatingPointSub
 	floatingPointSymbol  int
 	uninterpreted        smt.Term[smt.UninterpretedSort]
 	arrayIntInt          smt.Term[smt.ArraySort[smt.IntSort, smt.IntSort]]
@@ -71,6 +72,12 @@ type dynamicFloatingPointMinMax struct {
 }
 
 type dynamicFloatingPointAdd struct {
+	exponentBits, significandBits int
+	leftSymbolID, rightSymbolID   int
+	mode                          smt.FloatingPointRoundingMode
+}
+
+type dynamicFloatingPointSub struct {
 	exponentBits, significandBits int
 	leftSymbolID, rightSymbolID   int
 	mode                          smt.FloatingPointRoundingMode
@@ -2342,6 +2349,7 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 			floatingPointRound:  terms[0].floatingPointRound,
 			floatingPointMinMax: terms[0].floatingPointMinMax,
 			floatingPointAdd:    terms[0].floatingPointAdd,
+			floatingPointSub:    terms[0].floatingPointSub,
 			bitVectorSymbol:     terms[0].floatingPointSymbol,
 		}, nil
 	}
@@ -2377,6 +2385,45 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 			sort: sortFloatingPoint, bitWidth: left.bitWidth,
 			exponentBits: left.exponentBits, significandBits: left.significandBits,
 			floatingPointAdd: &dynamicFloatingPointAdd{
+				exponentBits: left.exponentBits, significandBits: left.significandBits,
+				leftSymbolID:  left.floatingPointSymbol,
+				rightSymbolID: right.floatingPointSymbol,
+				mode:          terms[0].roundingMode,
+			},
+		}, nil
+	}
+	if operator == "fp.sub" && len(terms) == 3 &&
+		terms[0].sort == sortRoundingMode &&
+		terms[1].sort == sortFloatingPoint &&
+		terms[2].sort == sortFloatingPoint &&
+		terms[1].exponentBits == terms[2].exponentBits &&
+		terms[1].significandBits == terms[2].significandBits {
+		left, right := terms[1], terms[2]
+		if left.bitVectorExact && right.bitVectorExact {
+			difference := smt.FloatingPointSub(
+				terms[0].roundingMode,
+				smt.FloatingPointFromBits(
+					left.exponentBits, left.significandBits, left.bitVectorValue,
+				),
+				smt.FloatingPointFromBits(
+					right.exponentBits, right.significandBits, right.bitVectorValue,
+				),
+			)
+			bits := smt.FloatingPointBits(difference)
+			return dynamicTerm{
+				sort: sortFloatingPoint, bitWidth: left.bitWidth,
+				exponentBits: left.exponentBits, significandBits: left.significandBits,
+				bitVector:      smt.BitVectorTerm(bits),
+				bitVectorExact: true, bitVectorValue: bits,
+			}, nil
+		}
+		if left.floatingPointSymbol == 0 || right.floatingPointSymbol == 0 {
+			return dynamicTerm{}, fmt.Errorf("fp.sub currently requires ground values or direct symbols")
+		}
+		return dynamicTerm{
+			sort: sortFloatingPoint, bitWidth: left.bitWidth,
+			exponentBits: left.exponentBits, significandBits: left.significandBits,
+			floatingPointSub: &dynamicFloatingPointSub{
 				exponentBits: left.exponentBits, significandBits: left.significandBits,
 				leftSymbolID:  left.floatingPointSymbol,
 				rightSymbolID: right.floatingPointSymbol,
@@ -2985,6 +3032,22 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 				return dynamicTerm{
 					sort: sortBool,
 					boolean: smt.NewFloatingPointAddRelation(
+						relation.exponentBits, relation.significandBits,
+						relation.leftSymbolID, relation.rightSymbolID,
+						relation.mode, exact.bitVectorValue,
+					),
+				}, nil
+			}
+			difference, exact := terms[0], terms[1]
+			if difference.floatingPointSub == nil {
+				difference, exact = terms[1], terms[0]
+			}
+			if difference.floatingPointSub != nil && exact.bitVectorExact &&
+				difference.bitWidth == exact.bitWidth {
+				relation := difference.floatingPointSub
+				return dynamicTerm{
+					sort: sortBool,
+					boolean: smt.NewFloatingPointSubRelation(
 						relation.exponentBits, relation.significandBits,
 						relation.leftSymbolID, relation.rightSymbolID,
 						relation.mode, exact.bitVectorValue,

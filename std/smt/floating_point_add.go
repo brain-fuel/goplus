@@ -102,6 +102,17 @@ func floatingPointAdd(
 	)
 }
 
+func floatingPointSub(
+	mode uint8,
+	left, right FloatingPointValue,
+) FloatingPointValue {
+	if FloatingPointExponentBits(left) != FloatingPointExponentBits(right) ||
+		FloatingPointSignificandBits(left) != FloatingPointSignificandBits(right) {
+		panic("smt: floating-point subtraction format mismatch")
+	}
+	return floatingPointAdd(mode, left, FloatingPointNeg(right))
+}
+
 type floatingPointFiniteUint64 struct {
 	negative  bool
 	magnitude uint64

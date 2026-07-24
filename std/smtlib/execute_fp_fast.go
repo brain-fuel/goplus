@@ -14,6 +14,7 @@ const (
 	fpFastRound
 	fpFastMinMax
 	fpFastAdd
+	fpFastSub
 	fpFastPredicate
 	fpFastComparison
 	fpFastEquality
@@ -73,6 +74,7 @@ const (
 	fpFastRoundedBits
 	fpFastMinMaxBits
 	fpFastAddBits
+	fpFastSubBits
 	fpFastExactFloatingBits
 	fpFastLiteralBits
 )
@@ -206,6 +208,18 @@ func executeFloatingPointFast(source string) (ExecutionResult, bool) {
 			)
 			relation.Negated = command.negated
 			solver = smt.AssertFloatingPointAddRelation(
+				nextAssertion, solver, relation,
+			)
+			nextAssertion++
+			responses = append(responses, Acknowledged{CommandIndex: command.commandIndex})
+		case fpFastSub:
+			relation := smt.NewFloatingPointSubRelation(
+				command.exponentBits, command.significandBits,
+				command.symbolID, command.secondSymbolID,
+				command.mode, command.value,
+			)
+			relation.Negated = command.negated
+			solver = smt.AssertFloatingPointSubRelation(
 				nextAssertion, solver, relation,
 			)
 			nextAssertion++
@@ -377,6 +391,8 @@ func (scanner *fpFastScanner) formula(
 		command.kind = fpFastMinMax
 	case fpFastAddBits:
 		command.kind = fpFastAdd
+	case fpFastSubBits:
+		command.kind = fpFastSub
 	default:
 		return fpFastCommand{}, false
 	}
@@ -516,7 +532,7 @@ func (scanner *fpFastScanner) operand(
 			significandBits: left.significandBits,
 			operation:       selectedOperation,
 		}, true
-	case "fp.add":
+	case "fp.add", "fp.sub":
 		modeToken, modeOK := scanner.atom()
 		leftToken, leftOK := scanner.atom()
 		rightToken, rightOK := scanner.atom()
@@ -532,8 +548,12 @@ func (scanner *fpFastScanner) operand(
 			!scanner.right() || !scanner.right() {
 			return fpFastOperand{}, false
 		}
+		kind := uint8(fpFastAddBits)
+		if scanner.text(operation) == "fp.sub" {
+			kind = fpFastSubBits
+		}
 		return fpFastOperand{
-			kind:     fpFastAddBits,
+			kind:     kind,
 			symbolID: left.id, secondSymbolID: right.id,
 			exponentBits:    left.exponentBits,
 			significandBits: left.significandBits,

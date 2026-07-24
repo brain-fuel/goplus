@@ -314,6 +314,62 @@ func TestFloatingPointAddBinary128Tie(t *testing.T) {
 	if !EqualBitVectorValue(FloatingPointBits(away), wantAway) {
 		t.Fatalf("binary128 RNA tie=%v, want %v", FloatingPointBits(away), wantAway)
 	}
+	subAway := FloatingPointSub(
+		RoundNearestTiesToAway(), one, FloatingPointNeg(halfULP),
+	)
+	if !EqualBitVectorValue(FloatingPointBits(subAway), wantAway) {
+		t.Fatalf("binary128 fp.sub RNA tie=%v, want %v", FloatingPointBits(subAway), wantAway)
+	}
+}
+
+func TestFloatingPointSubBinary32(t *testing.T) {
+	modes := []FloatingPointRoundingMode{
+		RoundNearestTiesToEven(),
+		RoundNearestTiesToAway(),
+		RoundTowardPositive(),
+		RoundTowardNegative(),
+		RoundTowardZero(),
+	}
+	tests := []struct {
+		name        string
+		left, right uint64
+		want        [5]uint64
+	}{
+		{"exact", 0x40700000, 0x40100000, [5]uint64{0x3fc00000, 0x3fc00000, 0x3fc00000, 0x3fc00000, 0x3fc00000}},
+		{"positive tie", 0x3f800000, 0xb3800000, [5]uint64{0x3f800000, 0x3f800001, 0x3f800001, 0x3f800000, 0x3f800000}},
+		{"cancellation", 0x3f800000, 0x3f800000, [5]uint64{0, 0, 0, 0x80000000, 0}},
+		{"subnormal borrow", 0x00800000, 0x00000001, [5]uint64{0x007fffff, 0x007fffff, 0x007fffff, 0x007fffff, 0x007fffff}},
+		{"dominance", 0x3f800000, 0x00000001, [5]uint64{0x3f800000, 0x3f800000, 0x3f800000, 0x3f7fffff, 0x3f7fffff}},
+		{"overflow", 0x7f7fffff, 0xff7fffff, [5]uint64{0x7f800000, 0x7f800000, 0x7f800000, 0x7f7fffff, 0x7f7fffff}},
+	}
+	for _, test := range tests {
+		for modeIndex, mode := range modes {
+			difference := FloatingPointSub(
+				mode,
+				FloatingPointFromUint64(8, 24, test.left),
+				FloatingPointFromUint64(8, 24, test.right),
+			)
+			got, ok := FloatingPointBits(difference).Uint64()
+			if !ok || got != test.want[modeIndex] {
+				t.Fatalf("%s mode %d bits=%#08x,%v, want %#08x,true", test.name, modeIndex, got, ok, test.want[modeIndex])
+			}
+		}
+	}
+}
+
+func TestFloatingPointSubSpecialValues(t *testing.T) {
+	positiveInfinity := FloatingPointPositiveInfinity(8, 24)
+	negativeInfinity := FloatingPointNegativeInfinity(8, 24)
+	if !FloatingPointIsNaN(FloatingPointSub(
+		RoundNearestTiesToEven(), positiveInfinity, positiveInfinity,
+	)) {
+		t.Fatal("infinity minus itself must produce NaN")
+	}
+	if difference := FloatingPointSub(
+		RoundNearestTiesToEven(), positiveInfinity, negativeInfinity,
+	); !FloatingPointIsInfinite(difference) || FloatingPointIsNegative(difference) {
+		t.Fatal("positive infinity minus negative infinity must be positive infinity")
+	}
 }
 
 func TestFloatingPointGroundAbsAndNeg(t *testing.T) {

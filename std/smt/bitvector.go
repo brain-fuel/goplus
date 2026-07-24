@@ -228,7 +228,7 @@ func containsBitVectorTheory(term Term[BoolSort]) bool {
 		return true
 	case bitVectorUnsignedAddOverflow[BoolSort], bitVectorSignedAddOverflow[BoolSort], bitVectorUnsignedSubOverflow[BoolSort], bitVectorSignedSubOverflow[BoolSort], bitVectorUnsignedMulOverflow[BoolSort], bitVectorSignedMulOverflow[BoolSort], bitVectorSignedDivOverflow[BoolSort], bitVectorNegOverflow[BoolSort]:
 		return true
-	case BitVectorRelation, BitVectorConjunction, BitVectorIntegerRelation, BitVectorMixedConjunction, BitVectorEUFRelation, BitVectorEUFConjunction, FloatingPointRelation, FloatingPointComparisonRelation, FloatingPointMinMaxRelation, FloatingPointRoundToIntegralRelation, FloatingPointAddRelation:
+	case BitVectorRelation, BitVectorConjunction, BitVectorIntegerRelation, BitVectorMixedConjunction, BitVectorEUFRelation, BitVectorEUFConjunction, FloatingPointRelation, FloatingPointComparisonRelation, FloatingPointMinMaxRelation, FloatingPointRoundToIntegralRelation, FloatingPointAddRelation, FloatingPointSubRelation:
 		return true
 	}
 	return false
@@ -348,6 +348,8 @@ type compactBitVectorProblem struct {
 	rounds          [4]FloatingPointRoundToIntegralRelation
 	addCount        int
 	adds            [4]FloatingPointAddRelation
+	subCount        int
+	subs            [4]FloatingPointSubRelation
 }
 
 func (problem *compactBitVectorProblem) add(term Term[BoolSort], negated bool) bool {
@@ -417,6 +419,14 @@ func (problem *compactBitVectorProblem) add(term Term[BoolSort], negated bool) b
 		value.Negated = value.Negated != negated
 		problem.adds[problem.addCount] = value
 		problem.addCount++
+		return true
+	case FloatingPointSubRelation:
+		if problem.subCount == len(problem.subs) {
+			return false
+		}
+		value.Negated = value.Negated != negated
+		problem.subs[problem.subCount] = value
+		problem.subCount++
 		return true
 	case BitVectorRelation:
 		if problem.relationCount == len(problem.relations) {
@@ -761,6 +771,35 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 			),
 		)
 		holds := EqualBitVectorValue(FloatingPointBits(sum), relation.Value)
+		if holds == relation.Negated {
+			return checkOutcome{status: checkUnsat}, true
+		}
+	}
+	for _, relation := range problem.subs[:problem.subCount] {
+		var left, right BitVectorValue
+		leftFound, rightFound := false, false
+		for index := 0; index < assignmentCount; index++ {
+			switch assignments[index].id {
+			case relation.LeftSymbolID:
+				left, leftFound = assignments[index].value, true
+			case relation.RightSymbolID:
+				right, rightFound = assignments[index].value, true
+			}
+		}
+		total := relation.ExponentBits + relation.SignificandBits
+		if !leftFound || !rightFound || left.Width() != total || right.Width() != total {
+			return checkOutcome{}, false
+		}
+		difference := floatingPointSub(
+			relation.Mode,
+			FloatingPointFromBits(
+				relation.ExponentBits, relation.SignificandBits, left,
+			),
+			FloatingPointFromBits(
+				relation.ExponentBits, relation.SignificandBits, right,
+			),
+		)
+		holds := EqualBitVectorValue(FloatingPointBits(difference), relation.Value)
 		if holds == relation.Negated {
 			return checkOutcome{status: checkUnsat}, true
 		}

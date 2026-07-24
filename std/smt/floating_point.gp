@@ -230,6 +230,12 @@ func FloatingPointAdd(0 e nat, 0 s nat, mode FloatingPointRoundingMode, left Flo
 	return floatingPointAdd(floatingPointRoundingModeCode(mode), left, right)
 }
 
+// FloatingPointSub implements exact SMT-LIB fp.sub rounding for arbitrary
+// valid floating-point formats.
+func FloatingPointSub(0 e nat, 0 s nat, mode FloatingPointRoundingMode, left FloatingPointValue[e, s], right FloatingPointValue[e, s]) FloatingPointValue[e, s] {
+	return floatingPointSub(floatingPointRoundingModeCode(mode), left, right)
+}
+
 func floatingPointSignificandNonzero(bits BitVectorValue, significandBits int) bool {
 	for index := 0; index < significandBits-1; index++ {
 		if bits.Bit(index) { return true }
