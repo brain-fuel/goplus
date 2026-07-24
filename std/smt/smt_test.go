@@ -1107,6 +1107,127 @@ func TestNonlinearIntegerAffineTwoSquareBounds(t *testing.T) {
 	}
 }
 
+func TestNonlinearIntegerAffineThreeSquareRelations(t *testing.T) {
+	x := IntSymbol{ID: 123, Name: "x"}
+	y := IntSymbol{ID: 124, Name: "y"}
+	z := IntSymbol{ID: 125, Name: "z"}
+	first := Add{Values: []Term[IntSort]{
+		ScaleInteger(NewIntegerValue(2), x),
+		IntegerTerm(NewIntegerValue(1)),
+	}}
+	second := ScaleInteger(NewIntegerValue(2), y)
+	third := Add{Values: []Term[IntSort]{
+		ScaleInteger(NewIntegerValue(3), z),
+		IntegerTerm(NewIntegerValue(-1)),
+	}}
+	sum := Add{Values: []Term[IntSort]{
+		MultiplyInteger(first, first),
+		MultiplyInteger(second, second),
+		MultiplyInteger(third, third),
+	}}
+	checked := Check(Assert(1, New(), Equal{
+		Left: sum, Right: IntegerTerm(NewIntegerValue(6)),
+	}))
+	result, ok := checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("affine three-square relation=%#v", checked)
+	}
+	xValue, xFound := IntegerModelValue(result.Value, x)
+	yValue, yFound := IntegerModelValue(result.Value, y)
+	zValue, zFound := IntegerModelValue(result.Value, z)
+	firstValue := AddIntegerValue(
+		MultiplyIntegerValue(NewIntegerValue(2), xValue),
+		NewIntegerValue(1),
+	)
+	secondValue := MultiplyIntegerValue(NewIntegerValue(2), yValue)
+	thirdValue := AddIntegerValue(
+		MultiplyIntegerValue(NewIntegerValue(3), zValue),
+		NewIntegerValue(-1),
+	)
+	if !xFound || !yFound || !zFound || CompareIntegerValue(
+		AddIntegerValue(
+			AddIntegerValue(
+				MultiplyIntegerValue(firstValue, firstValue),
+				MultiplyIntegerValue(secondValue, secondValue),
+			),
+			MultiplyIntegerValue(thirdValue, thirdValue),
+		),
+		NewIntegerValue(6),
+	) != 0 {
+		t.Fatalf(
+			"three-square model x=%v/%v y=%v/%v z=%v/%v",
+			xValue, xFound, yValue, yFound, zValue, zFound,
+		)
+	}
+
+	impossible := Check(Assert(2, New(), Equal{
+		Left: sum, Right: IntegerTerm(NewIntegerValue(3)),
+	}))
+	if _, ok := impossible.(Unsatisfiable); !ok {
+		t.Fatalf("affine three-square non-image=%#v", impossible)
+	}
+
+	disequality := Check(Assert(3, New(), Not{Value: Equal{Left: sum, Right: IntegerTerm(NewIntegerValue(6))}}))
+	if _, ok := disequality.(Satisfiable); !ok {
+		t.Fatalf("affine three-square disequality=%#v", disequality)
+	}
+
+	conflict := And{Values: []Term[BoolSort]{
+		Equal{
+			Left: sum, Right: IntegerTerm(NewIntegerValue(6)),
+		},
+		Equal{
+			Left: IntegerTerm(NewIntegerValue(7)), Right: sum,
+		},
+	}}
+	got := Check(Assert(4, New(), conflict))
+	if _, ok := got.(Unsatisfiable); !ok {
+		t.Fatalf("affine three-square conflict=%#v", got)
+	}
+
+	wideRoot, err := ParseIntegerValue("1267650600228229401496703205376")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wideTarget := MultiplyIntegerValue(wideRoot, wideRoot)
+	wideSum := Add{Values: []Term[IntSort]{
+		MultiplyInteger(x, x),
+		MultiplyInteger(y, y),
+		MultiplyInteger(z, z),
+	}}
+	checked = Check(Assert(5, New(), Equal{
+		Left: wideSum, Right: IntegerTerm(wideTarget),
+	}))
+	result, ok = checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("wide three-square relation=%#v", checked)
+	}
+	xValue, xFound = IntegerModelValue(result.Value, x)
+	yValue, yFound = IntegerModelValue(result.Value, y)
+	zValue, zFound = IntegerModelValue(result.Value, z)
+	if !xFound || !yFound || !zFound || CompareIntegerValue(
+		AddIntegerValue(
+			AddIntegerValue(
+				MultiplyIntegerValue(xValue, xValue),
+				MultiplyIntegerValue(yValue, yValue),
+			),
+			MultiplyIntegerValue(zValue, zValue),
+		),
+		wideTarget,
+	) != 0 {
+		t.Fatalf("wide three-square model x=%v y=%v z=%v", xValue, yValue, zValue)
+	}
+	overLimitTarget := MultiplyIntegerValue(
+		NewIntegerValue(7), wideTarget,
+	)
+	overLimit := Check(Assert(6, New(), Equal{
+		Left: wideSum, Right: IntegerTerm(overLimitTarget),
+	}))
+	if _, ok := overLimit.(Unknown); !ok {
+		t.Fatalf("over-limit three-square relation=%#v", overLimit)
+	}
+}
+
 func TestNonlinearIntegerAffineFactorProducts(t *testing.T) {
 	x := IntSymbol{ID: 110, Name: "x"}
 	y := IntSymbol{ID: 111, Name: "y"}
