@@ -626,6 +626,51 @@ func synthesizeFloatingPointToRealPreimage(
 	return term.SymbolID, FloatingPointBits(candidate), true
 }
 
+func synthesizeFloatingPointFormatPreimage(
+	relation FloatingPointFormatConversionRelation,
+) (BitVectorValue, bool) {
+	targetWidth := relation.TargetExponentBits +
+		relation.TargetSignificandBits
+	if relation.Value.Width() != targetWidth {
+		return BitVectorValue{}, false
+	}
+	target := FloatingPointFromBits(
+		relation.TargetExponentBits,
+		relation.TargetSignificandBits,
+		relation.Value,
+	)
+	validate := func(candidate FloatingPointValue) (BitVectorValue, bool) {
+		converted := floatingPointConvertFormat(
+			relation.Mode,
+			relation.TargetExponentBits,
+			relation.TargetSignificandBits,
+			candidate,
+		)
+		if EqualBitVectorValue(FloatingPointBits(converted), relation.Value) {
+			return FloatingPointBits(candidate), true
+		}
+		return BitVectorValue{}, false
+	}
+	for reverseMode := uint8(1); reverseMode <= 5; reverseMode++ {
+		candidate := floatingPointConvertFormat(
+			reverseMode,
+			relation.SourceExponentBits,
+			relation.SourceSignificandBits,
+			target,
+		)
+		if bits, ok := validate(candidate); ok {
+			return bits, true
+		}
+		if bits, ok := validate(floatingPointNextDown(candidate)); ok {
+			return bits, true
+		}
+		if bits, ok := validate(floatingPointNextUp(candidate)); ok {
+			return bits, true
+		}
+	}
+	return BitVectorValue{}, false
+}
+
 func (problem *compactBitVectorProblem) add(term Term[BoolSort], negated bool) bool {
 	switch value := term.(type) {
 	case And:
@@ -923,6 +968,34 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 			id:    relation.SymbolID,
 			value: relation.Value,
 			fixed: NotBitVectorValue(NewBitVectorUint64(total, 0)),
+		}
+		assignmentCount++
+	}
+	// Reverse a fixed format-conversion result into the source format under
+	// each rounding direction, then forward-validate the candidate and its
+	// immediate neighbors with the asserted mode. Targets outside the
+	// conversion image remain unknown.
+	for _, relation := range problem.formats[:problem.formatCount] {
+		found := false
+		for index := 0; index < assignmentCount; index++ {
+			if assignments[index].id == relation.SymbolID {
+				found = true
+				break
+			}
+		}
+		if found || relation.Negated {
+			continue
+		}
+		candidate, synthesized :=
+			synthesizeFloatingPointFormatPreimage(relation)
+		if !synthesized || assignmentCount == len(assignments) {
+			return checkOutcome{}, false
+		}
+		assignments[assignmentCount] = compactBitVectorAssignment{
+			id: relation.SymbolID, value: candidate,
+			fixed: NotBitVectorValue(
+				NewBitVectorUint64(candidate.Width(), 0),
+			),
 		}
 		assignmentCount++
 	}

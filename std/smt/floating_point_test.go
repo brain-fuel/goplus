@@ -1082,6 +1082,90 @@ func TestFloatingPointToRealSynthesizesAffinePreimage(t *testing.T) {
 	}
 }
 
+func TestFloatingPointFormatConversionSynthesizesUnconstrainedSource(t *testing.T) {
+	for _, test := range []struct {
+		name                         string
+		sourceExponent, sourceSignif int
+		targetExponent, targetSignif int
+		target                       BitVectorValue
+	}{
+		{
+			"binary32-to-binary16", 8, 24, 5, 11,
+			NewBitVectorUint64(16, 0x3c00),
+		},
+		{
+			"binary16-to-binary32", 5, 11, 8, 24,
+			NewBitVectorUint64(32, 0x3fc00000),
+		},
+		{
+			"signed-zero", 5, 11, 8, 24,
+			NewBitVectorUint64(32, 0x80000000),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			relation := NewFloatingPointFormatConversionRelation(
+				test.sourceExponent, test.sourceSignif,
+				test.targetExponent, test.targetSignif,
+				1, RoundNearestTiesToEven(), test.target,
+			)
+			result, ok := Check(AssertFloatingPointFormatConversionRelation(
+				1, New(), relation,
+			)).(Satisfiable)
+			if !ok {
+				t.Fatal("expected synthesized format-conversion source")
+			}
+			source, found := FloatingPointSymbolModelBits(result.Value, 1)
+			if !found {
+				t.Fatal("format-conversion source missing from model")
+			}
+			converted := FloatingPointConvertFormat(
+				test.targetExponent, test.targetSignif,
+				RoundNearestTiesToEven(),
+				FloatingPointFromBits(
+					test.sourceExponent, test.sourceSignif, source,
+				),
+			)
+			if !EqualBitVectorValue(FloatingPointBits(converted), test.target) {
+				t.Fatalf(
+					"converted model=%v, want %v",
+					FloatingPointBits(converted), test.target,
+				)
+			}
+		})
+	}
+}
+
+func TestFloatingPointFormatConversionLeavesNonimageUnknown(t *testing.T) {
+	relation := NewFloatingPointFormatConversionRelation(
+		5, 11, 8, 24, 1, RoundNearestTiesToEven(),
+		NewBitVectorUint64(32, 0x3f801000),
+	)
+	if _, ok := Check(AssertFloatingPointFormatConversionRelation(
+		1, New(), relation,
+	)).(Unknown); !ok {
+		t.Fatal("nonimage format-conversion target must remain unknown")
+	}
+}
+
+func TestFloatingPointFormatConversionSynthesizesBinary128Source(t *testing.T) {
+	target := FloatingPointBits(FloatingPointFromRational(
+		8, 24, RoundNearestTiesToEven(), NewRational(-7, 4),
+	))
+	relation := NewFloatingPointFormatConversionRelation(
+		15, 113, 8, 24, 1, RoundNearestTiesToEven(), target,
+	)
+	result, ok := Check(AssertFloatingPointFormatConversionRelation(
+		1, New(), relation,
+	)).(Satisfiable)
+	if !ok {
+		t.Fatal("expected synthesized binary128 format-conversion source")
+	}
+	source, found := FloatingPointSymbolModelBits(result.Value, 1)
+	if !found || source.Width() != 128 {
+		t.Fatal("binary128 format-conversion source missing from model")
+	}
+}
+
 func TestFloatingPointToRealAffineRelation(t *testing.T) {
 	solver := Assert(1, New(), BitVectorRelation{
 		Width: 32, SymbolID: 1,

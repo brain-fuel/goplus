@@ -3167,6 +3167,35 @@ func TestExecuteSymbolicFloatingPointFormatConversion(t *testing.T) {
 	}
 }
 
+func TestExecuteUnconstrainedFloatingPointFormatConversion(t *testing.T) {
+	script := `(set-logic QF_FP)
+(declare-const x (_ FloatingPoint 8 24))
+(assert (= (fp.to_ieee_bv ((_ to_fp 5 11) RNE x)) #x3c00))
+(check-sat)`
+	fast, recognized := executeFloatingPointFast(script)
+	if !recognized {
+		t.Fatal("unconstrained format conversion did not use streaming execution")
+	}
+	result, ok := fast.(Executed)
+	if !ok {
+		t.Fatalf("streaming execution=%#v", fast)
+	}
+	if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+		t.Fatalf("streaming result=%#v", result)
+	}
+	parsed, ok := Parse(script).(Parsed)
+	if !ok {
+		t.Fatal("general parse failed")
+	}
+	responses, errors := executeCommands(parsed.Commands)
+	if len(errors) != 0 {
+		t.Fatalf("general execution errors=%#v", errors)
+	}
+	if _, ok := responses[len(responses)-1].(Satisfiable); !ok {
+		t.Fatalf("general result=%#v", responses)
+	}
+}
+
 func TestStreamFloatingPointFormatConversion(t *testing.T) {
 	script := `(set-logic QF_FP)
 (declare-const x (_ FloatingPoint 8 24))
@@ -4409,6 +4438,47 @@ func BenchmarkExecuteFloatingPointFormatConversion(b *testing.B) {
 (assert (= (fp.to_ieee_bv x) #x3f801000))
 (assert (= (fp.to_ieee_bv ((_ to_fp 5 11) RNE x)) #x3c00))
 (assert (= (fp.to_ieee_bv ((_ to_fp 5 11) RNA x)) #x3c01))
+(check-sat)`
+	b.Run("stream", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			result, ok := Execute(script).(Executed)
+			if !ok {
+				b.Fatal("stream execution failed")
+			}
+			if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
+	b.Run("general", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			parsed, ok := Parse(script).(Parsed)
+			if !ok {
+				b.Fatal("parse failed")
+			}
+			responses, errors := executeCommands(parsed.Commands)
+			if len(errors) != 0 {
+				b.Fatal("general executor rejected script")
+			}
+			if _, ok := responses[len(responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
+}
+
+func BenchmarkExecuteUnconstrainedFloatingPointFormatConversion(b *testing.B) {
+	script := `(set-logic QF_FP)
+(declare-const narrow (_ FloatingPoint 8 24))
+(declare-const wide (_ FloatingPoint 5 11))
+(declare-const quad (_ FloatingPoint 15 113))
+(declare-const double (_ FloatingPoint 8 24))
+(assert (= (fp.to_ieee_bv ((_ to_fp 5 11) RNE narrow)) #x3c00))
+(assert (= (fp.to_ieee_bv ((_ to_fp 8 24) RNE wide)) #x3fc00000))
+(assert (= (fp.to_ieee_bv ((_ to_fp 8 24) RNE quad)) #xbfe00000))
+(assert (= (fp.to_ieee_bv ((_ to_fp 11 53) RNE double)) #x4000000000000000))
 (check-sat)`
 	b.Run("stream", func(b *testing.B) {
 		b.ReportAllocs()

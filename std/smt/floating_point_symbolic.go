@@ -114,6 +114,9 @@ type FloatingPointFromBitVectorRelation struct {
 
 func (FloatingPointFromBitVectorRelation) isTerm(BoolSort) {}
 
+// FloatingPointFormatConversionRelation constrains an exact rounded
+// FP-to-FP conversion. An unconstrained source can use a reverse-converted,
+// forward-validated target preimage when one exists.
 type FloatingPointFormatConversionRelation struct {
 	SourceExponentBits    int
 	SourceSignificandBits int
