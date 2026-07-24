@@ -530,6 +530,68 @@ func TestSymbolicFloatingPointDivRelation(t *testing.T) {
 	}
 }
 
+func TestSymbolicFloatingPointDivSynthesizesUnconstrainedOperands(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		target uint64
+	}{
+		{"finite", 0x3eaaaaab},
+		{"negative-zero", 0x80000000},
+		{"negative-infinity", 0xff800000},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			relation := NewFloatingPointDivRelation(
+				8, 24, 1, 2, RoundNearestTiesToEven(),
+				NewBitVectorUint64(32, test.target),
+			)
+			result, ok := Check(AssertFloatingPointDivRelation(
+				1, New(), relation,
+			)).(Satisfiable)
+			if !ok {
+				t.Fatalf("expected synthesized fp.div model, got %#v", Check(
+					AssertFloatingPointDivRelation(1, New(), relation),
+				))
+			}
+			left, leftFound := FloatingPointSymbolModelBits(result.Value, 1)
+			right, rightFound := FloatingPointSymbolModelBits(result.Value, 2)
+			leftValue, leftInline := left.Uint64()
+			rightValue, rightInline := right.Uint64()
+			if !leftFound || !rightFound || !leftInline || !rightInline ||
+				leftValue != test.target || rightValue != 0x3f800000 {
+				t.Fatalf(
+					"unexpected operands: left=%#x/%v right=%#x/%v",
+					leftValue, leftFound, rightValue, rightFound,
+				)
+			}
+		})
+	}
+}
+
+func TestSymbolicFloatingPointDivSynthesizesBinary128Operands(t *testing.T) {
+	target := FloatingPointBits(FloatingPointFromRational(
+		15, 113, RoundNearestTiesToEven(), NewRational(1, 3),
+	))
+	one := FloatingPointBits(FloatingPointFromRational(
+		15, 113, RoundNearestTiesToEven(), NewRational(1, 1),
+	))
+	relation := NewFloatingPointDivRelation(
+		15, 113, 1, 2, RoundNearestTiesToEven(), target,
+	)
+	result, ok := Check(AssertFloatingPointDivRelation(
+		1, New(), relation,
+	)).(Satisfiable)
+	if !ok {
+		t.Fatal("expected synthesized binary128 fp.div model")
+	}
+	left, leftFound := FloatingPointSymbolModelBits(result.Value, 1)
+	right, rightFound := FloatingPointSymbolModelBits(result.Value, 2)
+	if !leftFound || !rightFound ||
+		!EqualBitVectorValue(left, target) ||
+		!EqualBitVectorValue(right, one) {
+		t.Fatalf("unexpected binary128 operands: left=%v right=%v", left, right)
+	}
+}
+
 func TestSymbolicFloatingPointFMARelation(t *testing.T) {
 	leftBits := NewBitVectorUint64(32, 0x3f800001)
 	rightBits := NewBitVectorUint64(32, 0x3f7fffff)

@@ -374,6 +374,7 @@ const (
 	compactFloatingIdentityAdd uint8 = iota
 	compactFloatingIdentitySub
 	compactFloatingIdentityMul
+	compactFloatingIdentityDiv
 )
 
 func synthesizeFloatingPointIdentity(
@@ -398,7 +399,8 @@ func synthesizeFloatingPointIdentity(
 		FloatingPointNegativeZero(exponentBits, significandBits),
 	}
 	identityCount := len(identities)
-	if operation == compactFloatingIdentityMul {
+	if operation == compactFloatingIdentityMul ||
+		operation == compactFloatingIdentityDiv {
 		identities[0] = floatingPointFromRational(
 			mode, exponentBits, significandBits, NewRational(1, 1),
 		)
@@ -413,6 +415,8 @@ func synthesizeFloatingPointIdentity(
 			result = floatingPointSub(mode, left, identity)
 		case compactFloatingIdentityMul:
 			result = floatingPointMul(mode, left, identity)
+		case compactFloatingIdentityDiv:
+			result = floatingPointDiv(mode, left, identity)
 		}
 		if EqualBitVectorValue(FloatingPointBits(result), value) {
 			right = FloatingPointBits(identity)
@@ -798,6 +802,27 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 			relation.ExponentBits, relation.SignificandBits,
 			relation.LeftSymbolID, relation.RightSymbolID,
 			relation.Mode, relation.Value, compactFloatingIdentityMul,
+		) {
+			return checkOutcome{}, false
+		}
+	}
+	// Division uses the exact identity witness result / 1.
+	for _, relation := range problem.divs[:problem.divCount] {
+		leftFound, rightFound := false, false
+		for index := 0; index < assignmentCount; index++ {
+			leftFound = leftFound ||
+				assignments[index].id == relation.LeftSymbolID
+			rightFound = rightFound ||
+				assignments[index].id == relation.RightSymbolID
+		}
+		if leftFound || rightFound || relation.Negated {
+			continue
+		}
+		if !synthesizeFloatingPointIdentity(
+			&assignments, &assignmentCount,
+			relation.ExponentBits, relation.SignificandBits,
+			relation.LeftSymbolID, relation.RightSymbolID,
+			relation.Mode, relation.Value, compactFloatingIdentityDiv,
 		) {
 			return checkOutcome{}, false
 		}

@@ -208,7 +208,8 @@ type FloatingPointMulRelation struct {
 func (FloatingPointMulRelation) isTerm(BoolSort) {}
 
 // FloatingPointDivRelation constrains the exact rounded IEEE bits of fp.div
-// over two assigned same-format symbols.
+// over two same-format symbols. Distinct unconstrained operands can use a
+// validated result-divided-by-one canonical model.
 type FloatingPointDivRelation struct {
 	ExponentBits    int
 	SignificandBits int
