@@ -129,6 +129,28 @@ type IntegerAffinePowerSystem struct {
 
 func (IntegerAffinePowerSystem) isTerm(BoolSort) {}
 
+// IntegerAffinePowerBound represents (a*x+b)^n <(=) k when Lower is false
+// and k <(=) (a*x+b)^n when Lower is true for degrees four through sixteen.
+type IntegerAffinePowerBound struct {
+	Factor   IntegerAffineFactor
+	Bound    IntegerValue
+	Exponent uint8
+	Lower    bool
+	Strict   bool
+}
+
+func (IntegerAffinePowerBound) isTerm(BoolSort) {}
+
+// IntegerAffinePowerBoundSystem is an allocation-free conjunction of higher
+// affine-power bounds.
+type IntegerAffinePowerBoundSystem struct {
+	Count    int
+	Inline   [4]IntegerAffinePowerBound
+	Overflow []IntegerAffinePowerBound
+}
+
+func (IntegerAffinePowerBoundSystem) isTerm(BoolSort) {}
+
 // IntegerSquareBound represents x² <(=) k when Lower is false and
 // k <(=) x² when Lower is true.
 type IntegerSquareBound struct {
@@ -252,6 +274,8 @@ type nonlinearIntegerProblem struct {
 	cubeUpper         [nonlinearIntegerSymbolLimit]IntegerValue
 	powerCount        int
 	powers            [nonlinearIntegerRelationLimit]IntegerAffinePowerRelation
+	powerBoundCount   int
+	powerBounds       [nonlinearIntegerRelationLimit]IntegerAffinePowerBound
 	impossible        bool
 }
 
@@ -266,7 +290,8 @@ func solveNonlinearIntegerAssertions(
 	}
 	if problem.relationCount == 0 && problem.boundCount == 0 &&
 		problem.productBoundCount == 0 && problem.cubeCount == 0 &&
-		problem.cubeBoundCount == 0 && problem.powerCount == 0 {
+		problem.cubeBoundCount == 0 && problem.powerCount == 0 &&
+		problem.powerBoundCount == 0 {
 		return checkOutcome{}, false
 	}
 	if problem.impossible {
@@ -436,6 +461,28 @@ func (problem *nonlinearIntegerProblem) boolean(
 			}
 		}
 		return true
+	case IntegerAffinePowerBound:
+		if negated {
+			value.Lower = !value.Lower
+			value.Strict = !value.Strict
+		}
+		return problem.addAffinePowerBound(value)
+	case IntegerAffinePowerBoundSystem:
+		if negated || value.Count < 0 {
+			return false
+		}
+		bounds := value.Overflow
+		if value.Count <= len(value.Inline) {
+			bounds = value.Inline[:value.Count]
+		} else if len(bounds) != value.Count {
+			return false
+		}
+		for _, bound := range bounds {
+			if !problem.addAffinePowerBound(bound) {
+				return false
+			}
+		}
+		return true
 	case IntegerSquareBound:
 		if negated {
 			value.Lower = !value.Lower
@@ -532,8 +579,28 @@ func (problem *nonlinearIntegerProblem) boolean(
 func (problem *nonlinearIntegerProblem) squareComparison(
 	left, right Term[IntSort], strict, negated bool,
 ) bool {
-	factor, target, ok := nonlinearIntegerAffineCubeEquality(left, right)
+	power, exponent, target, ok := nonlinearIntegerAffinePowerEquality(
+		left, right,
+	)
 	lower := false
+	if !ok {
+		power, exponent, target, ok = nonlinearIntegerAffinePowerEquality(
+			right, left,
+		)
+		lower = true
+	}
+	if ok && exponent >= 4 {
+		if negated {
+			lower = !lower
+			strict = !strict
+		}
+		return problem.addAffinePowerBound(IntegerAffinePowerBound{
+			Factor: power, Exponent: uint8(exponent),
+			Bound: target, Lower: lower, Strict: strict,
+		})
+	}
+	factor, target, ok := nonlinearIntegerAffineCubeEquality(left, right)
+	lower = false
 	if !ok {
 		factor, target, ok = nonlinearIntegerAffineCubeEquality(right, left)
 		lower = true
@@ -867,6 +934,119 @@ func (problem *nonlinearIntegerProblem) addAffinePowerRelation(
 	problem.powers[problem.powerCount] = value
 	problem.powerCount++
 	return true
+}
+
+func (problem *nonlinearIntegerProblem) addAffinePowerBound(
+	bound IntegerAffinePowerBound,
+) bool {
+	if bound.Exponent < 4 ||
+		bound.Exponent > nonlinearIntegerPowerLimit ||
+		problem.powerBoundCount == len(problem.powerBounds) {
+		return false
+	}
+	position, added := problem.ensureSymbol(bound.Factor.SymbolID)
+	if !added {
+		return false
+	}
+	exponent := int(bound.Exponent)
+	if bound.Exponent%2 != 0 {
+		floor := integerOddNthRootFloor(bound.Bound, exponent)
+		exact := CompareIntegerValue(
+			integerPowerValue(floor, exponent), bound.Bound,
+		) == 0
+		factorBoundary := floor
+		if bound.Lower {
+			if bound.Strict || !exact {
+				factorBoundary = AddIntegerValue(
+					factorBoundary, NewIntegerValue(1),
+				)
+			}
+			problem.addAffineCubeVariableBound(
+				position, bound.Factor, factorBoundary, true,
+			)
+		} else {
+			if bound.Strict && exact {
+				factorBoundary = AddIntegerValue(
+					factorBoundary, NewIntegerValue(-1),
+				)
+			}
+			problem.addAffineCubeVariableBound(
+				position, bound.Factor, factorBoundary, false,
+			)
+		}
+	} else {
+		zero := IntegerValue{}
+		if bound.Lower {
+			if CompareIntegerValue(bound.Bound, zero) <= 0 {
+				problem.candidates[position].add(IntegerValue{})
+				problem.candidates[position].add(NewIntegerValue(1))
+			} else {
+				minimum := integerNthRootFloor(bound.Bound, exponent)
+				exact := CompareIntegerValue(
+					integerPowerValue(minimum, exponent), bound.Bound,
+				) == 0
+				if bound.Strict || !exact {
+					minimum = AddIntegerValue(
+						minimum, NewIntegerValue(1),
+					)
+				}
+				problem.addAffineFactorCandidate(
+					position, bound.Factor, minimum,
+				)
+				problem.addAffineFactorCandidate(
+					position, bound.Factor, NegateIntegerValue(minimum),
+				)
+				large := AddIntegerValue(
+					AddIntegerValue(
+						absoluteIntegerValue(bound.Bound),
+						absoluteIntegerValue(bound.Factor.Offset),
+					),
+					NewIntegerValue(2),
+				)
+				problem.candidates[position].add(large)
+				problem.candidates[position].add(
+					NegateIntegerValue(large),
+				)
+			}
+		} else if CompareIntegerValue(bound.Bound, zero) < 0 ||
+			bound.Strict && CompareIntegerValue(bound.Bound, zero) == 0 {
+			problem.impossible = true
+		} else {
+			maximum := integerNthRootFloor(bound.Bound, exponent)
+			if bound.Strict && CompareIntegerValue(
+				integerPowerValue(maximum, exponent), bound.Bound,
+			) == 0 {
+				maximum = AddIntegerValue(maximum, NewIntegerValue(-1))
+			}
+			complete := problem.addAffineSquareRange(
+				position, bound.Factor, maximum,
+			)
+			problem.domainComplete[position] =
+				problem.domainComplete[position] || complete
+		}
+	}
+	problem.powerBounds[problem.powerBoundCount] = bound
+	problem.powerBoundCount++
+	return true
+}
+
+func integerOddNthRootFloor(
+	value IntegerValue, exponent int,
+) IntegerValue {
+	negative := CompareIntegerValue(value, IntegerValue{}) < 0
+	magnitude := absoluteIntegerValue(value)
+	root := integerNthRootFloor(magnitude, exponent)
+	if !negative {
+		return root
+	}
+	exact := CompareIntegerValue(
+		integerPowerValue(root, exponent), magnitude,
+	) == 0
+	root = NegateIntegerValue(root)
+	if !exact {
+		root = AddIntegerValue(root, NewIntegerValue(-1))
+	}
+	return root
 }
 
 func integerPowerValue(base IntegerValue, exponent int) IntegerValue {
@@ -1703,6 +1883,31 @@ func (problem *nonlinearIntegerProblem) valid(
 			relation.Target,
 		) == 0
 		if holds == relation.Negated {
+			return false
+		}
+	}
+	for _, bound := range problem.powerBounds[:problem.powerBoundCount] {
+		position := problem.symbolPosition(bound.Factor.SymbolID)
+		if position < 0 || !assigned[position] {
+			continue
+		}
+		factor := evaluateIntegerAffineFactor(
+			bound.Factor, values[position],
+		)
+		comparison := CompareIntegerValue(
+			integerPowerValue(factor, int(bound.Exponent)), bound.Bound,
+		)
+		holds := comparison <= 0
+		if bound.Strict {
+			holds = comparison < 0
+		}
+		if bound.Lower {
+			holds = comparison >= 0
+			if bound.Strict {
+				holds = comparison > 0
+			}
+		}
+		if !holds {
 			return false
 		}
 	}

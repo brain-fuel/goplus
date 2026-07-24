@@ -738,6 +738,126 @@ func TestNonlinearIntegerHigherAffinePowerRelations(t *testing.T) {
 	}
 }
 
+func TestNonlinearIntegerHigherAffinePowerBounds(t *testing.T) {
+	x := IntSymbol{ID: 118, Name: "x"}
+	factor := Add{Values: []Term[IntSort]{
+		ScaleInteger(NewIntegerValue(2), x),
+		IntegerTerm(NewIntegerValue(1)),
+	}}
+	square := MultiplyInteger(factor, factor)
+	fourth := MultiplyInteger(square, square)
+	interval := And{Values: []Term[BoolSort]{
+		LessEqual{Left: IntegerTerm(NewIntegerValue(81)), Right: fourth},
+		LessEqual{Left: fourth, Right: IntegerTerm(NewIntegerValue(2401))},
+	}}
+	checked := Check(Assert(1, New(), interval))
+	result, ok := checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("affine fourth-power interval=%#v", checked)
+	}
+	value, found := IntegerModelValue(result.Value, x)
+	factorValue := AddIntegerValue(
+		MultiplyIntegerValue(NewIntegerValue(2), value),
+		NewIntegerValue(1),
+	)
+	powerValue := integerPowerValue(factorValue, 4)
+	if !found ||
+		CompareIntegerValue(powerValue, NewIntegerValue(81)) < 0 ||
+		CompareIntegerValue(powerValue, NewIntegerValue(2401)) > 0 {
+		t.Fatalf("fourth-power interval model=%v/%v", value, found)
+	}
+
+	congruenceConflict := And{Values: []Term[BoolSort]{
+		LessEqual{Left: IntegerTerm(NewIntegerValue(16)), Right: fourth},
+		LessEqual{Left: fourth, Right: IntegerTerm(NewIntegerValue(16))},
+	}}
+	conflictResult := Check(Assert(2, New(), congruenceConflict))
+	if _, ok := conflictResult.(Unsatisfiable); !ok {
+		t.Fatalf("fourth-power congruence=%#v", conflictResult)
+	}
+
+	fifth := MultiplyInteger(fourth, factor)
+	oddInterval := And{Values: []Term[BoolSort]{
+		Less{Left: IntegerTerm(NewIntegerValue(-3125)), Right: fifth},
+		LessEqual{Left: fifth, Right: IntegerTerm(NewIntegerValue(16807))},
+	}}
+	checked = Check(Assert(3, New(), oddInterval))
+	result, ok = checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("affine fifth-power interval=%#v", checked)
+	}
+	value, found = IntegerModelValue(result.Value, x)
+	factorValue = AddIntegerValue(
+		MultiplyIntegerValue(NewIntegerValue(2), value),
+		NewIntegerValue(1),
+	)
+	powerValue = integerPowerValue(factorValue, 5)
+	if !found ||
+		CompareIntegerValue(powerValue, NewIntegerValue(-3125)) <= 0 ||
+		CompareIntegerValue(powerValue, NewIntegerValue(16807)) > 0 {
+		t.Fatalf("fifth-power interval model=%v/%v", value, found)
+	}
+
+	negated := Not{Value: LessEqual{
+		Left: fourth, Right: IntegerTerm(NewIntegerValue(2401)),
+	}}
+	checked = Check(Assert(4, New(), negated))
+	result, ok = checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("negated fourth-power bound=%#v", checked)
+	}
+	value, found = IntegerModelValue(result.Value, x)
+	factorValue = AddIntegerValue(
+		MultiplyIntegerValue(NewIntegerValue(2), value),
+		NewIntegerValue(1),
+	)
+	if !found || CompareIntegerValue(
+		integerPowerValue(factorValue, 4), NewIntegerValue(2401),
+	) <= 0 {
+		t.Fatalf("negated fourth-power model=%v/%v", value, found)
+	}
+
+	largeConflict := And{Values: []Term[BoolSort]{
+		LessEqual{
+			Left: IntegerTerm(NewIntegerValue(100000001)), Right: fourth,
+		},
+		LessEqual{
+			Left: fourth, Right: IntegerTerm(NewIntegerValue(100000000)),
+		},
+	}}
+	largeResult := Check(Assert(5, New(), largeConflict))
+	if _, ok := largeResult.(Unknown); !ok {
+		t.Fatalf("large fourth-power interval=%#v", largeResult)
+	}
+
+	wideRoot, err := ParseIntegerValue("1267650600228229401496703205376")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wideBound := integerPowerValue(wideRoot, 4)
+	wideFactor := Add{Values: []Term[IntSort]{
+		x, IntegerTerm(NewIntegerValue(2)),
+	}}
+	wideSquare := MultiplyInteger(wideFactor, wideFactor)
+	wideFourth := MultiplyInteger(wideSquare, wideSquare)
+	wideInterval := And{Values: []Term[BoolSort]{
+		LessEqual{Left: IntegerTerm(wideBound), Right: wideFourth},
+		LessEqual{Left: wideFourth, Right: IntegerTerm(wideBound)},
+	}}
+	checked = Check(Assert(6, New(), wideInterval))
+	result, ok = checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("wide fourth-power interval=%#v", checked)
+	}
+	value, found = IntegerModelValue(result.Value, x)
+	if !found || CompareIntegerValue(
+		absoluteIntegerValue(AddIntegerValue(value, NewIntegerValue(2))),
+		wideRoot,
+	) != 0 {
+		t.Fatalf("wide fourth-power interval model=%v/%v", value, found)
+	}
+}
+
 func TestNonlinearIntegerAffineFactorProducts(t *testing.T) {
 	x := IntSymbol{ID: 110, Name: "x"}
 	y := IntSymbol{ID: 111, Name: "y"}
