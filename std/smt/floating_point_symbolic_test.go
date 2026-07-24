@@ -174,6 +174,69 @@ func TestFloatingPointComparisonBitBlastFallback(t *testing.T) {
 	}
 }
 
+func TestUnconstrainedFloatingPointComparisonCanonicalModels(t *testing.T) {
+	tests := []struct {
+		name       string
+		comparison uint8
+		negated    bool
+		same       bool
+		wantUnsat  bool
+	}{
+		{"less", FloatingPointComparisonLess, false, false, false},
+		{"not less", FloatingPointComparisonLess, true, false, false},
+		{"less or equal", FloatingPointComparisonLessOrEqual, false, false, false},
+		{"not less or equal", FloatingPointComparisonLessOrEqual, true, false, false},
+		{"same less", FloatingPointComparisonLess, false, true, true},
+		{"same not less", FloatingPointComparisonLess, true, true, false},
+		{"same less or equal", FloatingPointComparisonLessOrEqual, false, true, false},
+		{"same not less or equal", FloatingPointComparisonLessOrEqual, true, true, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rightID := 2
+			if test.same {
+				rightID = 1
+			}
+			relation := NewFloatingPointComparisonRelation(
+				15, 113, 1, rightID, test.comparison,
+			)
+			relation.Negated = test.negated
+			result := Check(AssertFloatingPointComparisonRelation(
+				1, New(), relation,
+			))
+			if test.wantUnsat {
+				if _, ok := result.(Unsatisfiable); !ok {
+					t.Fatalf("result=%T, want unsatisfiable", result)
+				}
+				return
+			}
+			sat, ok := result.(Satisfiable)
+			if !ok {
+				t.Fatalf("result=%T, want satisfiable", result)
+			}
+			leftBits, leftFound := FloatingPointSymbolModelBits(
+				sat.Value, 1,
+			)
+			rightBits, rightFound := FloatingPointSymbolModelBits(
+				sat.Value, rightID,
+			)
+			if !leftFound || !rightFound ||
+				leftBits.Width() != 128 || rightBits.Width() != 128 {
+				t.Fatal("canonical comparison model is incomplete")
+			}
+			left := FloatingPointFromBits(15, 113, leftBits)
+			right := FloatingPointFromBits(15, 113, rightBits)
+			holds := FloatingPointLessThan(left, right)
+			if test.comparison == FloatingPointComparisonLessOrEqual {
+				holds = FloatingPointLessOrEqual(left, right)
+			}
+			if holds == test.negated {
+				t.Fatalf("model does not satisfy comparison")
+			}
+		})
+	}
+}
+
 func TestCompactFloatingPointMinMaxWithAssignedSymbols(t *testing.T) {
 	solver := New()
 	solver = Assert(1, solver, BitVectorRelation{

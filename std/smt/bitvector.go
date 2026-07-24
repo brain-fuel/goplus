@@ -1026,6 +1026,80 @@ func compactConversionOperands(left, right Term[IntSort]) (bitVectorToInteger[In
 	return bitVectorToInteger[IntSort]{}, IntegerValue{}, false, false
 }
 
+func synthesizeStandaloneFloatingPointComparison(
+	assignments *[4]compactBitVectorAssignment,
+	assignmentCount *int,
+	comparison FloatingPointComparisonRelation,
+) (bool, bool) {
+	for index := 0; index < *assignmentCount; index++ {
+		if assignments[index].id == comparison.LeftSymbolID ||
+			assignments[index].id == comparison.RightSymbolID {
+			return false, false
+		}
+	}
+	total := comparison.ExponentBits + comparison.SignificandBits
+	fixed := NotBitVectorValue(NewBitVectorUint64(total, 0))
+	if comparison.LeftSymbolID == comparison.RightSymbolID {
+		if comparison.Comparison == FloatingPointComparisonLess &&
+			!comparison.Negated {
+			return true, true
+		}
+		if *assignmentCount == len(assignments) {
+			return false, false
+		}
+		value := FloatingPointPositiveZero(
+			comparison.ExponentBits, comparison.SignificandBits,
+		)
+		if comparison.Comparison == FloatingPointComparisonLessOrEqual &&
+			comparison.Negated {
+			value = FloatingPointNaN(
+				comparison.ExponentBits, comparison.SignificandBits,
+			)
+		}
+		assignments[*assignmentCount] = compactBitVectorAssignment{
+			id:    comparison.LeftSymbolID,
+			value: FloatingPointBits(value), fixed: fixed,
+		}
+		*assignmentCount++
+		return false, true
+	}
+	if *assignmentCount+2 > len(assignments) {
+		return false, false
+	}
+	left := FloatingPointPositiveZero(
+		comparison.ExponentBits, comparison.SignificandBits,
+	)
+	right := left
+	strictHolds := comparison.Comparison ==
+		FloatingPointComparisonLess && !comparison.Negated
+	nonStrictFails := comparison.Comparison ==
+		FloatingPointComparisonLessOrEqual && comparison.Negated
+	if strictHolds || nonStrictFails {
+		left = floatingPointFromRational(
+			1, comparison.ExponentBits,
+			comparison.SignificandBits, NewRational(-1, 1),
+		)
+		right = floatingPointFromRational(
+			1, comparison.ExponentBits,
+			comparison.SignificandBits, NewRational(1, 1),
+		)
+		if nonStrictFails {
+			left, right = right, left
+		}
+	}
+	assignments[*assignmentCount] = compactBitVectorAssignment{
+		id:    comparison.LeftSymbolID,
+		value: FloatingPointBits(left), fixed: fixed,
+	}
+	*assignmentCount++
+	assignments[*assignmentCount] = compactBitVectorAssignment{
+		id:    comparison.RightSymbolID,
+		value: FloatingPointBits(right), fixed: fixed,
+	}
+	*assignmentCount++
+	return false, true
+}
+
 func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome, bool) {
 	var problem compactBitVectorProblem
 	for _, assertion := range assertions {
@@ -1060,6 +1134,41 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 				fixed: NotBitVectorValue(NewBitVectorUint64(relation.Value.Width(), 0)),
 			}
 			assignmentCount++
+		}
+	}
+	// Up to two independent floating-point order atoms have constant-size
+	// canonical models in every valid format. Construct them directly instead
+	// of allocating the general bit-blast graph. Shared or mixed comparison
+	// systems continue to the complete path, where alternative witnesses may
+	// be required.
+	if problem.comparisonCount > 0 &&
+		problem.comparisonCount <= 2 &&
+		problem.relationCount == 0 &&
+		problem.conversionCount == 0 &&
+		problem.minMaxCount == 0 &&
+		problem.roundCount == 0 &&
+		problem.fpConversionCount == 0 &&
+		problem.fromBVCount == 0 &&
+		problem.formatCount == 0 &&
+		problem.toRealCount == 0 &&
+		problem.addCount == 0 &&
+		problem.subCount == 0 &&
+		problem.mulCount == 0 &&
+		problem.divCount == 0 &&
+		problem.fmaCount == 0 &&
+		problem.sqrtCount == 0 &&
+		problem.remCount == 0 {
+		for _, comparison := range problem.comparisons[:problem.comparisonCount] {
+			unsatisfiable, synthesized :=
+				synthesizeStandaloneFloatingPointComparison(
+					&assignments, &assignmentCount, comparison,
+				)
+			if unsatisfiable {
+				return checkOutcome{status: checkUnsat}, true
+			}
+			if !synthesized {
+				return checkOutcome{}, false
+			}
 		}
 	}
 	// fp.roundToIntegral has an exact, inexpensive inverse on its image:
