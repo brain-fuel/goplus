@@ -110,6 +110,31 @@ func FloatingPointEqual(0 e nat, 0 s nat, left FloatingPointValue[e, s], right F
 	return EqualBitVectorValue(FloatingPointBits(left), FloatingPointBits(right))
 }
 
+// FloatingPointLessThan implements SMT-LIB fp.lt. NaNs are unordered and the
+// two signed zeros compare equal.
+func FloatingPointLessThan(0 e nat, 0 s nat, left FloatingPointValue[e, s], right FloatingPointValue[e, s]) bool {
+	if FloatingPointIsNaN(left) || FloatingPointIsNaN(right) { return false }
+	if FloatingPointIsZero(left) && FloatingPointIsZero(right) { return false }
+	leftNegative := FloatingPointBits(left).Bit(FloatingPointExponentBits(left)+FloatingPointSignificandBits(left)-1)
+	rightNegative := FloatingPointBits(right).Bit(FloatingPointExponentBits(right)+FloatingPointSignificandBits(right)-1)
+	if leftNegative != rightNegative { return leftNegative }
+	comparison := CompareUnsignedBitVectorValue(FloatingPointBits(left), FloatingPointBits(right))
+	if leftNegative { return comparison > 0 }
+	return comparison < 0
+}
+
+func FloatingPointLessOrEqual(0 e nat, 0 s nat, left FloatingPointValue[e, s], right FloatingPointValue[e, s]) bool {
+	return FloatingPointLessThan(left, right) || FloatingPointEqual(left, right)
+}
+
+func FloatingPointGreaterThan(0 e nat, 0 s nat, left FloatingPointValue[e, s], right FloatingPointValue[e, s]) bool {
+	return FloatingPointLessThan(right, left)
+}
+
+func FloatingPointGreaterOrEqual(0 e nat, 0 s nat, left FloatingPointValue[e, s], right FloatingPointValue[e, s]) bool {
+	return FloatingPointLessOrEqual(right, left)
+}
+
 func floatingPointSignificandNonzero(bits BitVectorValue, significandBits int) bool {
 	for index := 0; index < significandBits-1; index++ {
 		if bits.Bit(index) { return true }

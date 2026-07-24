@@ -228,7 +228,7 @@ func containsBitVectorTheory(term Term[BoolSort]) bool {
 		return true
 	case bitVectorUnsignedAddOverflow[BoolSort], bitVectorSignedAddOverflow[BoolSort], bitVectorUnsignedSubOverflow[BoolSort], bitVectorSignedSubOverflow[BoolSort], bitVectorUnsignedMulOverflow[BoolSort], bitVectorSignedMulOverflow[BoolSort], bitVectorSignedDivOverflow[BoolSort], bitVectorNegOverflow[BoolSort]:
 		return true
-	case BitVectorRelation, BitVectorConjunction, BitVectorIntegerRelation, BitVectorMixedConjunction, BitVectorEUFRelation, BitVectorEUFConjunction, FloatingPointRelation:
+	case BitVectorRelation, BitVectorConjunction, BitVectorIntegerRelation, BitVectorMixedConjunction, BitVectorEUFRelation, BitVectorEUFConjunction, FloatingPointRelation, FloatingPointComparisonRelation:
 		return true
 	}
 	return false
@@ -340,6 +340,8 @@ type compactBitVectorProblem struct {
 	relations       [8]BitVectorRelation
 	conversionCount int
 	conversions     [8]compactBitVectorIntegerRelation
+	comparisonCount int
+	comparisons     [4]FloatingPointComparisonRelation
 }
 
 func (problem *compactBitVectorProblem) add(term Term[BoolSort], negated bool) bool {
@@ -377,6 +379,14 @@ func (problem *compactBitVectorProblem) add(term Term[BoolSort], negated bool) b
 			problem.relations[problem.relationCount] = relations[index]
 			problem.relationCount++
 		}
+		return true
+	case FloatingPointComparisonRelation:
+		if problem.comparisonCount == len(problem.comparisons) {
+			return false
+		}
+		value.Negated = value.Negated != negated
+		problem.comparisons[problem.comparisonCount] = value
+		problem.comparisonCount++
 		return true
 	case BitVectorRelation:
 		if problem.relationCount == len(problem.relations) {
@@ -615,6 +625,35 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 			return checkOutcome{status: checkUnsat}, true
 		}
 	}
+	for _, comparison := range problem.comparisons[:problem.comparisonCount] {
+		var left, right BitVectorValue
+		leftFound, rightFound := false, false
+		for index := 0; index < assignmentCount; index++ {
+			switch assignments[index].id {
+			case comparison.LeftSymbolID:
+				left, leftFound = assignments[index].value, true
+			case comparison.RightSymbolID:
+				right, rightFound = assignments[index].value, true
+			}
+		}
+		total := comparison.ExponentBits + comparison.SignificandBits
+		if !leftFound || !rightFound || left.Width() != total || right.Width() != total {
+			return checkOutcome{}, false
+		}
+		leftValue := FloatingPointFromBits(
+			comparison.ExponentBits, comparison.SignificandBits, left,
+		)
+		rightValue := FloatingPointFromBits(
+			comparison.ExponentBits, comparison.SignificandBits, right,
+		)
+		holds := FloatingPointLessThan(leftValue, rightValue)
+		if comparison.Comparison == FloatingPointComparisonLessOrEqual {
+			holds = FloatingPointLessOrEqual(leftValue, rightValue)
+		}
+		if holds == comparison.Negated {
+			return checkOutcome{status: checkUnsat}, true
+		}
+	}
 	for _, relation := range relations {
 		var assigned BitVectorValue
 		found := false
@@ -834,6 +873,8 @@ func (encoder *bitVectorEncoder) boolean(term Term[BoolSort]) (int, bool) {
 		return encoder.boolean(expandBitVectorRelation(value))
 	case FloatingPointRelation:
 		return encoder.boolean(expandFloatingPointRelation(value))
+	case FloatingPointComparisonRelation:
+		return encoder.boolean(expandFloatingPointComparisonRelation(value))
 	case BitVectorConjunction:
 		literals := make([]int, 0, value.Count)
 		for _, relation := range value.values() {
@@ -1046,6 +1087,64 @@ func expandFloatingPointRelation(value FloatingPointRelation) Term[BoolSort] {
 			Not{Value: And{Values: []Term[BoolSort]{exponentAll, Not{Value: significandZero}}}},
 			Not{Value: signSet},
 		}}
+	}
+	if value.Negated {
+		return Not{Value: term}
+	}
+	return term
+}
+
+func expandFloatingPointComparisonRelation(
+	value FloatingPointComparisonRelation,
+) Term[BoolSort] {
+	total := value.ExponentBits + value.SignificandBits
+	left := BitVecConst(total, value.LeftSymbolID, "")
+	right := BitVecConst(total, value.RightSymbolID, "")
+	leftSign := BitVecExtract(total-1, total-1, left)
+	rightSign := BitVecExtract(total-1, total-1, right)
+	leftNegative := Equal{Left: leftSign, Right: BitVecVal(1, 1)}
+	rightNegative := Equal{Left: rightSign, Right: BitVecVal(1, 1)}
+	leftNaN := expandFloatingPointRelation(NewFloatingPointRelation(
+		value.ExponentBits, value.SignificandBits,
+		value.LeftSymbolID, FloatingPointPredicateNaN,
+	))
+	rightNaN := expandFloatingPointRelation(NewFloatingPointRelation(
+		value.ExponentBits, value.SignificandBits,
+		value.RightSymbolID, FloatingPointPredicateNaN,
+	))
+	leftZero := expandFloatingPointRelation(NewFloatingPointRelation(
+		value.ExponentBits, value.SignificandBits,
+		value.LeftSymbolID, FloatingPointPredicateZero,
+	))
+	rightZero := expandFloatingPointRelation(NewFloatingPointRelation(
+		value.ExponentBits, value.SignificandBits,
+		value.RightSymbolID, FloatingPointPredicateZero,
+	))
+	less := And{Values: []Term[BoolSort]{
+		Not{Value: leftNaN},
+		Not{Value: rightNaN},
+		Not{Value: And{Values: []Term[BoolSort]{leftZero, rightZero}}},
+		Or{Values: []Term[BoolSort]{
+			And{Values: []Term[BoolSort]{leftNegative, Not{Value: rightNegative}}},
+			And{Values: []Term[BoolSort]{
+				leftNegative, rightNegative, BitVecULT(right, left),
+			}},
+			And{Values: []Term[BoolSort]{
+				Not{Value: leftNegative}, Not{Value: rightNegative},
+				BitVecULT(left, right),
+			}},
+		}},
+	}}
+	var term Term[BoolSort] = less
+	if value.Comparison == FloatingPointComparisonLessOrEqual {
+		equal := And{Values: []Term[BoolSort]{
+			Not{Value: leftNaN}, Not{Value: rightNaN},
+			Or{Values: []Term[BoolSort]{
+				Equal{Left: left, Right: right},
+				And{Values: []Term[BoolSort]{leftZero, rightZero}},
+			}},
+		}}
+		term = Or{Values: []Term[BoolSort]{less, equal}}
 	}
 	if value.Negated {
 		return Not{Value: term}

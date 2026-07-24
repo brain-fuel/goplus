@@ -66,6 +66,47 @@ func TestFloatingPointGroundEquality(t *testing.T) {
 	}
 }
 
+func TestFloatingPointGroundOrdering(t *testing.T) {
+	values := []struct {
+		name string
+		bits uint64
+	}{
+		{"negative infinity", 0xff800000},
+		{"negative one", 0xbf800000},
+		{"negative zero", 0x80000000},
+		{"positive zero", 0x00000000},
+		{"positive one", 0x3f800000},
+		{"positive infinity", 0x7f800000},
+	}
+	for leftIndex, leftCase := range values {
+		for rightIndex, rightCase := range values {
+			left := FloatingPointFromUint64(8, 24, leftCase.bits)
+			right := FloatingPointFromUint64(8, 24, rightCase.bits)
+			equalZeros := leftIndex == 2 && rightIndex == 3 || leftIndex == 3 && rightIndex == 2
+			wantLess := leftIndex < rightIndex && !equalZeros
+			wantEqual := leftIndex == rightIndex || equalZeros
+			if got := FloatingPointLessThan(left, right); got != wantLess {
+				t.Fatalf("%s < %s = %v, want %v", leftCase.name, rightCase.name, got, wantLess)
+			}
+			if got := FloatingPointLessOrEqual(left, right); got != (wantLess || wantEqual) {
+				t.Fatalf("%s <= %s = %v, want %v", leftCase.name, rightCase.name, got, wantLess || wantEqual)
+			}
+			if got := FloatingPointGreaterThan(left, right); got != FloatingPointLessThan(right, left) {
+				t.Fatalf("%s > %s = %v", leftCase.name, rightCase.name, got)
+			}
+			if got := FloatingPointGreaterOrEqual(left, right); got != FloatingPointLessOrEqual(right, left) {
+				t.Fatalf("%s >= %s = %v", leftCase.name, rightCase.name, got)
+			}
+		}
+	}
+	nan := FloatingPointFromUint64(8, 24, 0x7fc00000)
+	one := FloatingPointFromUint64(8, 24, 0x3f800000)
+	if FloatingPointLessThan(nan, one) || FloatingPointLessOrEqual(nan, one) ||
+		FloatingPointGreaterThan(nan, one) || FloatingPointGreaterOrEqual(nan, one) {
+		t.Fatal("NaN must be unordered")
+	}
+}
+
 func TestFloatingPointGroundAbsAndNeg(t *testing.T) {
 	tests := []struct {
 		name string

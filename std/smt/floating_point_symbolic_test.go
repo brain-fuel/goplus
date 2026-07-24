@@ -45,3 +45,53 @@ func TestNegatedSymbolicFloatingPointClassification(t *testing.T) {
 		t.Fatalf("negated NaN model=%#v/%v", bits, found)
 	}
 }
+
+func TestCompactFloatingPointComparisonWithAssignedSymbols(t *testing.T) {
+	solver := New()
+	solver = Assert(1, solver, BitVectorRelation{
+		Width: 32, SymbolID: 1, Value: NewBitVectorUint64(32, 0xbf800000),
+	})
+	solver = Assert(2, solver, BitVectorRelation{
+		Width: 32, SymbolID: 2, Value: NewBitVectorUint64(32, 0x3f800000),
+	})
+	solver = AssertFloatingPointComparisonRelation(
+		3, solver,
+		NewFloatingPointComparisonRelation(
+			8, 24, 1, 2, FloatingPointComparisonLess,
+		),
+	)
+	result, ok := Check(solver).(Satisfiable)
+	if !ok {
+		t.Fatalf("expected satisfiable comparison, got %#v", Check(solver))
+	}
+	left, leftFound := FloatingPointSymbolModelBits(result.Value, 1)
+	right, rightFound := FloatingPointSymbolModelBits(result.Value, 2)
+	leftBits, leftInline := left.Uint64()
+	rightBits, rightInline := right.Uint64()
+	if !leftFound || !rightFound || !leftInline || !rightInline ||
+		leftBits != 0xbf800000 || rightBits != 0x3f800000 {
+		t.Fatalf("unexpected comparison model: left=%#x right=%#x", leftBits, rightBits)
+	}
+}
+
+func TestFloatingPointComparisonBitBlastFallback(t *testing.T) {
+	relation := NewFloatingPointComparisonRelation(
+		8, 24, 1, 2, FloatingPointComparisonLessOrEqual,
+	)
+	result, ok := Check(AssertFloatingPointComparisonRelation(
+		1, New(), relation,
+	)).(Satisfiable)
+	if !ok {
+		t.Fatal("unconstrained fp.leq must be satisfiable")
+	}
+	leftBits, leftFound := FloatingPointSymbolModelBits(result.Value, 1)
+	rightBits, rightFound := FloatingPointSymbolModelBits(result.Value, 2)
+	if !leftFound || !rightFound {
+		t.Fatal("bit-blasted comparison must model both operands")
+	}
+	left := FloatingPointFromBits(8, 24, leftBits)
+	right := FloatingPointFromBits(8, 24, rightBits)
+	if !FloatingPointLessOrEqual(left, right) {
+		t.Fatalf("invalid fp.leq model: left=%v right=%v", leftBits, rightBits)
+	}
+}

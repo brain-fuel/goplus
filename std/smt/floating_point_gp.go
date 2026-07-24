@@ -224,6 +224,44 @@ func FloatingPointEqual(left FloatingPointValue, right FloatingPointValue) bool 
 	return EqualBitVectorValue(FloatingPointBits(left), FloatingPointBits(right))
 }
 
+// FloatingPointLessThan implements SMT-LIB fp.lt. NaNs are unordered and the
+// two signed zeros compare equal.
+//
+//goplus:dep FloatingPointLessThan(0 e nat, 0 s nat, left FloatingPointValue[e, s], right FloatingPointValue[e, s]) bool
+func FloatingPointLessThan(left FloatingPointValue, right FloatingPointValue) bool {
+	if FloatingPointIsNaN(left) || FloatingPointIsNaN(right) {
+		return false
+	}
+	if FloatingPointIsZero(left) && FloatingPointIsZero(right) {
+		return false
+	}
+	leftNegative := FloatingPointBits(left).Bit(FloatingPointExponentBits(left) + FloatingPointSignificandBits(left) - 1)
+	rightNegative := FloatingPointBits(right).Bit(FloatingPointExponentBits(right) + FloatingPointSignificandBits(right) - 1)
+	if leftNegative != rightNegative {
+		return leftNegative
+	}
+	comparison := CompareUnsignedBitVectorValue(FloatingPointBits(left), FloatingPointBits(right))
+	if leftNegative {
+		return comparison > 0
+	}
+	return comparison < 0
+}
+
+//goplus:dep FloatingPointLessOrEqual(0 e nat, 0 s nat, left FloatingPointValue[e, s], right FloatingPointValue[e, s]) bool
+func FloatingPointLessOrEqual(left FloatingPointValue, right FloatingPointValue) bool {
+	return FloatingPointLessThan(left, right) || FloatingPointEqual(left, right)
+}
+
+//goplus:dep FloatingPointGreaterThan(0 e nat, 0 s nat, left FloatingPointValue[e, s], right FloatingPointValue[e, s]) bool
+func FloatingPointGreaterThan(left FloatingPointValue, right FloatingPointValue) bool {
+	return FloatingPointLessThan(right, left)
+}
+
+//goplus:dep FloatingPointGreaterOrEqual(0 e nat, 0 s nat, left FloatingPointValue[e, s], right FloatingPointValue[e, s]) bool
+func FloatingPointGreaterOrEqual(left FloatingPointValue, right FloatingPointValue) bool {
+	return FloatingPointLessOrEqual(right, left)
+}
+
 func floatingPointSignificandNonzero(bits BitVectorValue, significandBits int) bool {
 	for index := 0; index < significandBits-1; index++ {
 		if bits.Bit(index) {
