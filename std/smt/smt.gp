@@ -608,10 +608,12 @@ func IntToReal(value Term[IntSort]) Term[RealSort] {
 }
 func RealToInt(value Term[RealSort]) Term[IntSort] {
 	if exact, ok := ExactRealConstant(value); ok { return IntegerTerm(FloorRational(exact)) }
+	if coerced, ok := value.(integerToReal); ok { return coerced.value }
 	return realToInteger(value)
 }
 func RealIsInt(value Term[RealSort]) Term[BoolSort] {
 	if exact, ok := ExactRealConstant(value); ok { return Bool(exact.IsInteger()) }
+	if _, ok := value.(integerToReal); ok { return Bool(true) }
 	return realIsInteger(value)
 }
 

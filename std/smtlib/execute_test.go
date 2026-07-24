@@ -2025,6 +2025,27 @@ func TestExecuteSymbolicIntegerToRealComparisons(t *testing.T) {
 	}
 }
 
+func TestExecuteSymbolicIntegerRealRoundTrips(t *testing.T) {
+	for _, source := range []string{
+		`(set-logic QF_LIRA)
+(declare-const x Int)
+(assert (not (= (to_int (to_real x)) x)))
+(check-sat)`,
+		`(set-logic QF_LIRA)
+(declare-const x Int)
+(assert (not (is_int (to_real x))))
+(check-sat)`,
+	} {
+		result, ok := Execute(source).(Executed)
+		if !ok {
+			t.Fatalf("result=%#v", Execute(source))
+		}
+		if _, ok := result.Responses[len(result.Responses)-1].(Unsatisfiable); !ok {
+			t.Fatalf("check response=%#v", result.Responses[len(result.Responses)-1])
+		}
+	}
+}
+
 func TestExecuteConditionalIntegerFunctionArithmetic(t *testing.T) {
 	for _, source := range []string{
 		`(set-logic QF_UFLIA)

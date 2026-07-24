@@ -1837,6 +1837,23 @@ func TestSymbolicIntegerToRealComparisons(t *testing.T) {
 	}
 }
 
+func TestSymbolicIntegerRealRoundTrips(t *testing.T) {
+	x := IntegerVariable(1)
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: RealToInt(IntToReal(x)), Right: x},
+		RealIsInt(IntToReal(x)),
+	}}
+	if result := Check(Assert(1, New(), formula)); func() bool { _, ok := result.(Satisfiable); return ok }() == false {
+		t.Fatalf("result=%T", result)
+	}
+	if result := Check(Assert(2, New(), Not{Value: Equal{Left: RealToInt(IntToReal(x)), Right: x}})); func() bool { _, ok := result.(Unsatisfiable); return ok }() == false {
+		t.Fatalf("negated round-trip result=%T", result)
+	}
+	if result := Check(Assert(3, New(), Not{Value: RealIsInt(IntToReal(x))})); func() bool { _, ok := result.(Unsatisfiable); return ok }() == false {
+		t.Fatalf("negated integrality result=%T", result)
+	}
+}
+
 func TestSharedRealEUFExchangesLRAImpliedEquality(t *testing.T) {
 	x := RealSymbol{ID: 1, Name: "x"}
 	y := RealSymbol{ID: 2, Name: "y"}
