@@ -308,6 +308,98 @@ func TestTwoIndependentFloatingPointEqualities(t *testing.T) {
 	}
 }
 
+func TestSharedFloatingPointEqualityGraph(t *testing.T) {
+	equal12 := NewFloatingPointEqualityRelation(15, 113, 1, 2)
+	distinct23 := NewFloatingPointEqualityRelation(15, 113, 2, 3)
+	distinct23.Negated = true
+	nanSelf := NewFloatingPointEqualityRelation(15, 113, 4, 4)
+	nanSelf.Negated = true
+	var compactAssignments [4]compactBitVectorAssignment
+	compactAssignmentCount := 0
+	if unsatisfiable, synthesized := synthesizeFloatingPointEqualitySystem(
+		&compactAssignments, &compactAssignmentCount,
+		[]FloatingPointEqualityRelation{equal12, distinct23, nanSelf},
+	); unsatisfiable || !synthesized {
+		t.Fatalf(
+			"compact graph synthesis=(unsat=%v, synthesized=%v)",
+			unsatisfiable, synthesized,
+		)
+	}
+	solver := AssertFloatingPointEqualityRelation(1, New(), equal12)
+	solver = AssertFloatingPointEqualityRelation(2, solver, distinct23)
+	solver = AssertFloatingPointEqualityRelation(3, solver, nanSelf)
+	result, ok := Check(solver).(Satisfiable)
+	if !ok {
+		t.Fatal("expected satisfiable shared binary128 equality graph")
+	}
+	values := make([]FloatingPointValue, 4)
+	for index := range values {
+		bits, found := FloatingPointSymbolModelBits(result.Value, index+1)
+		if !found || bits.Width() != 128 {
+			t.Fatalf("symbol %d missing from shared model", index+1)
+		}
+		values[index] = FloatingPointFromBits(15, 113, bits)
+	}
+	if !FloatingPointEqual(values[0], values[1]) ||
+		FloatingPointEqual(values[1], values[2]) ||
+		FloatingPointEqual(values[3], values[3]) {
+		t.Fatal("shared equality model violates IEEE equality semantics")
+	}
+}
+
+func TestSharedFloatingPointEqualityContradictions(t *testing.T) {
+	positive12 := NewFloatingPointEqualityRelation(8, 24, 1, 2)
+	positive23 := NewFloatingPointEqualityRelation(8, 24, 2, 3)
+	negative13 := NewFloatingPointEqualityRelation(8, 24, 1, 3)
+	negative13.Negated = true
+	positiveSelf := NewFloatingPointEqualityRelation(8, 24, 1, 1)
+	negativeSelf := positiveSelf
+	negativeSelf.Negated = true
+	for _, test := range []struct {
+		name      string
+		relations []FloatingPointEqualityRelation
+	}{
+		{"positive-chain-disequality", []FloatingPointEqualityRelation{
+			positive12, positive23, negative13,
+		}},
+		{"positive-and-negated-self", []FloatingPointEqualityRelation{
+			positiveSelf, negativeSelf,
+		}},
+		{"negated-self-before-positive", []FloatingPointEqualityRelation{
+			negativeSelf, positiveSelf,
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			solver := New()
+			for index, relation := range test.relations {
+				solver = AssertFloatingPointEqualityRelation(
+					index+1, solver, relation,
+				)
+			}
+			if _, ok := Check(solver).(Unsatisfiable); !ok {
+				t.Fatal("expected shared equality contradiction")
+			}
+		})
+	}
+}
+
+func BenchmarkSharedFloatingPointEqualityGraph(b *testing.B) {
+	equal12 := NewFloatingPointEqualityRelation(8, 24, 1, 2)
+	distinct23 := NewFloatingPointEqualityRelation(8, 24, 2, 3)
+	distinct23.Negated = true
+	for b.Loop() {
+		solver := AssertFloatingPointEqualityRelation(1, New(), equal12)
+		solver = AssertFloatingPointEqualityRelation(2, solver, distinct23)
+		result, ok := Check(solver).(Satisfiable)
+		if !ok {
+			b.Fatal("unexpected result")
+		}
+		if _, found := FloatingPointSymbolModelBits(result.Value, 3); !found {
+			b.Fatal("incomplete model")
+		}
+	}
+}
+
 func TestCompactFloatingPointMinMaxWithAssignedSymbols(t *testing.T) {
 	solver := New()
 	solver = Assert(1, solver, BitVectorRelation{

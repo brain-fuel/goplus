@@ -1036,57 +1036,138 @@ func compactConversionOperands(left, right Term[IntSort]) (bitVectorToInteger[In
 	return bitVectorToInteger[IntSort]{}, IntegerValue{}, false, false
 }
 
-func synthesizeStandaloneFloatingPointEquality(
+func synthesizeFloatingPointEqualitySystem(
 	assignments *[4]compactBitVectorAssignment,
 	assignmentCount *int,
-	relation FloatingPointEqualityRelation,
-) bool {
-	for index := 0; index < *assignmentCount; index++ {
-		if assignments[index].id == relation.LeftSymbolID ||
-			assignments[index].id == relation.RightSymbolID {
-			return false
+	relations []FloatingPointEqualityRelation,
+) (bool, bool) {
+	var ids, parents, exponentBits, significandBits [4]int
+	var forcedNonNaN, forcedNaN [4]bool
+	count := 0
+	indexFor := func(id, exponent, significand int) (int, bool) {
+		for index := 0; index < count; index++ {
+			if ids[index] != id {
+				continue
+			}
+			return index, exponentBits[index] == exponent &&
+				significandBits[index] == significand
+		}
+		if count == len(ids) {
+			return 0, false
+		}
+		ids[count] = id
+		parents[count] = count
+		exponentBits[count] = exponent
+		significandBits[count] = significand
+		count++
+		return count - 1, true
+	}
+	root := func(index int) int {
+		for parents[index] != index {
+			index = parents[index]
+		}
+		return index
+	}
+	for _, relation := range relations {
+		left, leftOK := indexFor(
+			relation.LeftSymbolID,
+			relation.ExponentBits, relation.SignificandBits,
+		)
+		right, rightOK := indexFor(
+			relation.RightSymbolID,
+			relation.ExponentBits, relation.SignificandBits,
+		)
+		if !leftOK || !rightOK {
+			return false, false
+		}
+		if !relation.Negated {
+			leftRoot, rightRoot := root(left), root(right)
+			if leftRoot != rightRoot {
+				parents[rightRoot] = leftRoot
+			}
 		}
 	}
-	total := relation.ExponentBits + relation.SignificandBits
-	fixed := NotBitVectorValue(NewBitVectorUint64(total, 0))
-	left := FloatingPointPositiveZero(
-		relation.ExponentBits, relation.SignificandBits,
-	)
-	right := left
-	if relation.Negated {
-		if relation.LeftSymbolID == relation.RightSymbolID {
-			left = FloatingPointNaN(
-				relation.ExponentBits, relation.SignificandBits,
-			)
-			right = left
-		} else {
-			right = floatingPointFromRational(
-				1, relation.ExponentBits, relation.SignificandBits,
-				NewRational(1, 1),
-			)
+	for _, relation := range relations {
+		if relation.Negated {
+			continue
+		}
+		left, _ := indexFor(
+			relation.LeftSymbolID,
+			relation.ExponentBits, relation.SignificandBits,
+		)
+		forcedNonNaN[root(left)] = true
+	}
+	for _, relation := range relations {
+		if !relation.Negated {
+			continue
+		}
+		left, _ := indexFor(
+			relation.LeftSymbolID,
+			relation.ExponentBits, relation.SignificandBits,
+		)
+		right, _ := indexFor(
+			relation.RightSymbolID,
+			relation.ExponentBits, relation.SignificandBits,
+		)
+		leftRoot, rightRoot := root(left), root(right)
+		if leftRoot == rightRoot {
+			if forcedNonNaN[leftRoot] {
+				return true, true
+			}
+			forcedNaN[leftRoot] = true
 		}
 	}
-	if FloatingPointEqual(left, right) == relation.Negated {
-		return false
+	if *assignmentCount+count > len(assignments) {
+		return false, false
 	}
-	required := 2
-	if relation.LeftSymbolID == relation.RightSymbolID {
-		required = 1
+	var componentOrdinal [4]int
+	componentCount := 0
+	for index := 0; index < count; index++ {
+		if root(index) != index {
+			continue
+		}
+		componentOrdinal[index] = componentCount
+		componentCount++
 	}
-	if *assignmentCount+required > len(assignments) {
-		return false
-	}
-	assignments[*assignmentCount] = compactBitVectorAssignment{
-		id: relation.LeftSymbolID, value: FloatingPointBits(left), fixed: fixed,
-	}
-	*assignmentCount++
-	if required == 2 {
+	for index := 0; index < count; index++ {
+		component := root(index)
+		value := floatingPointFromRational(
+			1, exponentBits[index], significandBits[index],
+			NewRational(int64(componentOrdinal[component]), 1),
+		)
+		if forcedNaN[component] {
+			value = FloatingPointNaN(exponentBits[index], significandBits[index])
+		}
+		total := exponentBits[index] + significandBits[index]
 		assignments[*assignmentCount] = compactBitVectorAssignment{
-			id: relation.RightSymbolID, value: FloatingPointBits(right), fixed: fixed,
+			id: ids[index], value: FloatingPointBits(value),
+			fixed: NotBitVectorValue(NewBitVectorUint64(total, 0)),
 		}
 		*assignmentCount++
 	}
-	return true
+	for _, relation := range relations {
+		var left, right BitVectorValue
+		for index := *assignmentCount - count; index < *assignmentCount; index++ {
+			if assignments[index].id == relation.LeftSymbolID {
+				left = assignments[index].value
+			}
+			if assignments[index].id == relation.RightSymbolID {
+				right = assignments[index].value
+			}
+		}
+		holds := FloatingPointEqual(
+			FloatingPointFromBits(
+				relation.ExponentBits, relation.SignificandBits, left,
+			),
+			FloatingPointFromBits(
+				relation.ExponentBits, relation.SignificandBits, right,
+			),
+		)
+		if holds == relation.Negated {
+			return false, false
+		}
+	}
+	return false, true
 }
 
 func synthesizeStandaloneFloatingPointComparison(
@@ -1252,11 +1333,10 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 			assignmentCount++
 		}
 	}
-	// Up to two independent IEEE-754 equality atoms have constant-size
-	// canonical models. Equality is deliberately not bit equality: signed
-	// zeroes compare equal and NaNs, including a NaN with itself, do not.
+	// A bounded IEEE-754 equality graph has a constant-size canonical model.
+	// Positive edges form non-NaN equivalence classes; negative self-edges use
+	// NaN unless a positive edge has already forced that class non-NaN.
 	if problem.equalityCount > 0 &&
-		problem.equalityCount <= 2 &&
 		problem.relationCount == 0 &&
 		problem.conversionCount == 0 &&
 		problem.comparisonCount == 0 &&
@@ -1273,12 +1353,15 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 		problem.fmaCount == 0 &&
 		problem.sqrtCount == 0 &&
 		problem.remCount == 0 {
-		for _, relation := range problem.equalities[:problem.equalityCount] {
-			if !synthesizeStandaloneFloatingPointEquality(
-				&assignments, &assignmentCount, relation,
-			) {
-				return checkOutcome{}, false
-			}
+		unsatisfiable, synthesized := synthesizeFloatingPointEqualitySystem(
+			&assignments, &assignmentCount,
+			problem.equalities[:problem.equalityCount],
+		)
+		if unsatisfiable {
+			return checkOutcome{status: checkUnsat}, true
+		}
+		if !synthesized {
+			return checkOutcome{}, false
 		}
 	}
 	// Up to two independent floating-point order atoms have constant-size
@@ -1788,10 +1871,10 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 		var left, right BitVectorValue
 		leftFound, rightFound := false, false
 		for index := 0; index < assignmentCount; index++ {
-			switch assignments[index].id {
-			case relation.LeftSymbolID:
+			if assignments[index].id == relation.LeftSymbolID {
 				left, leftFound = assignments[index].value, true
-			case relation.RightSymbolID:
+			}
+			if assignments[index].id == relation.RightSymbolID {
 				right, rightFound = assignments[index].value, true
 			}
 		}
@@ -1816,10 +1899,10 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 		var left, right BitVectorValue
 		leftFound, rightFound := false, false
 		for index := 0; index < assignmentCount; index++ {
-			switch assignments[index].id {
-			case comparison.LeftSymbolID:
+			if assignments[index].id == comparison.LeftSymbolID {
 				left, leftFound = assignments[index].value, true
-			case comparison.RightSymbolID:
+			}
+			if assignments[index].id == comparison.RightSymbolID {
 				right, rightFound = assignments[index].value, true
 			}
 		}
@@ -1845,10 +1928,10 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 		var left, right BitVectorValue
 		leftFound, rightFound := false, false
 		for index := 0; index < assignmentCount; index++ {
-			switch assignments[index].id {
-			case relation.LeftSymbolID:
+			if assignments[index].id == relation.LeftSymbolID {
 				left, leftFound = assignments[index].value, true
-			case relation.RightSymbolID:
+			}
+			if assignments[index].id == relation.RightSymbolID {
 				right, rightFound = assignments[index].value, true
 			}
 		}
@@ -2028,10 +2111,10 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 		var left, right BitVectorValue
 		leftFound, rightFound := false, false
 		for index := 0; index < assignmentCount; index++ {
-			switch assignments[index].id {
-			case relation.LeftSymbolID:
+			if assignments[index].id == relation.LeftSymbolID {
 				left, leftFound = assignments[index].value, true
-			case relation.RightSymbolID:
+			}
+			if assignments[index].id == relation.RightSymbolID {
 				right, rightFound = assignments[index].value, true
 			}
 		}
@@ -2057,10 +2140,10 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 		var left, right BitVectorValue
 		leftFound, rightFound := false, false
 		for index := 0; index < assignmentCount; index++ {
-			switch assignments[index].id {
-			case relation.LeftSymbolID:
+			if assignments[index].id == relation.LeftSymbolID {
 				left, leftFound = assignments[index].value, true
-			case relation.RightSymbolID:
+			}
+			if assignments[index].id == relation.RightSymbolID {
 				right, rightFound = assignments[index].value, true
 			}
 		}
@@ -2086,10 +2169,10 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 		var left, right BitVectorValue
 		leftFound, rightFound := false, false
 		for index := 0; index < assignmentCount; index++ {
-			switch assignments[index].id {
-			case relation.LeftSymbolID:
+			if assignments[index].id == relation.LeftSymbolID {
 				left, leftFound = assignments[index].value, true
-			case relation.RightSymbolID:
+			}
+			if assignments[index].id == relation.RightSymbolID {
 				right, rightFound = assignments[index].value, true
 			}
 		}
@@ -2115,10 +2198,10 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 		var left, right BitVectorValue
 		leftFound, rightFound := false, false
 		for index := 0; index < assignmentCount; index++ {
-			switch assignments[index].id {
-			case relation.LeftSymbolID:
+			if assignments[index].id == relation.LeftSymbolID {
 				left, leftFound = assignments[index].value, true
-			case relation.RightSymbolID:
+			}
+			if assignments[index].id == relation.RightSymbolID {
 				right, rightFound = assignments[index].value, true
 			}
 		}
@@ -2144,12 +2227,13 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 		var left, right, addend BitVectorValue
 		leftFound, rightFound, addendFound := false, false, false
 		for index := 0; index < assignmentCount; index++ {
-			switch assignments[index].id {
-			case relation.LeftSymbolID:
+			if assignments[index].id == relation.LeftSymbolID {
 				left, leftFound = assignments[index].value, true
-			case relation.RightSymbolID:
+			}
+			if assignments[index].id == relation.RightSymbolID {
 				right, rightFound = assignments[index].value, true
-			case relation.AddendSymbolID:
+			}
+			if assignments[index].id == relation.AddendSymbolID {
 				addend, addendFound = assignments[index].value, true
 			}
 		}
@@ -2204,10 +2288,10 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 		var left, right BitVectorValue
 		leftFound, rightFound := false, false
 		for index := 0; index < assignmentCount; index++ {
-			switch assignments[index].id {
-			case relation.LeftSymbolID:
+			if assignments[index].id == relation.LeftSymbolID {
 				left, leftFound = assignments[index].value, true
-			case relation.RightSymbolID:
+			}
+			if assignments[index].id == relation.RightSymbolID {
 				right, rightFound = assignments[index].value, true
 			}
 		}

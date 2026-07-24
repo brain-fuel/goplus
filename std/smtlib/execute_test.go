@@ -2495,6 +2495,73 @@ func TestExecuteUnconstrainedFloatingPointEquality(t *testing.T) {
 	}
 }
 
+func TestExecuteSharedFloatingPointEqualityGraph(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		body    string
+		wantSat bool
+	}{
+		{
+			name: "model",
+			body: `(assert (fp.eq x y))
+(assert (not (fp.eq y z)))
+(assert (not (fp.eq w w)))`,
+			wantSat: true,
+		},
+		{
+			name: "transitive contradiction",
+			body: `(assert (fp.eq x y))
+(assert (fp.eq y z))
+(assert (not (fp.eq x z)))`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			script := `(set-logic QF_FP)
+(declare-const x (_ FloatingPoint 15 113))
+(declare-const y (_ FloatingPoint 15 113))
+(declare-const z (_ FloatingPoint 15 113))
+(declare-const w (_ FloatingPoint 15 113))
+` + test.body + `
+(check-sat)`
+			for name, execute := range map[string]func(string) any{
+				"stream": func(script string) any {
+					result, recognized := executeFloatingPointFast(script)
+					if !recognized {
+						t.Fatal("shared equality graph missed streaming executor")
+					}
+					return result
+				},
+				"general": func(script string) any {
+					parsed, ok := Parse(script).(Parsed)
+					if !ok {
+						t.Fatal("general parse failed")
+					}
+					responses, errors := executeCommands(parsed.Commands)
+					if len(errors) != 0 {
+						t.Fatalf("general execution errors=%#v", errors)
+					}
+					return Executed{Responses: responses}
+				},
+			} {
+				t.Run(name, func(t *testing.T) {
+					result, ok := execute(script).(Executed)
+					if !ok {
+						t.Fatalf("execution=%#v", result)
+					}
+					response := result.Responses[len(result.Responses)-1]
+					if test.wantSat {
+						if _, ok := response.(Satisfiable); !ok {
+							t.Fatalf("result=%#v", response)
+						}
+					} else if _, ok := response.(Unsatisfiable); !ok {
+						t.Fatalf("result=%#v", response)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestExecuteNestedGroundFloatingPointOrdering(t *testing.T) {
 	script := `(set-logic QF_FP)
 (assert (fp.gt
@@ -3995,6 +4062,45 @@ func BenchmarkExecuteUnconstrainedFloatingPointEquality(b *testing.B) {
 (declare-const distinctRight (_ FloatingPoint 8 24))
 (assert (fp.eq equalLeft equalRight))
 (assert (not (fp.eq distinctLeft distinctRight)))
+(check-sat)`
+	b.Run("stream", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			result, ok := Execute(script).(Executed)
+			if !ok {
+				b.Fatal("execution failed")
+			}
+			if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
+	b.Run("general", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			parsed, ok := Parse(script).(Parsed)
+			if !ok {
+				b.Fatal("parse failed")
+			}
+			responses, errors := executeCommands(parsed.Commands)
+			if len(errors) != 0 {
+				b.Fatal("execution failed")
+			}
+			if _, ok := responses[len(responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
+}
+
+func BenchmarkExecuteSharedFloatingPointEqualityGraph(b *testing.B) {
+	script := `(set-logic QF_FP)
+(declare-const x (_ FloatingPoint 8 24))
+(declare-const y (_ FloatingPoint 8 24))
+(declare-const z (_ FloatingPoint 8 24))
+(assert (fp.eq x y))
+(assert (not (fp.eq y z)))
+(assert (not (fp.eq z z)))
 (check-sat)`
 	b.Run("stream", func(b *testing.B) {
 		b.ReportAllocs()
