@@ -313,6 +313,9 @@ func (e *engine) solveAdditional(assumptions []Term[BoolSort]) checkOutcome {
 	if outcome, recognized := solveCompactRealToFloatingPointAssertions(allAssertions); recognized {
 		return outcome
 	}
+	if outcome, recognized := solveSharedFloatingPointReal(allAssertions); recognized {
+		return outcome
+	}
 	if outcome, recognized := solveCompactArrayIntegerExchange(allAssertions); recognized {
 		return outcome
 	}

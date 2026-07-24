@@ -1056,6 +1056,46 @@ func TestFloatingPointToRealAffineRelation(t *testing.T) {
 	}
 }
 
+func TestFloatingPointToRealMixedLinearRealRelation(t *testing.T) {
+	solver := Assert(1, New(), BitVectorRelation{
+		Width: 32, SymbolID: 1,
+		Value: NewBitVectorUint64(32, 0x3fc00000),
+	})
+	relation := NewMixedFloatingPointToRealInlineRelation(
+		[4]FloatingPointToRealTerm{{
+			ExponentBits: 8, SignificandBits: 24, SymbolID: 1,
+			Coefficient: NewRational(1, 1),
+		}},
+		1,
+		[4]FloatingPointToRealRealTerm{{
+			SymbolID: 7, Coefficient: NewRational(-1, 1),
+		}},
+		1, Rational{}, 0,
+	)
+	result := Check(AssertFloatingPointToRealRelation(2, solver, relation))
+	sat, ok := result.(Satisfiable)
+	if !ok {
+		t.Fatalf("mixed result=%T", result)
+	}
+	value, found := RealValue(sat.Value, RealSymbol{ID: 7})
+	if !found || CompareRational(value, NewRational(3, 2)) != 0 {
+		t.Fatalf("mixed Real model=%s,%v", value, found)
+	}
+
+	contradiction := LinearRealConstraint{
+		Count: 1, Symbols: [4]int{7},
+		Coefficients: [4]Rational{NewRational(-1, 1)},
+		Constant:     NewRational(2, 1),
+	}
+	result = Check(Assert(
+		3, AssertFloatingPointToRealRelation(2, solver, relation),
+		contradiction,
+	))
+	if _, ok := result.(Unsatisfiable); !ok {
+		t.Fatalf("mixed contradiction result=%T", result)
+	}
+}
+
 func TestFloatingPointFromSignedBitVectorArbitraryWidth(t *testing.T) {
 	value := IntegerToBitVectorValue(
 		130,

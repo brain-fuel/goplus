@@ -978,6 +978,12 @@ func RealValue(0 c nat, model Model[c], term Term[RealSort]) (Rational, bool) {
 	match model { case modelValue(_, booleans, integers, reals, _, _, _, _, _, _): return evaluateReal(term, booleans, integers, reals) }
 }
 
+// RealSymbolModelValue reads one direct Real symbol without materializing a
+// term, preserving the compact model path used by cross-theory bridges.
+func RealSymbolModelValue(0 c nat, model Model[c], id int) (Rational, bool) {
+	match model { case modelValue(_, _, _, reals, _, _, _, _, _, _): return reals.lookup(id) }
+}
+
 func BitVecModelValue(0 c nat, 0 width nat, model Model[c], term Term[BitVecSort[width]]) (BitVectorValue, bool) {
 	match model { case modelValue(_, _, integers, _, bitVectors, _, _, _, arrays, _): return evaluateBitVectorModelTerm(term, bitVectors, integers, arrays) }
 }

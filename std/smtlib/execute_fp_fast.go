@@ -25,6 +25,7 @@ const (
 	fpFastFormat
 	fpFastToReal
 	fpFastToRealAffine
+	fpFastLinearReal
 	fpFastPredicate
 	fpFastComparison
 	fpFastEquality
@@ -53,6 +54,8 @@ type fpFastCommand struct {
 	groundHolds                   bool
 	realTermCount                 int
 	realTerms                     [4]smt.FloatingPointToRealTerm
+	ordinaryRealTermCount         int
+	ordinaryRealTerms             [4]smt.FloatingPointToRealRealTerm
 }
 
 type fpFastSymbol struct {
@@ -60,6 +63,7 @@ type fpFastSymbol struct {
 	id, exponentBits int
 	significandBits  int
 	bitWidth         int
+	real             bool
 }
 
 type fpFastToken struct {
@@ -95,9 +99,11 @@ type fpFastOperand struct {
 }
 
 type fpFastRealAffine struct {
-	count    int
-	terms    [4]smt.FloatingPointToRealTerm
-	constant smt.Rational
+	count     int
+	terms     [4]smt.FloatingPointToRealTerm
+	realCount int
+	realTerms [4]smt.FloatingPointToRealRealTerm
+	constant  smt.Rational
 }
 
 func (value *fpFastRealAffine) accumulate(
@@ -138,7 +144,44 @@ func (value *fpFastRealAffine) accumulate(
 			value.count++
 		}
 	}
+	for index := 0; index < other.realCount; index++ {
+		term := other.realTerms[index]
+		term.Coefficient = smt.MultiplyRational(term.Coefficient, multiplier)
+		merged := false
+		for existingIndex := 0; existingIndex < value.realCount; existingIndex++ {
+			existing := &value.realTerms[existingIndex]
+			if existing.SymbolID == term.SymbolID {
+				existing.Coefficient = smt.AddRational(
+					existing.Coefficient, term.Coefficient,
+				)
+				if existing.Coefficient.Sign() == 0 {
+					copy(
+						value.realTerms[existingIndex:],
+						value.realTerms[existingIndex+1:value.realCount],
+					)
+					value.realCount--
+				}
+				merged = true
+				break
+			}
+		}
+		if !merged {
+			if value.realCount == len(value.realTerms) {
+				return false
+			}
+			value.realTerms[value.realCount] = term
+			value.realCount++
+		}
+	}
 	return true
+}
+
+func fpFastNegateLinearReal(constraint *smt.LinearRealConstraint) {
+	constraint.Constant = smt.NegateRational(constraint.Constant)
+	for index := 0; index < constraint.Count; index++ {
+		constraint.Coefficients[index] =
+			smt.NegateRational(constraint.Coefficients[index])
+	}
 }
 
 const (
@@ -163,7 +206,8 @@ const (
 )
 
 func executeFloatingPointFast(source string) (ExecutionResult, bool) {
-	if !strings.Contains(source, "QF_FP") {
+	if !strings.Contains(source, "QF_FP") &&
+		!strings.Contains(source, "fp.to_real") {
 		return nil, false
 	}
 	var commands [32]fpFastCommand
@@ -186,15 +230,37 @@ func executeFloatingPointFast(source string) (ExecutionResult, bool) {
 		switch scanner.text(operator) {
 		case "set-logic":
 			logic, logicOK := scanner.atom()
-			if !logicOK || scanner.text(logic) != "QF_FP" ||
+			if !logicOK ||
+				(scanner.text(logic) != "QF_FP" &&
+					scanner.text(logic) != "ALL") ||
 				!scanner.right() {
 				return nil, false
 			}
 			command.kind = fpFastAcknowledge
 		case "declare-const":
 			name, nameOK := scanner.atom()
-			if !nameOK || symbolCount == len(symbols) ||
-				!scanner.left() {
+			if !nameOK || symbolCount == len(symbols) {
+				return nil, false
+			}
+			nameText := scanner.text(name)
+			sortSnapshot := scanner.at
+			if sortToken, sortOK := scanner.atom(); sortOK &&
+				scanner.text(sortToken) == "Real" && scanner.right() {
+				for index := 0; index < symbolCount; index++ {
+					if symbols[index].name == nameText {
+						return nil, false
+					}
+				}
+				symbolCount++
+				symbols[symbolCount-1] = fpFastSymbol{
+					name: nameText, id: symbolCount, real: true,
+				}
+				command.kind = fpFastDeclare
+				command.symbolID, command.name = symbolCount, nameText
+				break
+			}
+			scanner.at = sortSnapshot
+			if !scanner.left() {
 				return nil, false
 			}
 			marker, markerOK := scanner.atom()
@@ -215,7 +281,6 @@ func executeFloatingPointFast(source string) (ExecutionResult, bool) {
 				!scanner.right() || !scanner.right() {
 				return nil, false
 			}
-			nameText := scanner.text(name)
 			for index := 0; index < symbolCount; index++ {
 				if symbols[index].name == nameText {
 					return nil, false
@@ -433,15 +498,51 @@ func executeFloatingPointFast(source string) (ExecutionResult, bool) {
 			nextAssertion++
 			responses = append(responses, Acknowledged{CommandIndex: command.commandIndex})
 		case fpFastToRealAffine:
-			relation := smt.NewFloatingPointToRealInlineRelation(
-				command.realTerms, command.realTermCount,
-				command.realValue, command.comparison,
-			)
+			relation := smt.FloatingPointToRealRelation{}
+			if command.ordinaryRealTermCount != 0 {
+				relation = smt.NewMixedFloatingPointToRealInlineRelation(
+					command.realTerms, command.realTermCount,
+					command.ordinaryRealTerms, command.ordinaryRealTermCount,
+					command.realValue, command.comparison,
+				)
+			} else {
+				relation = smt.NewFloatingPointToRealInlineRelation(
+					command.realTerms, command.realTermCount,
+					command.realValue, command.comparison,
+				)
+			}
 			relation.Negated = command.negated
 			solver = smt.AssertFloatingPointToRealRelation(
 				nextAssertion, solver, relation,
 			)
 			nextAssertion++
+			responses = append(responses, Acknowledged{CommandIndex: command.commandIndex})
+		case fpFastLinearReal:
+			constraint := smt.LinearRealConstraint{
+				Count:    command.ordinaryRealTermCount,
+				Constant: command.realValue,
+				Strict:   command.comparison == 2,
+			}
+			for index := 0; index < command.ordinaryRealTermCount; index++ {
+				constraint.Symbols[index] =
+					command.ordinaryRealTerms[index].SymbolID
+				constraint.Coefficients[index] =
+					command.ordinaryRealTerms[index].Coefficient
+			}
+			if command.negated {
+				if command.comparison == 0 {
+					return nil, false
+				}
+				fpFastNegateLinearReal(&constraint)
+				constraint.Strict = command.comparison == 1
+			}
+			solver = smt.Assert(nextAssertion, solver, constraint)
+			nextAssertion++
+			if command.comparison == 0 {
+				fpFastNegateLinearReal(&constraint)
+				solver = smt.Assert(nextAssertion, solver, constraint)
+				nextAssertion++
+			}
 			responses = append(responses, Acknowledged{CommandIndex: command.commandIndex})
 		case fpFastPredicate:
 			relation := smt.NewFloatingPointRelation(
@@ -606,7 +707,15 @@ func (scanner *fpFastScanner) formula(
 					result.terms[count] = result.terms[index]
 					count++
 				}
-				if count == 0 {
+				if count == 0 && result.realCount != 0 {
+					return fpFastCommand{
+						kind:                  fpFastLinearReal,
+						ordinaryRealTermCount: result.realCount,
+						ordinaryRealTerms:     result.realTerms,
+						realValue:             result.constant,
+						comparison:            affineComparison,
+					}, true
+				} else if count == 0 {
 					comparison := smt.CompareRational(
 						result.constant, smt.Rational{},
 					)
@@ -624,8 +733,10 @@ func (scanner *fpFastScanner) formula(
 					return fpFastCommand{
 						kind:          fpFastToRealAffine,
 						realTermCount: count, realTerms: result.terms,
-						realValue:  result.constant,
-						comparison: affineComparison,
+						ordinaryRealTermCount: result.realCount,
+						ordinaryRealTerms:     result.realTerms,
+						realValue:             result.constant,
+						comparison:            affineComparison,
 					}, true
 				}
 			}
@@ -1081,6 +1192,17 @@ func (scanner *fpFastScanner) realAffine(
 		value, err := smt.ParseRational(scanner.text(token))
 		if err == nil {
 			return fpFastRealAffine{constant: value}, true
+		}
+		if symbol, found := fpFastFindSymbol(
+			scanner.text(token), symbols,
+		); found && symbol.real {
+			return fpFastRealAffine{
+				realCount: 1,
+				realTerms: [4]smt.FloatingPointToRealRealTerm{{
+					SymbolID:    symbol.id,
+					Coefficient: smt.NewRational(1, 1),
+				}},
+			}, true
 		}
 	}
 	scanner.at = snapshot

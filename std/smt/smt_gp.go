@@ -3870,13 +3870,27 @@ func RealValue(model Model, term Term[RealSort]) (Rational, bool) {
 	}
 }
 
-//goplus:dep BitVecModelValue(0 c nat, 0 width nat, model Model[c], term Term[BitVecSort[width]]) (BitVectorValue, bool)
-func BitVecModelValue(model Model, term Term[BitVecSort]) (BitVectorValue, bool) {
+// RealSymbolModelValue reads one direct Real symbol without materializing a
+// term, preserving the compact model path used by cross-theory bridges.
+//
+//goplus:dep RealSymbolModelValue(0 c nat, model Model[c], id int) (Rational, bool)
+func RealSymbolModelValue(model Model, id int) (Rational, bool) {
 	switch __gp_m47 := any(model).(type) {
 	case modelValue:
-		integers := __gp_m47.integers
-		bitVectors := __gp_m47.bitVectors
-		arrays := __gp_m47.bitVectorArrays
+		reals := __gp_m47.reals
+		return reals.lookup(id)
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+}
+
+//goplus:dep BitVecModelValue(0 c nat, 0 width nat, model Model[c], term Term[BitVecSort[width]]) (BitVectorValue, bool)
+func BitVecModelValue(model Model, term Term[BitVecSort]) (BitVectorValue, bool) {
+	switch __gp_m48 := any(model).(type) {
+	case modelValue:
+		integers := __gp_m48.integers
+		bitVectors := __gp_m48.bitVectors
+		arrays := __gp_m48.bitVectorArrays
 		return evaluateBitVectorModelTerm(term, bitVectors, integers, arrays)
 	default:
 		panic("goplus: impossible enum value in match")
@@ -3885,10 +3899,10 @@ func BitVecModelValue(model Model, term Term[BitVecSort]) (BitVectorValue, bool)
 
 //goplus:dep StringModelValue(0 c nat, model Model[c], term Term[StringSort]) (string, bool)
 func StringModelValue(model Model, term Term[StringSort]) (string, bool) {
-	switch __gp_m48 := any(model).(type) {
+	switch __gp_m49 := any(model).(type) {
 	case modelValue:
-		integers := __gp_m48.integers
-		strings := __gp_m48.strings
+		integers := __gp_m49.integers
+		strings := __gp_m49.strings
 		return evaluateString(term, strings, integers)
 	default:
 		panic("goplus: impossible enum value in match")
@@ -3897,10 +3911,10 @@ func StringModelValue(model Model, term Term[StringSort]) (string, bool) {
 
 //goplus:dep StringIntegerModelValue(0 c nat, model Model[c], term Term[IntSort]) (int64, bool)
 func StringIntegerModelValue(model Model, term Term[IntSort]) (int64, bool) {
-	switch __gp_m49 := any(model).(type) {
+	switch __gp_m50 := any(model).(type) {
 	case modelValue:
-		integers := __gp_m49.integers
-		strings := __gp_m49.strings
+		integers := __gp_m50.integers
+		strings := __gp_m50.strings
 		return evaluateStringInteger(term, strings, integers)
 	default:
 		panic("goplus: impossible enum value in match")
@@ -3909,10 +3923,10 @@ func StringIntegerModelValue(model Model, term Term[IntSort]) (int64, bool) {
 
 //goplus:dep ExactStringIntegerModelValue(0 c nat, model Model[c], term Term[IntSort]) (IntegerValue, bool)
 func ExactStringIntegerModelValue(model Model, term Term[IntSort]) (IntegerValue, bool) {
-	switch __gp_m50 := any(model).(type) {
+	switch __gp_m51 := any(model).(type) {
 	case modelValue:
-		integers := __gp_m50.integers
-		strings := __gp_m50.strings
+		integers := __gp_m51.integers
+		strings := __gp_m51.strings
 		return evaluateStringIntegerExact(term, strings, integers)
 	default:
 		panic("goplus: impossible enum value in match")
@@ -3921,10 +3935,10 @@ func ExactStringIntegerModelValue(model Model, term Term[IntSort]) (IntegerValue
 
 //goplus:dep IntegerArrayValue(0 c nat, model Model[c], array Term[ArraySort[IntSort, IntSort]], index IntegerValue) (IntegerValue, bool)
 func IntegerArrayValue(model Model, array Term[ArraySort[IntSort, IntSort]], index IntegerValue) (IntegerValue, bool) {
-	switch __gp_m51 := any(model).(type) {
+	switch __gp_m52 := any(model).(type) {
 	case modelValue:
-		integers := __gp_m51.integers
-		arrays := __gp_m51.arrays
+		integers := __gp_m52.integers
+		arrays := __gp_m52.arrays
 		return evaluateIntegerArray(array, index, integers, arrays)
 	default:
 		panic("goplus: impossible enum value in match")
@@ -3933,9 +3947,9 @@ func IntegerArrayValue(model Model, array Term[ArraySort[IntSort, IntSort]], ind
 
 //goplus:dep BitVectorArrayValue(0 c nat, 0 indexWidth nat, 0 elementWidth nat, model Model[c], array Term[ArraySort[BitVecSort[indexWidth], BitVecSort[elementWidth]]], index BitVectorValue) (BitVectorValue, bool)
 func BitVectorArrayValue(model Model, array Term[ArraySort[BitVecSort, BitVecSort]], index BitVectorValue) (BitVectorValue, bool) {
-	switch __gp_m52 := any(model).(type) {
+	switch __gp_m53 := any(model).(type) {
 	case modelValue:
-		arrays := __gp_m52.bitVectorArrays
+		arrays := __gp_m53.bitVectorArrays
 		return evaluateBitVectorArray(array, index, arrays)
 	default:
 		panic("goplus: impossible enum value in match")
@@ -3944,9 +3958,9 @@ func BitVectorArrayValue(model Model, array Term[ArraySort[BitVecSort, BitVecSor
 
 //goplus:dep DatatypeModelValue(datatype nat, constructors nat, 0 c nat, model Model[c], term Term[DatatypeSort[datatype, constructors]]) (DatatypeValue, bool)
 func DatatypeModelValue(datatype int, constructors int, model Model, term Term[DatatypeSort]) (DatatypeValue, bool) {
-	switch __gp_m53 := any(model).(type) {
+	switch __gp_m54 := any(model).(type) {
 	case modelValue:
-		datatypes := __gp_m53.datatypes
+		datatypes := __gp_m54.datatypes
 		return evaluateDatatype(term, datatypes)
 	default:
 		panic("goplus: impossible enum value in match")

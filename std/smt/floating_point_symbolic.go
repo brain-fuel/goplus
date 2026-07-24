@@ -128,10 +128,13 @@ type FloatingPointFormatConversionRelation struct {
 func (FloatingPointFormatConversionRelation) isTerm(BoolSort) {}
 
 type FloatingPointToRealRelation struct {
-	Count    int
-	Terms    [4]FloatingPointToRealTerm
-	Overflow []FloatingPointToRealTerm
-	Constant Rational
+	Count        int
+	Terms        [4]FloatingPointToRealTerm
+	Overflow     []FloatingPointToRealTerm
+	RealCount    int
+	RealTerms    [4]FloatingPointToRealRealTerm
+	RealOverflow []FloatingPointToRealRealTerm
+	Constant     Rational
 	// Comparison is 0 for equality, 1 for <=, and 2 for <.
 	Comparison uint8
 	Negated    bool
@@ -150,6 +153,13 @@ type FloatingPointToRealTerm struct {
 	SignificandBits int
 	SymbolID        int
 	Coefficient     Rational
+}
+
+// FloatingPointToRealRealTerm is one ordinary Real symbol coefficient in a
+// mixed FP-to-Real/LRA affine relation.
+type FloatingPointToRealRealTerm struct {
+	SymbolID    int
+	Coefficient Rational
 }
 
 // FloatingPointAddRelation constrains the exact rounded IEEE bits of fp.add
@@ -491,11 +501,46 @@ func NewFloatingPointToRealInlineRelation(
 	return relation
 }
 
+// NewMixedFloatingPointToRealInlineRelation constructs an allocation-free
+// mixed relation with up to four converted floating-point symbols and four
+// ordinary Real symbols.
+func NewMixedFloatingPointToRealInlineRelation(
+	floatingTerms [4]FloatingPointToRealTerm,
+	floatingCount int,
+	realTerms [4]FloatingPointToRealRealTerm,
+	realCount int,
+	constant Rational,
+	comparison uint8,
+) FloatingPointToRealRelation {
+	relation := NewFloatingPointToRealInlineRelation(
+		floatingTerms, floatingCount, constant, comparison,
+	)
+	if realCount <= 0 || realCount > len(realTerms) {
+		panic("smt: invalid mixed floating-point to Real relation")
+	}
+	relation.RealCount = realCount
+	for index := 0; index < realCount; index++ {
+		term := realTerms[index]
+		if term.SymbolID <= 0 || term.Coefficient.Sign() == 0 {
+			panic("smt: invalid mixed floating-point Real term")
+		}
+		relation.RealTerms[index] = term
+	}
+	return relation
+}
+
 func (relation FloatingPointToRealRelation) values() []FloatingPointToRealTerm {
 	if relation.Overflow != nil {
 		return relation.Overflow[:relation.Count]
 	}
 	return relation.Terms[:relation.Count]
+}
+
+func (relation FloatingPointToRealRelation) realValues() []FloatingPointToRealRealTerm {
+	if relation.RealOverflow != nil {
+		return relation.RealOverflow[:relation.RealCount]
+	}
+	return relation.RealTerms[:relation.RealCount]
 }
 
 func NewFloatingPointAddRelation(

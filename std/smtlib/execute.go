@@ -77,8 +77,9 @@ type dynamicFloatingPointRound struct {
 }
 
 type dynamicFloatingPointRealAffine struct {
-	terms    []smt.FloatingPointToRealTerm
-	constant smt.Rational
+	terms     []smt.FloatingPointToRealTerm
+	realTerms []smt.FloatingPointToRealRealTerm
+	constant  smt.Rational
 }
 
 type dynamicFloatingPointConversion struct {
@@ -4529,6 +4530,15 @@ func floatingPointRealAffine(
 	if value, ok := rationalConstant(term); ok {
 		return dynamicFloatingPointRealAffine{constant: value}, true
 	}
+	if term.sort == sortReal {
+		if symbol, ok := term.real.(smt.RealSymbol); ok {
+			return dynamicFloatingPointRealAffine{
+				realTerms: []smt.FloatingPointToRealRealTerm{{
+					SymbolID: symbol.ID, Coefficient: smt.NewRational(1, 1),
+				}},
+			}, true
+		}
+	}
 	return dynamicFloatingPointRealAffine{}, false
 }
 
@@ -4536,6 +4546,31 @@ func dynamicFloatingPointRealTerm(
 	value dynamicFloatingPointRealAffine,
 ) dynamicTerm {
 	if len(value.terms) == 0 {
+		if len(value.realTerms) != 0 {
+			terms := make([]smt.Term[smt.RealSort], 0, len(value.realTerms)+1)
+			for _, coefficient := range value.realTerms {
+				symbol := smt.Term[smt.RealSort](
+					smt.RealSymbol{ID: coefficient.SymbolID},
+				)
+				if smt.CompareRational(
+					coefficient.Coefficient, smt.NewRational(1, 1),
+				) != 0 {
+					symbol = smt.RealScale{
+						Coefficient: coefficient.Coefficient, Value: symbol,
+					}
+				}
+				terms = append(terms, symbol)
+			}
+			if value.constant.Sign() != 0 {
+				terms = append(terms, smt.Real{Value: value.constant})
+			}
+			if len(terms) == 1 {
+				return dynamicTerm{sort: sortReal, real: terms[0]}
+			}
+			return dynamicTerm{
+				sort: sortReal, real: smt.RealAdd{Values: terms},
+			}
+		}
 		return dynamicTerm{
 			sort: sortReal, real: smt.Real{Value: value.constant},
 		}
@@ -4575,6 +4610,28 @@ func accumulateFloatingPointRealAffine(
 			target.terms = append(target.terms, term)
 		}
 	}
+	for _, term := range source.realTerms {
+		term.Coefficient = smt.MultiplyRational(term.Coefficient, multiplier)
+		merged := false
+		for index := range target.realTerms {
+			existing := &target.realTerms[index]
+			if existing.SymbolID == term.SymbolID {
+				existing.Coefficient = smt.AddRational(
+					existing.Coefficient, term.Coefficient,
+				)
+				if existing.Coefficient.Sign() == 0 {
+					target.realTerms = append(
+						target.realTerms[:index], target.realTerms[index+1:]...,
+					)
+				}
+				merged = true
+				break
+			}
+		}
+		if !merged {
+			target.realTerms = append(target.realTerms, term)
+		}
+	}
 }
 
 func floatingPointRealRelation(
@@ -4602,6 +4659,19 @@ func floatingPointRealRelation(
 	}
 	if len(terms) == 0 {
 		return smt.FloatingPointToRealRelation{}, false
+	}
+	if len(result.realTerms) != 0 {
+		if len(terms) > 4 || len(result.realTerms) > 4 {
+			return smt.FloatingPointToRealRelation{}, false
+		}
+		var floatingInline [4]smt.FloatingPointToRealTerm
+		var realInline [4]smt.FloatingPointToRealRealTerm
+		copy(floatingInline[:], terms)
+		copy(realInline[:], result.realTerms)
+		return smt.NewMixedFloatingPointToRealInlineRelation(
+			floatingInline, len(terms), realInline, len(result.realTerms),
+			result.constant, comparison,
+		), true
 	}
 	return smt.NewFloatingPointToRealAffineRelation(
 		terms, result.constant, comparison,

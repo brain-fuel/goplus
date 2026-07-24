@@ -30,6 +30,12 @@ type RealValueAssignment struct {
 
 func (RealValueAssignment) isTerm(BoolSort) {}
 
+// DirectRealSymbolModelValue reads a named Real directly from a model without
+// materializing a term or boxing the model enum.
+func DirectRealSymbolModelValue(model Model, id int) (Rational, bool) {
+	return model.reals.lookup(id)
+}
+
 // RealUnaryComparison compares one Real->Real application with an exact
 // constant. When ApplicationOnLeft is true it denotes f(x) op Bound;
 // otherwise it denotes Bound op f(x). Strict selects < instead of <=.

@@ -919,6 +919,9 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 		}
 	}
 	for _, relation := range problem.toReals[:problem.toRealCount] {
+		if relation.RealCount != 0 {
+			return checkOutcome{}, false
+		}
 		totalValue := relation.Constant
 		for _, term := range relation.values() {
 			var assigned BitVectorValue
