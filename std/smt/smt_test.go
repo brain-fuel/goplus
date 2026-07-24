@@ -1786,6 +1786,28 @@ func TestSharedRealTernaryFunctionArithmetic(t *testing.T) {
 	}
 }
 
+func TestGroundIntegerRealCoercions(t *testing.T) {
+	huge, err := ParseIntegerValue("123456789012345678901234567890")
+	if err != nil {
+		t.Fatal(err)
+	}
+	formula := And{Values: []Term[BoolSort]{
+		Equal{
+			Left:  IntToReal(IntegerTerm(huge)),
+			Right: Real{Value: MustParseRational("123456789012345678901234567890")},
+		},
+		Equal{
+			Left:  RealToInt(Real{Value: MustParseRational("-3/2")}),
+			Right: Integer{Value: -2},
+		},
+		RealIsInt(Real{Value: MustParseRational("8/2")}),
+		Not{Value: RealIsInt(Real{Value: MustParseRational("3/2")})},
+	}}
+	if result := Check(Assert(1, New(), formula)); func() bool { _, ok := result.(Satisfiable); return ok }() == false {
+		t.Fatalf("result=%T", result)
+	}
+}
+
 func TestSharedRealEUFExchangesLRAImpliedEquality(t *testing.T) {
 	x := RealSymbol{ID: 1, Name: "x"}
 	y := RealSymbol{ID: 2, Name: "y"}

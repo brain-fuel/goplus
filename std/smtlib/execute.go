@@ -2314,6 +2314,27 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 		return false
 	}
 	switch operator {
+	case "to_real":
+		if len(terms) == 1 && terms[0].integer != nil &&
+			(terms[0].sort == sortInt || terms[0].sort == sortNumber) {
+			return dynamicTerm{
+				sort: sortReal, real: smt.IntToReal(terms[0].integer),
+			}, nil
+		}
+	case "to_int":
+		if len(terms) == 1 && terms[0].real != nil &&
+			(terms[0].sort == sortReal || terms[0].sort == sortNumber) {
+			return dynamicTerm{
+				sort: sortInt, integer: smt.RealToInt(terms[0].real),
+			}, nil
+		}
+	case "is_int":
+		if len(terms) == 1 && terms[0].real != nil &&
+			(terms[0].sort == sortReal || terms[0].sort == sortNumber) {
+			return dynamicTerm{
+				sort: sortBool, boolean: smt.RealIsInt(terms[0].real),
+			}, nil
+		}
 	case "str.to_re":
 		if values, ok := stringTerms(); ok && len(values) == 1 {
 			return dynamicTerm{sort: sortRegexString, regexString: smt.StringToRegex(values[0])}, nil

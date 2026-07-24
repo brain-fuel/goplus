@@ -896,6 +896,27 @@ type RealScale struct {
 
 func (RealScale) isTerm(RealSort) {}
 
+//goplus:variant (Term[S]) integerToReal(Value Term[IntSort]) Term[RealSort]
+type integerToReal struct {
+	value Term[IntSort]
+}
+
+func (integerToReal) isTerm(RealSort) {}
+
+//goplus:variant (Term[S]) realToInteger(Value Term[RealSort]) Term[IntSort]
+type realToInteger struct {
+	value Term[RealSort]
+}
+
+func (realToInteger) isTerm(IntSort) {}
+
+//goplus:variant (Term[S]) realIsInteger(Value Term[RealSort]) Term[BoolSort]
+type realIsInteger struct {
+	value Term[RealSort]
+}
+
+func (realIsInteger) isTerm(BoolSort) {}
+
 //goplus:variant (Term[S]) RealLessEqual(Left Term[RealSort], Right Term[RealSort]) Term[BoolSort]
 type RealLessEqual struct {
 	Left  Term[RealSort]
@@ -1787,6 +1808,9 @@ type TermCases[S any, R any] struct {
 	RealAdd                            func(Values []Term[RealSort]) R
 	RealSubtract                       func(Left Term[RealSort], Right Term[RealSort]) R
 	RealScale                          func(Coefficient Rational, Value Term[RealSort]) R
+	integerToReal                      func(Value Term[IntSort]) R
+	realToInteger                      func(Value Term[RealSort]) R
+	realIsInteger                      func(Value Term[RealSort]) R
 	RealLessEqual                      func(Left Term[RealSort], Right Term[RealSort]) R
 	RealLess                           func(Left Term[RealSort], Right Term[RealSort]) R
 	stringValue                        func(Value string) R
@@ -1948,6 +1972,12 @@ func TermFold[S any, R any](t Term[S], cs TermCases[S, R]) R {
 		return cs.RealSubtract(m.Left, m.Right)
 	case RealScale:
 		return cs.RealScale(m.Coefficient, m.Value)
+	case integerToReal:
+		return cs.integerToReal(m.value)
+	case realToInteger:
+		return cs.realToInteger(m.value)
+	case realIsInteger:
+		return cs.realIsInteger(m.value)
 	case RealLessEqual:
 		return cs.RealLessEqual(m.Left, m.Right)
 	case RealLess:
@@ -3248,6 +3278,25 @@ func SequenceIndexOf[E any](value Term[SequenceSort[E]], subsequence Term[Sequen
 }
 func SequenceReplace[E any](value Term[SequenceSort[E]], source Term[SequenceSort[E]], replacement Term[SequenceSort[E]]) Term[SequenceSort[E]] {
 	return sequenceReplace[SequenceSort[E]]{value: value, source: source, replacement: replacement}
+}
+
+func IntToReal(value Term[IntSort]) Term[RealSort] {
+	if exact, ok := ExactIntegerConstant(value); ok {
+		return Real{Value: RationalFromInteger(exact)}
+	}
+	return integerToReal{value: value}
+}
+func RealToInt(value Term[RealSort]) Term[IntSort] {
+	if exact, ok := ExactRealConstant(value); ok {
+		return IntegerTerm(FloorRational(exact))
+	}
+	return realToInteger{value: value}
+}
+func RealIsInt(value Term[RealSort]) Term[BoolSort] {
+	if exact, ok := ExactRealConstant(value); ok {
+		return Bool{Value: exact.IsInteger()}
+	}
+	return realIsInteger{value: value}
 }
 
 func ArrayConst[I any, E any](id int, name string) Term[ArraySort[I, E]] {

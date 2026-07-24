@@ -1956,6 +1956,47 @@ func TestExecuteTernaryRealFunctionArithmetic(t *testing.T) {
 	}
 }
 
+func TestExecuteGroundIntegerRealCoercions(t *testing.T) {
+	source := `(set-logic QF_LIRA)
+(assert (= (to_real 123456789012345678901234567890) 123456789012345678901234567890.0))
+(assert (= (to_int (- 1.5)) (- 2)))
+(assert (is_int 4.0))
+(assert (not (is_int 1.5)))
+(check-sat)`
+	result, ok := Execute(source).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(source))
+	}
+	if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+		t.Fatalf("last response=%#v", result.Responses[len(result.Responses)-1])
+	}
+}
+
+func TestExecuteSymbolicIntegerRealCoercionsRemainUnknown(t *testing.T) {
+	for _, source := range []string{
+		`(set-logic QF_LIRA)
+(declare-const x Int)
+(assert (= (to_real x) 1.0))
+(check-sat)`,
+		`(set-logic QF_LIRA)
+(declare-const x Real)
+(assert (= (to_int x) 1))
+(check-sat)`,
+		`(set-logic QF_LIRA)
+(declare-const x Real)
+(assert (is_int x))
+(check-sat)`,
+	} {
+		result, ok := Execute(source).(Executed)
+		if !ok {
+			t.Fatalf("result=%#v", Execute(source))
+		}
+		if _, ok := result.Responses[len(result.Responses)-1].(Unknown); !ok {
+			t.Fatalf("last response=%#v", result.Responses[len(result.Responses)-1])
+		}
+	}
+}
+
 func TestExecuteConditionalIntegerFunctionArithmetic(t *testing.T) {
 	for _, source := range []string{
 		`(set-logic QF_UFLIA)

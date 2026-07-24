@@ -169,6 +169,9 @@ type Term[S any] enum {
 	RealAdd(Values []Term[RealSort]) Term[RealSort]
 	RealSubtract(Left Term[RealSort], Right Term[RealSort]) Term[RealSort]
 	RealScale(Coefficient Rational, Value Term[RealSort]) Term[RealSort]
+	integerToReal(Value Term[IntSort]) Term[RealSort]
+	realToInteger(Value Term[RealSort]) Term[IntSort]
+	realIsInteger(Value Term[RealSort]) Term[BoolSort]
 	RealLessEqual(Left Term[RealSort], Right Term[RealSort]) Term[BoolSort]
 	RealLess(Left Term[RealSort], Right Term[RealSort]) Term[BoolSort]
 	stringValue(Value string) Term[S]
@@ -598,6 +601,19 @@ func SequenceHasPrefix[E any](value Term[SequenceSort[E]], prefix Term[SequenceS
 func SequenceHasSuffix[E any](value Term[SequenceSort[E]], suffix Term[SequenceSort[E]]) Term[BoolSort] { return sequenceSuffix(suffix, value) }
 func SequenceIndexOf[E any](value Term[SequenceSort[E]], subsequence Term[SequenceSort[E]], offset Term[IntSort]) Term[IntSort] { return sequenceIndexOf(value, subsequence, offset) }
 func SequenceReplace[E any](value Term[SequenceSort[E]], source Term[SequenceSort[E]], replacement Term[SequenceSort[E]]) Term[SequenceSort[E]] { return Term[SequenceSort[E]].sequenceReplace(value, source, replacement) }
+
+func IntToReal(value Term[IntSort]) Term[RealSort] {
+	if exact, ok := ExactIntegerConstant(value); ok { return Real(RationalFromInteger(exact)) }
+	return integerToReal(value)
+}
+func RealToInt(value Term[RealSort]) Term[IntSort] {
+	if exact, ok := ExactRealConstant(value); ok { return IntegerTerm(FloorRational(exact)) }
+	return realToInteger(value)
+}
+func RealIsInt(value Term[RealSort]) Term[BoolSort] {
+	if exact, ok := ExactRealConstant(value); ok { return Bool(exact.IsInteger()) }
+	return realIsInteger(value)
+}
 
 func ArrayConst[I any, E any](id int, name string) Term[ArraySort[I, E]] {
 	return Term[ArraySort[I, E]].arraySymbol(id, name)

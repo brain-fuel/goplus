@@ -79,6 +79,68 @@ func MultiplyRational(left, right Rational) Rational { return rationalMul(left, 
 func NegateRational(value Rational) Rational         { return rationalNeg(value) }
 func CompareRational(left, right Rational) int       { return rationalCmp(left, right) }
 
+func RationalFromInteger(value IntegerValue) Rational {
+	if value.large == nil {
+		return NewRational(value.small, 1)
+	}
+	return rationalFromBig(new(big.Rat).SetInt(value.large))
+}
+
+func FloorRational(value Rational) IntegerValue {
+	if numerator, denominator, ok := value.small(); ok {
+		quotient := numerator / denominator
+		if numerator < 0 && numerator%denominator != 0 {
+			quotient--
+		}
+		return NewIntegerValue(quotient)
+	}
+	numerator, denominator := value.large.Num(), value.large.Denom()
+	var quotient, remainder big.Int
+	quotient.QuoRem(numerator, denominator, &remainder)
+	if numerator.Sign() < 0 && remainder.Sign() != 0 {
+		quotient.Sub(&quotient, big.NewInt(1))
+	}
+	return integerValueFromBig(&quotient)
+}
+
+func ExactRealConstant(term Term[RealSort]) (Rational, bool) {
+	switch value := term.(type) {
+	case Real:
+		return value.Value, true
+	case integerToReal:
+		integer, ok := ExactIntegerConstant(value.value)
+		if !ok {
+			return Rational{}, false
+		}
+		return RationalFromInteger(integer), true
+	case RealAdd:
+		result := Rational{}
+		for _, item := range value.Values {
+			next, ok := ExactRealConstant(item)
+			if !ok {
+				return Rational{}, false
+			}
+			result = AddRational(result, next)
+		}
+		return result, true
+	case RealSubtract:
+		left, leftOK := ExactRealConstant(value.Left)
+		right, rightOK := ExactRealConstant(value.Right)
+		if !leftOK || !rightOK {
+			return Rational{}, false
+		}
+		return SubtractRational(left, right), true
+	case RealScale:
+		item, ok := ExactRealConstant(value.Value)
+		if !ok {
+			return Rational{}, false
+		}
+		return MultiplyRational(value.Coefficient, item), true
+	default:
+		return Rational{}, false
+	}
+}
+
 func (value Rational) big() *big.Rat {
 	if numerator, denominator, ok := value.small(); ok {
 		return new(big.Rat).SetFrac(big.NewInt(numerator), big.NewInt(denominator))
