@@ -459,14 +459,20 @@ func synthesizeFloatingPointFMAIdentity(
 	assignmentCount *int,
 	relation FloatingPointFMARelation,
 ) bool {
-	if relation.LeftSymbolID == relation.RightSymbolID ||
-		relation.LeftSymbolID == relation.AddendSymbolID ||
-		relation.RightSymbolID == relation.AddendSymbolID {
+	leftRight := relation.LeftSymbolID == relation.RightSymbolID
+	leftAddend := relation.LeftSymbolID == relation.AddendSymbolID
+	rightAddend := relation.RightSymbolID == relation.AddendSymbolID
+	if leftRight && leftAddend {
 		return false
 	}
 	total := relation.ExponentBits + relation.SignificandBits
+	repeated := leftRight || leftAddend || rightAddend
+	required := 3
+	if repeated {
+		required = 2
+	}
 	if relation.Value.Width() != total ||
-		*assignmentCount+3 > len(assignments) {
+		*assignmentCount+required > len(assignments) {
 		return false
 	}
 	left := FloatingPointFromBits(
@@ -483,6 +489,42 @@ func synthesizeFloatingPointFMAIdentity(
 		FloatingPointNegativeZero(
 			relation.ExponentBits, relation.SignificandBits,
 		),
+	}
+	if repeated {
+		for _, zero := range zeros {
+			firstID, secondID := relation.LeftSymbolID, relation.RightSymbolID
+			first, second := left, zero
+			leftValue, rightValue, addendValue := first, second, first
+			if leftRight {
+				secondID = relation.AddendSymbolID
+				first, second = zero, left
+				leftValue, rightValue, addendValue = first, first, second
+			}
+			if rightAddend {
+				firstID, secondID = relation.RightSymbolID, relation.LeftSymbolID
+				first, second = left, zero
+				leftValue, rightValue, addendValue = second, first, first
+			}
+			fused := floatingPointFMA(
+				relation.Mode, leftValue, rightValue, addendValue,
+			)
+			if !EqualBitVectorValue(
+				FloatingPointBits(fused), relation.Value,
+			) {
+				continue
+			}
+			fixed := NotBitVectorValue(NewBitVectorUint64(total, 0))
+			assignments[*assignmentCount] = compactBitVectorAssignment{
+				id: firstID, value: FloatingPointBits(first), fixed: fixed,
+			}
+			*assignmentCount++
+			assignments[*assignmentCount] = compactBitVectorAssignment{
+				id: secondID, value: FloatingPointBits(second), fixed: fixed,
+			}
+			*assignmentCount++
+			return true
+		}
+		return false
 	}
 	var addend BitVectorValue
 	found := false

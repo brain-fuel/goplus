@@ -2623,6 +2623,40 @@ func TestExecuteRepeatedOperandFloatingPointImages(t *testing.T) {
 	}
 }
 
+func TestExecuteRepeatedOperandFloatingPointFMA(t *testing.T) {
+	for _, expression := range []string{
+		"(fp.fma RNE x x y)",
+		"(fp.fma RNE x y x)",
+		"(fp.fma RNE y x x)",
+	} {
+		script := `(set-logic QF_FP)
+(declare-const x (_ FloatingPoint 8 24))
+(declare-const y (_ FloatingPoint 8 24))
+(assert (= (fp.to_ieee_bv ` + expression + `)
+  #x3fc00000))
+(check-sat)`
+		fast, recognized := executeFloatingPointFast(script)
+		if !recognized {
+			t.Fatal("repeated fp.fma missed streaming executor")
+		}
+		stream := fast.(Executed)
+		if _, ok := stream.Responses[len(stream.Responses)-1].(Satisfiable); !ok {
+			t.Fatalf("streaming result=%#v", stream)
+		}
+		parsed, ok := Parse(script).(Parsed)
+		if !ok {
+			t.Fatal("general parse failed")
+		}
+		responses, errors := executeCommands(parsed.Commands)
+		if len(errors) != 0 {
+			t.Fatalf("general execution errors=%#v", errors)
+		}
+		if _, ok := responses[len(responses)-1].(Satisfiable); !ok {
+			t.Fatalf("general result=%#v", responses)
+		}
+	}
+}
+
 func TestExecuteNestedGroundFloatingPointOrdering(t *testing.T) {
 	script := `(set-logic QF_FP)
 (assert (fp.gt
@@ -4199,6 +4233,45 @@ func BenchmarkExecuteRepeatedOperandFloatingPointAddMul(b *testing.B) {
 (declare-const mulSource (_ FloatingPoint 8 24))
 (assert (= (fp.to_ieee_bv (fp.add RNE addSource addSource)) #x40000000))
 (assert (= (fp.to_ieee_bv (fp.mul RNE mulSource mulSource)) #x3f800000))
+(check-sat)`
+	b.Run("stream", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			result, ok := Execute(script).(Executed)
+			if !ok {
+				b.Fatal("execution failed")
+			}
+			if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
+	b.Run("general", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			parsed, ok := Parse(script).(Parsed)
+			if !ok {
+				b.Fatal("parse failed")
+			}
+			responses, errors := executeCommands(parsed.Commands)
+			if len(errors) != 0 {
+				b.Fatal("execution failed")
+			}
+			if _, ok := responses[len(responses)-1].(Satisfiable); !ok {
+				b.Fatal("unexpected result")
+			}
+		}
+	})
+}
+
+func BenchmarkExecuteRepeatedOperandFloatingPointFMA(b *testing.B) {
+	script := `(set-logic QF_FP)
+(declare-const a (_ FloatingPoint 8 24))
+(declare-const b (_ FloatingPoint 8 24))
+(declare-const c (_ FloatingPoint 8 24))
+(declare-const d (_ FloatingPoint 8 24))
+(assert (= (fp.to_ieee_bv (fp.fma RNE a a b)) #x3fc00000))
+(assert (= (fp.to_ieee_bv (fp.fma RNE c d c)) #xbfc00000))
 (check-sat)`
 	b.Run("stream", func(b *testing.B) {
 		b.ReportAllocs()

@@ -1000,6 +1000,54 @@ func TestSymbolicFloatingPointFMASynthesizesBinary128Operands(t *testing.T) {
 	}
 }
 
+func TestRepeatedOperandFloatingPointFMAImages(t *testing.T) {
+	target := FloatingPointBits(FloatingPointFromRational(
+		15, 113, RoundNearestTiesToEven(), NewRational(3, 2),
+	))
+	for _, test := range []struct {
+		name                  string
+		left, right, addendID int
+	}{
+		{"repeated-multiplicand", 1, 1, 2},
+		{"left-is-addend", 1, 2, 1},
+		{"right-is-addend", 2, 1, 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			relation := NewFloatingPointFMARelation(
+				15, 113, test.left, test.right, test.addendID,
+				RoundNearestTiesToEven(), target,
+			)
+			result, ok := Check(AssertFloatingPointFMARelation(
+				1, New(), relation,
+			)).(Satisfiable)
+			if !ok {
+				t.Fatal("expected repeated-operand binary128 fp.fma model")
+			}
+			leftBits, leftFound := FloatingPointSymbolModelBits(
+				result.Value, test.left,
+			)
+			rightBits, rightFound := FloatingPointSymbolModelBits(
+				result.Value, test.right,
+			)
+			addendBits, addendFound := FloatingPointSymbolModelBits(
+				result.Value, test.addendID,
+			)
+			if !leftFound || !rightFound || !addendFound {
+				t.Fatal("repeated-operand fp.fma model is incomplete")
+			}
+			actual := FloatingPointFMA(
+				RoundNearestTiesToEven(),
+				FloatingPointFromBits(15, 113, leftBits),
+				FloatingPointFromBits(15, 113, rightBits),
+				FloatingPointFromBits(15, 113, addendBits),
+			)
+			if !EqualBitVectorValue(FloatingPointBits(actual), target) {
+				t.Fatal("repeated-operand fp.fma model misses target")
+			}
+		})
+	}
+}
+
 func TestSymbolicFloatingPointSqrtRelation(t *testing.T) {
 	valueBits := NewBitVectorUint64(32, 0x40000000)
 	wantBits := NewBitVectorUint64(32, 0x3fb504f3)
