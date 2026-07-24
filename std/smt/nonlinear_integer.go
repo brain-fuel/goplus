@@ -151,6 +151,26 @@ type IntegerAffinePowerBoundSystem struct {
 
 func (IntegerAffinePowerBoundSystem) isTerm(BoolSort) {}
 
+// IntegerAffineTwoSquareRelation is the compact form
+// (a*x+b)^2+(c*y+d)^2 = k (or != k).
+type IntegerAffineTwoSquareRelation struct {
+	Left, Right IntegerAffineFactor
+	Target      IntegerValue
+	Negated     bool
+}
+
+func (IntegerAffineTwoSquareRelation) isTerm(BoolSort) {}
+
+// IntegerAffineTwoSquareSystem is an allocation-free conjunction of
+// two-square relations.
+type IntegerAffineTwoSquareSystem struct {
+	Count    int
+	Inline   [4]IntegerAffineTwoSquareRelation
+	Overflow []IntegerAffineTwoSquareRelation
+}
+
+func (IntegerAffineTwoSquareSystem) isTerm(BoolSort) {}
+
 // IntegerSquareBound represents x² <(=) k when Lower is false and
 // k <(=) x² when Lower is true.
 type IntegerSquareBound struct {
@@ -276,6 +296,8 @@ type nonlinearIntegerProblem struct {
 	powers            [nonlinearIntegerRelationLimit]IntegerAffinePowerRelation
 	powerBoundCount   int
 	powerBounds       [nonlinearIntegerRelationLimit]IntegerAffinePowerBound
+	twoSquareCount    int
+	twoSquares        [nonlinearIntegerRelationLimit]IntegerAffineTwoSquareRelation
 	impossible        bool
 }
 
@@ -291,7 +313,7 @@ func solveNonlinearIntegerAssertions(
 	if problem.relationCount == 0 && problem.boundCount == 0 &&
 		problem.productBoundCount == 0 && problem.cubeCount == 0 &&
 		problem.cubeBoundCount == 0 && problem.powerCount == 0 &&
-		problem.powerBoundCount == 0 {
+		problem.powerBoundCount == 0 && problem.twoSquareCount == 0 {
 		return checkOutcome{}, false
 	}
 	if problem.impossible {
@@ -479,6 +501,25 @@ func (problem *nonlinearIntegerProblem) boolean(
 		}
 		for _, bound := range bounds {
 			if !problem.addAffinePowerBound(bound) {
+				return false
+			}
+		}
+		return true
+	case IntegerAffineTwoSquareRelation:
+		value.Negated = value.Negated != negated
+		return problem.addAffineTwoSquareRelation(value)
+	case IntegerAffineTwoSquareSystem:
+		if negated || value.Count < 0 {
+			return false
+		}
+		relations := value.Overflow
+		if value.Count <= len(value.Inline) {
+			relations = value.Inline[:value.Count]
+		} else if len(relations) != value.Count {
+			return false
+		}
+		for _, relation := range relations {
+			if !problem.addAffineTwoSquareRelation(relation) {
 				return false
 			}
 		}
@@ -831,6 +872,20 @@ func (problem *nonlinearIntegerProblem) addAffineSquareRange(
 func (problem *nonlinearIntegerProblem) equality(
 	left, right any, negated bool,
 ) bool {
+	leftSquare, rightSquare, target, ok :=
+		nonlinearIntegerAffineTwoSquareEquality(left, right)
+	if !ok {
+		leftSquare, rightSquare, target, ok =
+			nonlinearIntegerAffineTwoSquareEquality(right, left)
+	}
+	if ok {
+		return problem.addAffineTwoSquareRelation(
+			IntegerAffineTwoSquareRelation{
+				Left: leftSquare, Right: rightSquare,
+				Target: target, Negated: negated,
+			},
+		)
+	}
 	power, exponent, target, ok := nonlinearIntegerAffinePowerEquality(
 		left, right,
 	)
@@ -869,6 +924,111 @@ func (problem *nonlinearIntegerProblem) equality(
 	return problem.addAffineRelation(IntegerAffineProductRelation{
 		Left: leftFactor, Right: rightFactor, Target: target, Negated: negated,
 	})
+}
+
+func (problem *nonlinearIntegerProblem) addAffineTwoSquareRelation(
+	value IntegerAffineTwoSquareRelation,
+) bool {
+	if problem.twoSquareCount == len(problem.twoSquares) {
+		return false
+	}
+	for _, existing := range problem.twoSquares[:problem.twoSquareCount] {
+		samePair := equalIntegerAffineFactor(existing.Left, value.Left) &&
+			equalIntegerAffineFactor(existing.Right, value.Right) ||
+			equalIntegerAffineFactor(existing.Left, value.Right) &&
+				equalIntegerAffineFactor(existing.Right, value.Left)
+		if !samePair {
+			continue
+		}
+		sameTarget := CompareIntegerValue(existing.Target, value.Target) == 0
+		if (!existing.Negated && !value.Negated && !sameTarget) ||
+			(sameTarget && existing.Negated != value.Negated) {
+			problem.impossible = true
+			return true
+		}
+	}
+	left, leftAdded := problem.ensureSymbol(value.Left.SymbolID)
+	right, rightAdded := problem.ensureSymbol(value.Right.SymbolID)
+	if !leftAdded || !rightAdded {
+		return false
+	}
+	if value.Negated {
+		for candidate := 0; candidate <= 2*(problem.twoSquareCount+1); candidate++ {
+			problem.candidates[left].add(NewIntegerValue(int64(candidate)))
+		}
+		problem.candidates[right].add(IntegerValue{})
+	} else if CompareIntegerValue(value.Target, IntegerValue{}) < 0 {
+		problem.impossible = true
+	} else {
+		complete := problem.addTwoSquareCandidates(
+			left, right, value.Left, value.Right, value.Target,
+		)
+		if complete {
+			problem.domainComplete[left] = true
+			problem.domainComplete[right] = true
+		}
+	}
+	problem.twoSquares[problem.twoSquareCount] = value
+	problem.twoSquareCount++
+	return true
+}
+
+func (problem *nonlinearIntegerProblem) addTwoSquareCandidates(
+	left, right int,
+	leftFactor, rightFactor IntegerAffineFactor,
+	target IntegerValue,
+) bool {
+	root := integerSquareRoot(target)
+	problem.addAffineFactorCandidate(left, leftFactor, root)
+	problem.addAffineFactorCandidate(
+		left, leftFactor, NegateIntegerValue(root),
+	)
+	problem.addAffineFactorCandidate(right, rightFactor, IntegerValue{})
+	problem.addAffineFactorCandidate(left, leftFactor, IntegerValue{})
+	problem.addAffineFactorCandidate(right, rightFactor, root)
+	problem.addAffineFactorCandidate(
+		right, rightFactor, NegateIntegerValue(root),
+	)
+	inline, ok := root.Int64()
+	if !ok || inline > nonlinearIntegerDivisorLimit {
+		return false
+	}
+	complete := true
+	for leftValue := int64(0); leftValue <= inline; leftValue++ {
+		leftSquare := leftValue * leftValue
+		remainder := AddIntegerValue(
+			target, NewIntegerValue(-leftSquare),
+		)
+		rightValue := integerSquareRoot(remainder)
+		if CompareIntegerValue(
+			MultiplyIntegerValue(rightValue, rightValue), remainder,
+		) != 0 {
+			continue
+		}
+		for _, candidate := range [2]IntegerValue{
+			NewIntegerValue(leftValue),
+			NewIntegerValue(-leftValue),
+		} {
+			if !problem.addAffineFactorCandidate(
+				left, leftFactor, candidate,
+			) {
+				complete = false
+			}
+		}
+		for _, candidate := range [2]IntegerValue{
+			rightValue, NegateIntegerValue(rightValue),
+		} {
+			if !problem.addAffineFactorCandidate(
+				right, rightFactor, candidate,
+			) {
+				complete = false
+			}
+		}
+		if !complete {
+			break
+		}
+	}
+	return complete
 }
 
 func (problem *nonlinearIntegerProblem) addAffinePowerRelation(
@@ -1589,6 +1749,36 @@ func nonlinearIntegerAffinePowerEquality(
 	return factor, exponent, target, ok
 }
 
+func nonlinearIntegerAffineTwoSquareEquality(
+	sumTerm, targetTerm any,
+) (IntegerAffineFactor, IntegerAffineFactor, IntegerValue, bool) {
+	sumExpression, ok := sumTerm.(Add)
+	if !ok || len(sumExpression.Values) != 2 {
+		return IntegerAffineFactor{}, IntegerAffineFactor{},
+			IntegerValue{}, false
+	}
+	left, leftExponent, leftOK := nonlinearIntegerAffinePower(
+		sumExpression.Values[0],
+	)
+	right, rightExponent, rightOK := nonlinearIntegerAffinePower(
+		sumExpression.Values[1],
+	)
+	if !leftOK || !rightOK || leftExponent != 2 || rightExponent != 2 {
+		return IntegerAffineFactor{}, IntegerAffineFactor{},
+			IntegerValue{}, false
+	}
+	targetExpression, ok := targetTerm.(Term[IntSort])
+	if !ok {
+		return IntegerAffineFactor{}, IntegerAffineFactor{},
+			IntegerValue{}, false
+	}
+	target, ok := evaluateInteger(
+		targetExpression,
+		booleanModel{}, integerModel{}, rationalModel{},
+	)
+	return left, right, target, ok
+}
+
 func nonlinearIntegerAffinePower(
 	term Term[IntSort],
 ) (IntegerAffineFactor, int, bool) {
@@ -1908,6 +2098,27 @@ func (problem *nonlinearIntegerProblem) valid(
 			}
 		}
 		if !holds {
+			return false
+		}
+	}
+	for _, relation := range problem.twoSquares[:problem.twoSquareCount] {
+		left := problem.symbolPosition(relation.Left.SymbolID)
+		right := problem.symbolPosition(relation.Right.SymbolID)
+		if left < 0 || right < 0 || !assigned[left] || !assigned[right] {
+			continue
+		}
+		leftValue := evaluateIntegerAffineFactor(
+			relation.Left, values[left],
+		)
+		rightValue := evaluateIntegerAffineFactor(
+			relation.Right, values[right],
+		)
+		sum := AddIntegerValue(
+			MultiplyIntegerValue(leftValue, leftValue),
+			MultiplyIntegerValue(rightValue, rightValue),
+		)
+		holds := CompareIntegerValue(sum, relation.Target) == 0
+		if holds == relation.Negated {
 			return false
 		}
 	}

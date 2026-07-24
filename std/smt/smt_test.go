@@ -858,6 +858,126 @@ func TestNonlinearIntegerHigherAffinePowerBounds(t *testing.T) {
 	}
 }
 
+func TestNonlinearIntegerAffineTwoSquareRelations(t *testing.T) {
+	x := IntSymbol{ID: 119, Name: "x"}
+	y := IntSymbol{ID: 120, Name: "y"}
+	left := Add{Values: []Term[IntSort]{
+		ScaleInteger(NewIntegerValue(2), x),
+		IntegerTerm(NewIntegerValue(1)),
+	}}
+	right := Add{Values: []Term[IntSort]{
+		ScaleInteger(NewIntegerValue(3), y),
+		IntegerTerm(NewIntegerValue(-2)),
+	}}
+	sum := Add{Values: []Term[IntSort]{
+		MultiplyInteger(left, left),
+		MultiplyInteger(right, right),
+	}}
+	equality := Equal{
+		Left: sum, Right: IntegerTerm(NewIntegerValue(50)),
+	}
+	checked := Check(Assert(1, New(), equality))
+	result, ok := checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("affine two-square relation=%#v", checked)
+	}
+	xValue, xFound := IntegerModelValue(result.Value, x)
+	yValue, yFound := IntegerModelValue(result.Value, y)
+	leftValue := AddIntegerValue(
+		MultiplyIntegerValue(NewIntegerValue(2), xValue),
+		NewIntegerValue(1),
+	)
+	rightValue := AddIntegerValue(
+		MultiplyIntegerValue(NewIntegerValue(3), yValue),
+		NewIntegerValue(-2),
+	)
+	if !xFound || !yFound || CompareIntegerValue(
+		AddIntegerValue(
+			MultiplyIntegerValue(leftValue, leftValue),
+			MultiplyIntegerValue(rightValue, rightValue),
+		),
+		NewIntegerValue(50),
+	) != 0 {
+		t.Fatalf("two-square model x=%v/%v y=%v/%v", xValue, xFound, yValue, yFound)
+	}
+
+	congruence := Check(Assert(2, New(), Equal{
+		Left: sum, Right: IntegerTerm(NewIntegerValue(4)),
+	}))
+	if _, ok := congruence.(Unsatisfiable); !ok {
+		t.Fatalf("two-square congruence=%#v", congruence)
+	}
+	negative := Check(Assert(3, New(), Equal{
+		Left: sum, Right: IntegerTerm(NewIntegerValue(-1)),
+	}))
+	if _, ok := negative.(Unsatisfiable); !ok {
+		t.Fatalf("negative two-square target=%#v", negative)
+	}
+
+	disequality := Not{Value: equality}
+	disequalityResult := Check(Assert(4, New(), disequality))
+	if _, ok := disequalityResult.(Satisfiable); !ok {
+		t.Fatalf("two-square disequality=%#v", disequalityResult)
+	}
+	conflict := Check(Assert(5, New(), And{Values: []Term[BoolSort]{
+		equality, disequality,
+	}}))
+	if _, ok := conflict.(Unsatisfiable); !ok {
+		t.Fatalf("two-square conflict=%#v", conflict)
+	}
+
+	largeLeft := Add{Values: []Term[IntSort]{
+		ScaleInteger(NewIntegerValue(10000), x),
+		IntegerTerm(NewIntegerValue(1)),
+	}}
+	largeRight := Add{Values: []Term[IntSort]{
+		ScaleInteger(NewIntegerValue(10000), y),
+		IntegerTerm(NewIntegerValue(1)),
+	}}
+	largeSum := Add{Values: []Term[IntSort]{
+		MultiplyInteger(largeLeft, largeLeft),
+		MultiplyInteger(largeRight, largeRight),
+	}}
+	largeResult := Check(Assert(6, New(), Equal{
+		Left: largeSum, Right: IntegerTerm(NewIntegerValue(25000000)),
+	}))
+	if _, ok := largeResult.(Unknown); !ok {
+		t.Fatalf("large two-square domain=%#v", largeResult)
+	}
+
+	wideRoot, err := ParseIntegerValue("1267650600228229401496703205376")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wideTarget := MultiplyIntegerValue(wideRoot, wideRoot)
+	wideLeft := Add{Values: []Term[IntSort]{
+		x, IntegerTerm(NewIntegerValue(2)),
+	}}
+	wideSum := Add{Values: []Term[IntSort]{
+		MultiplyInteger(wideLeft, wideLeft),
+		MultiplyInteger(y, y),
+	}}
+	checked = Check(Assert(7, New(), Equal{
+		Left: wideSum, Right: IntegerTerm(wideTarget),
+	}))
+	result, ok = checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("wide two-square relation=%#v", checked)
+	}
+	xValue, xFound = IntegerModelValue(result.Value, x)
+	yValue, yFound = IntegerModelValue(result.Value, y)
+	wideX := AddIntegerValue(xValue, NewIntegerValue(2))
+	if !xFound || !yFound || CompareIntegerValue(
+		AddIntegerValue(
+			MultiplyIntegerValue(wideX, wideX),
+			MultiplyIntegerValue(yValue, yValue),
+		),
+		wideTarget,
+	) != 0 {
+		t.Fatalf("wide two-square model x=%v y=%v", xValue, yValue)
+	}
+}
+
 func TestNonlinearIntegerAffineFactorProducts(t *testing.T) {
 	x := IntSymbol{ID: 110, Name: "x"}
 	y := IntSymbol{ID: 111, Name: "y"}
