@@ -272,44 +272,48 @@ func TestUnconstrainedFloatingPointMinMaxCanonicalModels(t *testing.T) {
 		FloatingPointOperationMin, FloatingPointOperationMax,
 	} {
 		for targetIndex, target := range targets {
-			for _, same := range []bool{false, true} {
-				rightID := 2
-				if same {
-					rightID = 1
-				}
-				relation := NewFloatingPointMinMaxRelation(
-					15, 113, 1, rightID, operation,
-					FloatingPointBits(target),
-				)
-				result, ok := Check(AssertFloatingPointMinMaxRelation(
-					1, New(), relation,
-				)).(Satisfiable)
-				if !ok {
-					t.Fatalf(
-						"operation=%d target=%d same=%v was not satisfiable",
-						operation, targetIndex, same,
+			for _, negated := range []bool{false, true} {
+				for _, same := range []bool{false, true} {
+					rightID := 2
+					if same {
+						rightID = 1
+					}
+					relation := NewFloatingPointMinMaxRelation(
+						15, 113, 1, rightID, operation,
+						FloatingPointBits(target),
 					)
-				}
-				leftBits, leftFound := FloatingPointSymbolModelBits(
-					result.Value, 1,
-				)
-				rightBits, rightFound := FloatingPointSymbolModelBits(
-					result.Value, rightID,
-				)
-				if !leftFound || !rightFound ||
-					leftBits.Width() != 128 || rightBits.Width() != 128 {
-					t.Fatal("canonical min/max model is incomplete")
-				}
-				left := FloatingPointFromBits(15, 113, leftBits)
-				right := FloatingPointFromBits(15, 113, rightBits)
-				selected := FloatingPointMin(left, right)
-				if operation == FloatingPointOperationMax {
-					selected = FloatingPointMax(left, right)
-				}
-				if !EqualBitVectorValue(
-					FloatingPointBits(selected), relation.Value,
-				) {
-					t.Fatal("canonical operands do not reproduce target")
+					relation.Negated = negated
+					result, ok := Check(AssertFloatingPointMinMaxRelation(
+						1, New(), relation,
+					)).(Satisfiable)
+					if !ok {
+						t.Fatalf(
+							"operation=%d target=%d negated=%v same=%v was not satisfiable",
+							operation, targetIndex, negated, same,
+						)
+					}
+					leftBits, leftFound := FloatingPointSymbolModelBits(
+						result.Value, 1,
+					)
+					rightBits, rightFound := FloatingPointSymbolModelBits(
+						result.Value, rightID,
+					)
+					if !leftFound || !rightFound ||
+						leftBits.Width() != 128 || rightBits.Width() != 128 {
+						t.Fatal("canonical min/max model is incomplete")
+					}
+					left := FloatingPointFromBits(15, 113, leftBits)
+					right := FloatingPointFromBits(15, 113, rightBits)
+					selected := FloatingPointMin(left, right)
+					if operation == FloatingPointOperationMax {
+						selected = FloatingPointMax(left, right)
+					}
+					holds := EqualBitVectorValue(
+						FloatingPointBits(selected), relation.Value,
+					)
+					if holds == negated {
+						t.Fatal("canonical operands do not satisfy relation")
+					}
 				}
 			}
 		}
@@ -325,6 +329,7 @@ func TestPairedUnconstrainedFloatingPointMinMaxCanonicalModels(t *testing.T) {
 		8, 24, 3, 4, FloatingPointOperationMax,
 		NewBitVectorUint64(32, 0x3fc00000),
 	)
+	maximum.Negated = true
 	solver := AssertFloatingPointMinMaxRelation(1, New(), minimum)
 	solver = AssertFloatingPointMinMaxRelation(2, solver, maximum)
 	result, ok := Check(solver).(Satisfiable)

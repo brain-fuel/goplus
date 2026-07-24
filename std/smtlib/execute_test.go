@@ -3748,8 +3748,8 @@ func TestExecuteUnconstrainedFloatingPointMinMax(t *testing.T) {
 (declare-const maxRight (_ FloatingPoint 8 24))
 (assert (= (fp.to_ieee_bv (fp.min minLeft minRight))
            #x7fc00000))
-(assert (= (fp.to_ieee_bv (fp.max maxLeft maxRight))
-           #x80000000))
+(assert (not (= (fp.to_ieee_bv (fp.max maxLeft maxRight))
+                #x80000000)))
 (check-sat)`
 	fast, recognized := executeFloatingPointFast(script)
 	if !recognized {
@@ -3999,7 +3999,7 @@ func BenchmarkExecuteUnconstrainedFloatingPointMinMax(b *testing.B) {
 (declare-const maxLeft (_ FloatingPoint 8 24))
 (declare-const maxRight (_ FloatingPoint 8 24))
 (assert (= (fp.to_ieee_bv (fp.min minLeft minRight)) #xc0400000))
-(assert (= (fp.to_ieee_bv (fp.max maxLeft maxRight)) #x3fc00000))
+(assert (not (= (fp.to_ieee_bv (fp.max maxLeft maxRight)) #x3fc00000)))
 (check-sat)`
 	b.Run("stream", func(b *testing.B) {
 		b.ReportAllocs()

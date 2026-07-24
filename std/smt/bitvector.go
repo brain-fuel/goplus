@@ -1105,29 +1105,39 @@ func synthesizeStandaloneFloatingPointMinMax(
 	assignmentCount *int,
 	relation FloatingPointMinMaxRelation,
 ) bool {
-	if relation.Negated {
-		return false
-	}
 	for index := 0; index < *assignmentCount; index++ {
 		if assignments[index].id == relation.LeftSymbolID ||
 			assignments[index].id == relation.RightSymbolID {
 			return false
 		}
 	}
-	target := FloatingPointFromBits(
-		relation.ExponentBits, relation.SignificandBits, relation.Value,
-	)
-	selected := FloatingPointMin(target, target)
-	if relation.Operation == FloatingPointOperationMax {
-		selected = FloatingPointMax(target, target)
+	candidateBits := relation.Value
+	if relation.Negated {
+		candidateBits = FloatingPointBits(FloatingPointPositiveZero(
+			relation.ExponentBits, relation.SignificandBits,
+		))
+		if EqualBitVectorValue(candidateBits, relation.Value) {
+			candidateBits = FloatingPointBits(floatingPointFromRational(
+				1, relation.ExponentBits, relation.SignificandBits,
+				NewRational(1, 1),
+			))
+		}
 	}
-	if !EqualBitVectorValue(FloatingPointBits(selected), relation.Value) {
+	candidate := FloatingPointFromBits(
+		relation.ExponentBits, relation.SignificandBits, candidateBits,
+	)
+	selected := FloatingPointMin(candidate, candidate)
+	if relation.Operation == FloatingPointOperationMax {
+		selected = FloatingPointMax(candidate, candidate)
+	}
+	holds := EqualBitVectorValue(FloatingPointBits(selected), relation.Value)
+	if holds == relation.Negated {
 		return false
 	}
 	total := relation.ExponentBits + relation.SignificandBits
 	fixed := NotBitVectorValue(NewBitVectorUint64(total, 0))
 	assignments[*assignmentCount] = compactBitVectorAssignment{
-		id: relation.LeftSymbolID, value: relation.Value, fixed: fixed,
+		id: relation.LeftSymbolID, value: candidateBits, fixed: fixed,
 	}
 	*assignmentCount++
 	if relation.LeftSymbolID == relation.RightSymbolID {
@@ -1137,7 +1147,7 @@ func synthesizeStandaloneFloatingPointMinMax(
 		return false
 	}
 	assignments[*assignmentCount] = compactBitVectorAssignment{
-		id: relation.RightSymbolID, value: relation.Value, fixed: fixed,
+		id: relation.RightSymbolID, value: candidateBits, fixed: fixed,
 	}
 	*assignmentCount++
 	return true
@@ -1214,10 +1224,11 @@ func solveCompactBitVectorAssertions(assertions []Term[BoolSort]) (checkOutcome,
 			}
 		}
 	}
-	// fp.min(target, target) and fp.max(target, target) reproduce every exact
-	// IEEE result pattern under this package's deterministic SMT-LIB-permitted
-	// NaN and signed-zero choices. Validate that identity through the public
-	// kernels before committing up to two independent result images.
+	// fp.min(candidate, candidate) and fp.max(candidate, candidate) provide
+	// exact witnesses for both fixed result images and their negations. Positive
+	// relations use the target itself; negated relations choose a distinct
+	// deterministic finite value. Validate through the public kernels before
+	// committing up to two independent atoms.
 	if problem.minMaxCount > 0 &&
 		problem.minMaxCount <= 2 &&
 		problem.relationCount == 0 &&
