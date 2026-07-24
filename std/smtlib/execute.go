@@ -25,49 +25,57 @@ const (
 )
 
 type dynamicTerm struct {
-	sort                 int
-	boolean              smt.Term[smt.BoolSort]
-	integer              smt.Term[smt.IntSort]
-	real                 smt.Term[smt.RealSort]
-	bitVector            smt.Term[smt.BitVecSort]
-	bitVectorExact       bool
-	bitVectorValue       smt.BitVectorValue
-	bitVectorSymbol      int
-	stringValue          smt.Term[smt.StringSort]
-	regexString          smt.Regex[smt.StringSort]
-	bitWidth             int
-	exponentBits         int
-	significandBits      int
-	roundingMode         smt.FloatingPointRoundingMode
-	floatingPointRound   *dynamicFloatingPointRound
-	floatingPointMinMax  *dynamicFloatingPointMinMax
-	floatingPointAdd     *dynamicFloatingPointAdd
-	floatingPointSub     *dynamicFloatingPointSub
-	floatingPointMul     *dynamicFloatingPointMul
-	floatingPointDiv     *dynamicFloatingPointDiv
-	floatingPointFMA     *dynamicFloatingPointFMA
-	floatingPointSqrt    *dynamicFloatingPointSqrt
-	floatingPointRem     *dynamicFloatingPointRem
-	floatingPointSymbol  int
-	uninterpreted        smt.Term[smt.UninterpretedSort]
-	arrayIntInt          smt.Term[smt.ArraySort[smt.IntSort, smt.IntSort]]
-	arrayBitVec          smt.Term[smt.ArraySort[smt.BitVecSort, smt.BitVecSort]]
-	arrayIndexWidth      int
-	arrayElementWidth    int
-	datatype             smt.Term[smt.DatatypeSort]
-	datatypeID           int
-	constructorCount     int
-	selectorTarget       smt.Term[smt.DatatypeSort]
-	selectorDatatypeID   int
-	selectorConstructors int
-	selectorField        int
-	datatypeMatch        *dynamicDatatypeMatch
+	sort                    int
+	boolean                 smt.Term[smt.BoolSort]
+	integer                 smt.Term[smt.IntSort]
+	real                    smt.Term[smt.RealSort]
+	bitVector               smt.Term[smt.BitVecSort]
+	bitVectorExact          bool
+	bitVectorValue          smt.BitVectorValue
+	bitVectorSymbol         int
+	stringValue             smt.Term[smt.StringSort]
+	regexString             smt.Regex[smt.StringSort]
+	bitWidth                int
+	exponentBits            int
+	significandBits         int
+	roundingMode            smt.FloatingPointRoundingMode
+	floatingPointRound      *dynamicFloatingPointRound
+	floatingPointConversion *dynamicFloatingPointConversion
+	floatingPointMinMax     *dynamicFloatingPointMinMax
+	floatingPointAdd        *dynamicFloatingPointAdd
+	floatingPointSub        *dynamicFloatingPointSub
+	floatingPointMul        *dynamicFloatingPointMul
+	floatingPointDiv        *dynamicFloatingPointDiv
+	floatingPointFMA        *dynamicFloatingPointFMA
+	floatingPointSqrt       *dynamicFloatingPointSqrt
+	floatingPointRem        *dynamicFloatingPointRem
+	floatingPointSymbol     int
+	uninterpreted           smt.Term[smt.UninterpretedSort]
+	arrayIntInt             smt.Term[smt.ArraySort[smt.IntSort, smt.IntSort]]
+	arrayBitVec             smt.Term[smt.ArraySort[smt.BitVecSort, smt.BitVecSort]]
+	arrayIndexWidth         int
+	arrayElementWidth       int
+	datatype                smt.Term[smt.DatatypeSort]
+	datatypeID              int
+	constructorCount        int
+	selectorTarget          smt.Term[smt.DatatypeSort]
+	selectorDatatypeID      int
+	selectorConstructors    int
+	selectorField           int
+	datatypeMatch           *dynamicDatatypeMatch
 }
 
 type dynamicFloatingPointRound struct {
 	exponentBits, significandBits int
 	symbolID                      int
 	mode                          smt.FloatingPointRoundingMode
+}
+
+type dynamicFloatingPointConversion struct {
+	exponentBits, significandBits int
+	width, symbolID               int
+	mode                          smt.FloatingPointRoundingMode
+	signed                        bool
 }
 
 type dynamicFloatingPointMinMax struct {
@@ -3243,6 +3251,24 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 					),
 				}, nil
 			}
+			converted, exact := terms[0], terms[1]
+			if converted.floatingPointConversion == nil {
+				converted, exact = terms[1], terms[0]
+			}
+			if converted.floatingPointConversion != nil &&
+				exact.bitVectorExact &&
+				converted.bitWidth == exact.bitWidth &&
+				converted.floatingPointConversion.symbolID != 0 {
+				relation := converted.floatingPointConversion
+				return dynamicTerm{
+					sort: sortBool,
+					boolean: smt.NewFloatingPointToBitVectorRelation(
+						relation.exponentBits, relation.significandBits,
+						relation.width, relation.symbolID, relation.mode,
+						relation.signed, exact.bitVectorValue,
+					),
+				}, nil
+			}
 			selected, exact := terms[0], terms[1]
 			if selected.floatingPointMinMax == nil {
 				selected, exact = terms[1], terms[0]
@@ -3799,6 +3825,57 @@ func indexedBitVectorOperator(expression SExpr) (string, []int, bool) {
 }
 
 func buildIndexedBitVectorApplication(operator string, parameters []int, terms []dynamicTerm) (dynamicTerm, error) {
+	if operator == "fp.to_ubv" || operator == "fp.to_sbv" {
+		if len(parameters) != 1 || parameters[0] <= 0 ||
+			len(terms) != 2 || terms[0].sort != sortRoundingMode ||
+			terms[1].sort != sortFloatingPoint {
+			return dynamicTerm{}, fmt.Errorf("ill-sorted indexed application %s", operator)
+		}
+		width, value := parameters[0], terms[1]
+		signed := operator == "fp.to_sbv"
+		if value.bitVectorExact {
+			floating := smt.FloatingPointFromBits(
+				value.exponentBits, value.significandBits,
+				value.bitVectorValue,
+			)
+			var converted smt.BitVectorValue
+			if signed {
+				converted, _ = smt.FloatingPointToSignedBitVector(
+					width, terms[0].roundingMode, floating,
+				)
+			} else {
+				converted, _ = smt.FloatingPointToUnsignedBitVector(
+					width, terms[0].roundingMode, floating,
+				)
+			}
+			return dynamicTerm{
+				sort: sortBitVector, bitWidth: width,
+				bitVector:      smt.BitVectorTerm(converted),
+				bitVectorExact: true, bitVectorValue: converted,
+			}, nil
+		}
+		var converted smt.Term[smt.BitVecSort]
+		if signed {
+			converted = smt.FloatingPointToSignedBitVectorTerm(
+				value.exponentBits, value.significandBits, width,
+				value.bitVector, terms[0].roundingMode,
+			)
+		} else {
+			converted = smt.FloatingPointToUnsignedBitVectorTerm(
+				value.exponentBits, value.significandBits, width,
+				value.bitVector, terms[0].roundingMode,
+			)
+		}
+		return dynamicTerm{
+			sort: sortBitVector, bitWidth: width, bitVector: converted,
+			floatingPointConversion: &dynamicFloatingPointConversion{
+				exponentBits:    value.exponentBits,
+				significandBits: value.significandBits,
+				width:           width, symbolID: value.floatingPointSymbol,
+				mode: terms[0].roundingMode, signed: signed,
+			},
+		}, nil
+	}
 	if operator == "to_fp" {
 		if len(parameters) == 2 && parameters[0] >= 2 && parameters[1] >= 2 &&
 			len(terms) == 1 && terms[0].sort == sortBitVector &&

@@ -577,6 +577,22 @@ func FloatingPointRem(left FloatingPointValue, right FloatingPointValue) Floatin
 	return floatingPointRem(left, right)
 }
 
+// FloatingPointToUnsignedBitVector implements SMT-LIB fp.to_ubv. The Boolean
+// result is false exactly when SMT-LIB leaves the conversion result unspecified.
+//
+//goplus:dep FloatingPointToUnsignedBitVector(0 e nat, 0 s nat, width nat, mode FloatingPointRoundingMode, value FloatingPointValue[e, s]) (BitVectorValue, bool)
+func FloatingPointToUnsignedBitVector(width int, mode FloatingPointRoundingMode, value FloatingPointValue) (BitVectorValue, bool) {
+	return floatingPointToBitVector(floatingPointRoundingModeCode(mode), int(width), value, false)
+}
+
+// FloatingPointToSignedBitVector implements SMT-LIB fp.to_sbv. The Boolean
+// result is false exactly when SMT-LIB leaves the conversion result unspecified.
+//
+//goplus:dep FloatingPointToSignedBitVector(0 e nat, 0 s nat, width nat, mode FloatingPointRoundingMode, value FloatingPointValue[e, s]) (BitVectorValue, bool)
+func FloatingPointToSignedBitVector(width int, mode FloatingPointRoundingMode, value FloatingPointValue) (BitVectorValue, bool) {
+	return floatingPointToBitVector(floatingPointRoundingModeCode(mode), int(width), value, true)
+}
+
 func floatingPointSignificandNonzero(bits BitVectorValue, significandBits int) bool {
 	for index := 0; index < significandBits-1; index++ {
 		if bits.Bit(index) {

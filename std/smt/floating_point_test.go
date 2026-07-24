@@ -730,6 +730,72 @@ func TestFloatingPointRemBinary128HugeGap(t *testing.T) {
 	}
 }
 
+func TestFloatingPointToBitVectorModesAndBounds(t *testing.T) {
+	tests := []struct {
+		name      string
+		raw       uint64
+		mode      FloatingPointRoundingMode
+		width     int
+		signed    bool
+		want      uint64
+		wantValid bool
+	}{
+		{"unsigned tie even", 0x3fc00000, RoundNearestTiesToEven(), 8, false, 2, true},
+		{"unsigned tie away", 0x3fc00000, RoundNearestTiesToAway(), 8, false, 2, true},
+		{"unsigned toward zero", 0x3fe66666, RoundTowardZero(), 8, false, 1, true},
+		{"unsigned toward positive", 0x3f8ccccd, RoundTowardPositive(), 8, false, 2, true},
+		{"unsigned negative invalid", 0xbf800000, RoundNearestTiesToEven(), 8, false, 0, false},
+		{"signed negative", 0xbfc00000, RoundNearestTiesToEven(), 8, true, 0xfe, true},
+		{"signed minimum", 0xc3000000, RoundNearestTiesToEven(), 8, true, 0x80, true},
+		{"signed positive overflow", 0x43000000, RoundNearestTiesToEven(), 8, true, 0, false},
+		{"unsigned maximum", 0x437f0000, RoundNearestTiesToEven(), 8, false, 0xff, true},
+		{"unsigned overflow", 0x43800000, RoundNearestTiesToEven(), 8, false, 0, false},
+		{"nan unspecified", 0x7fc00000, RoundNearestTiesToEven(), 8, false, 0, false},
+		{"infinity unspecified", 0x7f800000, RoundNearestTiesToEven(), 8, true, 0, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			value := FloatingPointFromUint64(8, 24, test.raw)
+			var got BitVectorValue
+			var valid bool
+			if test.signed {
+				got, valid = FloatingPointToSignedBitVector(
+					test.width, test.mode, value,
+				)
+			} else {
+				got, valid = FloatingPointToUnsignedBitVector(
+					test.width, test.mode, value,
+				)
+			}
+			if valid != test.wantValid {
+				t.Fatalf("valid = %v, want %v", valid, test.wantValid)
+			}
+			if raw, ok := got.Uint64(); !ok || raw != test.want {
+				t.Fatalf("bits = %#x, want %#x", raw, test.want)
+			}
+		})
+	}
+}
+
+func TestFloatingPointToSignedBitVectorBinary128(t *testing.T) {
+	value := FloatingPointFromComponents(
+		15, 113,
+		NewBitVectorUint64(1, 1),
+		NewBitVectorUint64(15, 16390),
+		NewBitVectorUint64(112, 0),
+	)
+	got, valid := FloatingPointToSignedBitVector(
+		130, RoundNearestTiesToEven(), value,
+	)
+	if !valid {
+		t.Fatal("expected valid binary128 conversion")
+	}
+	want := IntegerToBitVectorValue(130, NewIntegerValue(-128))
+	if !EqualBitVectorValue(got, want) {
+		t.Fatalf("got %v, want %v", BitVectorToIntegerValue(got, true), BitVectorToIntegerValue(want, true))
+	}
+}
+
 func TestFloatingPointGroundAbsAndNeg(t *testing.T) {
 	tests := []struct {
 		name string
