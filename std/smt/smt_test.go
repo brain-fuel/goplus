@@ -738,6 +738,93 @@ func TestNonlinearIntegerHigherAffinePowerRelations(t *testing.T) {
 	}
 }
 
+func TestNonlinearIntegerAffinePowerRelationsThroughDegree64(t *testing.T) {
+	x := IntSymbol{ID: 137, Name: "x"}
+	factor := Add{Values: []Term[IntSort]{
+		ScaleInteger(NewIntegerValue(2), x),
+		IntegerTerm(NewIntegerValue(1)),
+	}}
+	power := func(exponent int) Term[IntSort] {
+		result := Term[IntSort](factor)
+		for current := 1; current < exponent; current++ {
+			result = MultiplyInteger(result, factor)
+		}
+		return result
+	}
+	negativeThree := NewIntegerValue(-3)
+	target17 := integerPowerValue(negativeThree, 17)
+	checked := Check(Assert(1, New(), Equal{
+		Left: power(17), Right: IntegerTerm(target17),
+	}))
+	result, ok := checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("degree-17 affine power=%#v", checked)
+	}
+	value, found := IntegerModelValue(result.Value, x)
+	if !found || CompareIntegerValue(value, NewIntegerValue(-2)) != 0 {
+		t.Fatalf("degree-17 model=%v/%v", value, found)
+	}
+
+	target32 := integerPowerValue(NewIntegerValue(3), 32)
+	checked = Check(Assert(2, New(), Equal{
+		Left: IntegerTerm(target32), Right: power(32),
+	}))
+	result, ok = checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("degree-32 affine power=%#v", checked)
+	}
+	value, found = IntegerModelValue(result.Value, x)
+	factorValue := AddIntegerValue(
+		MultiplyIntegerValue(NewIntegerValue(2), value),
+		NewIntegerValue(1),
+	)
+	if !found || CompareIntegerValue(
+		integerPowerValue(factorValue, 32), target32,
+	) != 0 {
+		t.Fatalf("degree-32 model=%v/%v", value, found)
+	}
+
+	nonImage := Check(Assert(3, New(), Equal{
+		Left: power(64), Right: IntegerTerm(NewIntegerValue(2)),
+	}))
+	if _, ok := nonImage.(Unsatisfiable); !ok {
+		t.Fatalf("degree-64 non-image=%#v", nonImage)
+	}
+
+	disequality := Check(Assert(4, New(), Not{Value: Equal{
+		Left: power(64), Right: IntegerTerm(NewIntegerValue(1)),
+	}}))
+	if _, ok := disequality.(Satisfiable); !ok {
+		t.Fatalf("degree-64 disequality=%#v", disequality)
+	}
+
+	wideRoot, err := ParseIntegerValue("1267650600228229401496703205376")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wideFactor := Add{Values: []Term[IntSort]{
+		x, IntegerTerm(NewIntegerValue(2)),
+	}}
+	widePower := Term[IntSort](wideFactor)
+	for exponent := 1; exponent < 17; exponent++ {
+		widePower = MultiplyInteger(widePower, wideFactor)
+	}
+	wideTarget := integerPowerValue(wideRoot, 17)
+	checked = Check(Assert(5, New(), Equal{
+		Left: widePower, Right: IntegerTerm(wideTarget),
+	}))
+	result, ok = checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("wide degree-17 power=%#v", checked)
+	}
+	value, found = IntegerModelValue(result.Value, x)
+	if !found || CompareIntegerValue(
+		AddIntegerValue(value, NewIntegerValue(2)), wideRoot,
+	) != 0 {
+		t.Fatalf("wide degree-17 model=%v/%v", value, found)
+	}
+}
+
 func TestNonlinearIntegerHigherAffinePowerBounds(t *testing.T) {
 	x := IntSymbol{ID: 118, Name: "x"}
 	factor := Add{Values: []Term[IntSort]{

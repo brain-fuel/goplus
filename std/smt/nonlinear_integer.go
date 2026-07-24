@@ -11,7 +11,7 @@ const (
 	nonlinearIntegerCandidateLimit      = 64
 	nonlinearIntegerSearchLimit         = 4096
 	nonlinearIntegerDivisorLimit        = 4096
-	nonlinearIntegerPowerLimit          = 16
+	nonlinearIntegerPowerLimit          = 64
 	nonlinearIntegerFourSquareRootLimit = 64
 )
 
