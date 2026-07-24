@@ -299,6 +299,55 @@ func TestIntegerEuclideanDivisionAndModulo(t *testing.T) {
 		CompareIntegerValue(affineRelation.DividendOffset, NewIntegerValue(5)) != 0 {
 		t.Fatal("affine div relation did not compact")
 	}
+	y := IntSymbol{ID: 2, Name: "y"}
+	twoSymbolDividend := Add{Values: []Term[IntSort]{
+		ScaleInteger(NewIntegerValue(3), x),
+		ScaleInteger(NewIntegerValue(5), y),
+		Integer{Value: 1},
+	}}
+	twoSymbolQuotient, twoSymbolQuotientOK := CompactIntegerDivModEquality(
+		DivInteger(twoSymbolDividend, NewIntegerValue(2)),
+		Integer{Value: 11},
+	)
+	twoSymbolRemainder, twoSymbolRemainderOK := CompactIntegerDivModEquality(
+		ModInteger(twoSymbolDividend, NewIntegerValue(2)),
+		Integer{Value: 0},
+	)
+	xAssignment, xAssignmentOK := CompactIntegerLinearEquality(x, Integer{Value: 2})
+	yAssignment, yAssignmentOK := CompactIntegerLinearEquality(y, Integer{Value: 3})
+	if !twoSymbolQuotientOK || !twoSymbolRemainderOK ||
+		!xAssignmentOK || !yAssignmentOK ||
+		!twoSymbolQuotient.HasSecondSymbol {
+		t.Fatal("two-symbol div/mod relations did not compact")
+	}
+	scaledRelation, scaledRelationOK := CompactScaledIntegerDivModRelation(
+		Add{Values: []Term[IntSort]{x, y}},
+		NewIntegerValue(12),
+		NewIntegerValue(3),
+		NewIntegerValue(8),
+		NewIntegerValue(7),
+		false,
+	)
+	if !scaledRelationOK || !scaledRelation.HasSecondSymbol ||
+		CompareIntegerValue(scaledRelation.DividendOffset, NewIntegerValue(3)) != 0 {
+		t.Fatal("direct scaled two-symbol relation did not compact")
+	}
+	twoSymbolSystem := IntegerDivModSystem{
+		EqualityCount: 2,
+		RelationCount: 2,
+		Equalities: [4]IntegerLinearEquality{
+			xAssignment,
+			yAssignment,
+		},
+		Relations: [4]IntegerDivModRelation{
+			twoSymbolQuotient,
+			twoSymbolRemainder,
+		},
+	}
+	twoSymbolResult, ok := Check(Assert(5, New(), twoSymbolSystem)).(Satisfiable)
+	if !ok {
+		t.Fatalf("two-symbol div/mod result=%T", twoSymbolResult)
+	}
 }
 
 func TestIntegerDifferenceLogicSatModel(t *testing.T) {
@@ -1956,6 +2005,7 @@ func TestAffineIntegerRealComparisons(t *testing.T) {
 
 func TestRationalScaledIntegerRealCoercions(t *testing.T) {
 	x := IntegerVariable(1)
+	y := IntegerVariable(2)
 	scaled := RealScale{
 		Coefficient: NewRational(3, 2),
 		Value:       IntToReal(x),
@@ -2014,6 +2064,23 @@ func TestRationalScaledIntegerRealCoercions(t *testing.T) {
 	}}
 	if result := Check(Assert(5, New(), negativeAffine)); func() bool { _, ok := result.(Satisfiable); return ok }() == false {
 		t.Fatalf("negative affine result=%T", result)
+	}
+	twoSymbolScaled := RealScale{
+		Coefficient: NewRational(3, 2),
+		Value: RealAdd{Values: []Term[RealSort]{
+			IntToReal(x),
+			IntToReal(y),
+			Real{Value: NewRational(1, 4)},
+		}},
+	}
+	twoSymbol := And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: Integer{Value: 2}},
+		Equal{Left: y, Right: Integer{Value: 3}},
+		Equal{Left: RealToInt(twoSymbolScaled), Right: Integer{Value: 7}},
+		Not{Value: RealIsInt(twoSymbolScaled)},
+	}}
+	if result := Check(Assert(6, New(), twoSymbol)); func() bool { _, ok := result.(Satisfiable); return ok }() == false {
+		t.Fatalf("two-symbol affine result=%T", result)
 	}
 }
 

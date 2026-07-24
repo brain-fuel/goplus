@@ -5,6 +5,9 @@ import "math"
 type IntegerDivModRelation struct {
 	SymbolID            int
 	DividendCoefficient IntegerValue
+	SecondSymbolID      int
+	SecondCoefficient   IntegerValue
+	HasSecondSymbol     bool
 	DividendOffset      IntegerValue
 	Divisor             IntegerValue
 	Expected            IntegerValue
@@ -31,30 +34,76 @@ func CompactIntegerDivModEquality(left, right Term[IntSort]) (IntegerDivModRelat
 	switch value := left.(type) {
 	case IntegerDiv:
 		dividend, compact := compactAffineIntegerDividend(value.Dividend)
-		return IntegerDivModRelation{SymbolID: dividend.id, DividendCoefficient: dividend.coefficient, DividendOffset: dividend.offset, Divisor: value.Divisor, Expected: expected}, compact && CompareIntegerValue(value.Divisor, IntegerValue{}) != 0
+		return compactIntegerDivModRelation(dividend, value.Divisor, expected, false),
+			compact && CompareIntegerValue(value.Divisor, IntegerValue{}) != 0
 	case IntegerMod:
 		dividend, compact := compactAffineIntegerDividend(value.Dividend)
-		return IntegerDivModRelation{SymbolID: dividend.id, DividendCoefficient: dividend.coefficient, DividendOffset: dividend.offset, Divisor: value.Divisor, Expected: expected, Remainder: true}, compact && CompareIntegerValue(value.Divisor, IntegerValue{}) != 0
+		return compactIntegerDivModRelation(dividend, value.Divisor, expected, true),
+			compact && CompareIntegerValue(value.Divisor, IntegerValue{}) != 0
 	}
 	return IntegerDivModRelation{}, false
 }
 
+// CompactScaledIntegerDivModRelation constructs a compact div/mod relation
+// over an affine integer term without first materializing the scaled and
+// offset dividend AST. multiplier*dividend+offset is divided by divisor.
+func CompactScaledIntegerDivModRelation(
+	dividend Term[IntSort],
+	multiplier, offset, divisor, expected IntegerValue,
+	remainder bool,
+) (IntegerDivModRelation, bool) {
+	affine, compact := compactAffineIntegerDividend(dividend)
+	if !compact || CompareIntegerValue(divisor, IntegerValue{}) == 0 {
+		return IntegerDivModRelation{}, false
+	}
+	for index := 0; index < affine.count; index++ {
+		affine.coefficients[index] = MultiplyIntegerValue(
+			multiplier,
+			affine.coefficients[index],
+		)
+	}
+	affine.offset = AddIntegerValue(
+		MultiplyIntegerValue(multiplier, affine.offset),
+		offset,
+	)
+	return compactIntegerDivModRelation(affine, divisor, expected, remainder), true
+}
+
+func compactIntegerDivModRelation(
+	dividend compactIntegerAffineDividend,
+	divisor, expected IntegerValue,
+	remainder bool,
+) IntegerDivModRelation {
+	relation := IntegerDivModRelation{
+		SymbolID: dividend.ids[0], DividendCoefficient: dividend.coefficients[0],
+		DividendOffset: dividend.offset, Divisor: divisor, Expected: expected,
+		Remainder: remainder,
+	}
+	if dividend.count == 2 {
+		relation.SecondSymbolID = dividend.ids[1]
+		relation.SecondCoefficient = dividend.coefficients[1]
+		relation.HasSecondSymbol = true
+	}
+	return relation
+}
+
 type compactIntegerAffineDividend struct {
-	id          int
-	coefficient IntegerValue
-	offset      IntegerValue
-	symbol      bool
+	count        int
+	ids          [2]int
+	coefficients [2]IntegerValue
+	offset       IntegerValue
 }
 
 func compactAffineIntegerDividend(term Term[IntSort]) (compactIntegerAffineDividend, bool) {
 	dividend, ok := decomposeCompactIntegerAffineDividend(term)
-	return dividend, ok && dividend.symbol
+	return dividend, ok && dividend.count > 0
 }
 
 func decomposeCompactIntegerAffineDividend(term Term[IntSort]) (compactIntegerAffineDividend, bool) {
 	if id, ok := IntegerVariableID(term); ok {
 		return compactIntegerAffineDividend{
-			id: id, coefficient: NewIntegerValue(1), symbol: true,
+			count: 1, ids: [2]int{id},
+			coefficients: [2]IntegerValue{NewIntegerValue(1)},
 		}, true
 	}
 	if exact, ok := exactIntegerConstant(term); ok {
@@ -66,38 +115,72 @@ func decomposeCompactIntegerAffineDividend(term Term[IntSort]) (compactIntegerAf
 		if !ok {
 			return compactIntegerAffineDividend{}, false
 		}
-		dividend.coefficient = MultiplyIntegerValue(value.Coefficient, dividend.coefficient)
+		for index := 0; index < dividend.count; index++ {
+			dividend.coefficients[index] = MultiplyIntegerValue(
+				value.Coefficient,
+				dividend.coefficients[index],
+			)
+		}
 		dividend.offset = MultiplyIntegerValue(value.Coefficient, dividend.offset)
 		return dividend, true
 	case Add:
 		result := compactIntegerAffineDividend{}
 		for _, item := range value.Values {
 			next, ok := decomposeCompactIntegerAffineDividend(item)
-			if !ok || result.symbol && next.symbol && result.id != next.id {
+			if !ok || !mergeCompactIntegerAffineDividend(&result, next, false) {
 				return compactIntegerAffineDividend{}, false
 			}
-			if next.symbol {
-				result.id, result.symbol = next.id, true
-			}
-			result.coefficient = AddIntegerValue(result.coefficient, next.coefficient)
-			result.offset = AddIntegerValue(result.offset, next.offset)
 		}
 		return result, true
 	case Subtract:
 		left, leftOK := decomposeCompactIntegerAffineDividend(value.Left)
 		right, rightOK := decomposeCompactIntegerAffineDividend(value.Right)
-		if !leftOK || !rightOK || left.symbol && right.symbol && left.id != right.id {
+		if !leftOK || !rightOK || !mergeCompactIntegerAffineDividend(&left, right, true) {
 			return compactIntegerAffineDividend{}, false
 		}
-		if !left.symbol && right.symbol {
-			left.id, left.symbol = right.id, true
-		}
-		left.coefficient = AddIntegerValue(left.coefficient, NegateIntegerValue(right.coefficient))
-		left.offset = AddIntegerValue(left.offset, NegateIntegerValue(right.offset))
 		return left, true
 	default:
 		return compactIntegerAffineDividend{}, false
 	}
+}
+
+func mergeCompactIntegerAffineDividend(
+	result *compactIntegerAffineDividend,
+	next compactIntegerAffineDividend,
+	subtract bool,
+) bool {
+	sign := NewIntegerValue(1)
+	if subtract {
+		sign = NewIntegerValue(-1)
+	}
+	for nextIndex := 0; nextIndex < next.count; nextIndex++ {
+		coefficient := MultiplyIntegerValue(sign, next.coefficients[nextIndex])
+		found := false
+		for resultIndex := 0; resultIndex < result.count; resultIndex++ {
+			if result.ids[resultIndex] == next.ids[nextIndex] {
+				result.coefficients[resultIndex] = AddIntegerValue(
+					result.coefficients[resultIndex],
+					coefficient,
+				)
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+		if result.count == len(result.ids) {
+			return false
+		}
+		result.ids[result.count] = next.ids[nextIndex]
+		result.coefficients[result.count] = coefficient
+		result.count++
+	}
+	result.offset = AddIntegerValue(
+		result.offset,
+		MultiplyIntegerValue(sign, next.offset),
+	)
+	return true
 }
 
 type compactDivModSymbol struct {
@@ -219,6 +302,16 @@ func solveCompactIntegerDivModValues(equalities []IntegerLinearEquality, relatio
 			MultiplyIntegerValue(relation.DividendCoefficient, symbol.value),
 			relation.DividendOffset,
 		)
+		if relation.HasSecondSymbol {
+			second := find(relation.SecondSymbolID)
+			if second == nil || !second.assigned {
+				return checkOutcome{}, false
+			}
+			dividend = AddIntegerValue(
+				dividend,
+				MultiplyIntegerValue(relation.SecondCoefficient, second.value),
+			)
+		}
 		quotient, remainder, valid := DivModIntegerValue(dividend, relation.Divisor)
 		actual := quotient
 		if relation.Remainder {
