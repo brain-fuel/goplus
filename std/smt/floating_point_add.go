@@ -113,6 +113,89 @@ func floatingPointSub(
 	return floatingPointAdd(mode, left, FloatingPointNeg(right))
 }
 
+func floatingPointMul(
+	mode uint8,
+	left, right FloatingPointValue,
+) FloatingPointValue {
+	if mode < 1 || mode > 5 {
+		panic("smt: invalid floating-point rounding mode")
+	}
+	exponentBits := FloatingPointExponentBits(left)
+	significandBits := FloatingPointSignificandBits(left)
+	if exponentBits != FloatingPointExponentBits(right) ||
+		significandBits != FloatingPointSignificandBits(right) {
+		panic("smt: floating-point multiplication format mismatch")
+	}
+	if FloatingPointIsNaN(left) || FloatingPointIsNaN(right) {
+		return FloatingPointNaN(exponentBits, significandBits)
+	}
+	total := exponentBits + significandBits
+	leftNegative := FloatingPointBits(left).Bit(total - 1)
+	rightNegative := FloatingPointBits(right).Bit(total - 1)
+	negative := leftNegative != rightNegative
+	leftInfinite, rightInfinite :=
+		FloatingPointIsInfinite(left), FloatingPointIsInfinite(right)
+	leftZero, rightZero := FloatingPointIsZero(left), FloatingPointIsZero(right)
+	if leftInfinite || rightInfinite {
+		if leftZero || rightZero {
+			return FloatingPointNaN(exponentBits, significandBits)
+		}
+		if negative {
+			return FloatingPointNegativeInfinity(exponentBits, significandBits)
+		}
+		return FloatingPointPositiveInfinity(exponentBits, significandBits)
+	}
+	if leftZero || rightZero {
+		return floatingPointZero(exponentBits, significandBits, negative)
+	}
+	if significandBits <= 31 && total <= 64 {
+		leftRaw, leftInline := FloatingPointBits(left).Uint64()
+		rightRaw, rightInline := FloatingPointBits(right).Uint64()
+		if leftInline && rightInline {
+			return floatingPointMulUint64(
+				mode, exponentBits, significandBits,
+				leftRaw, rightRaw, negative,
+			)
+		}
+	}
+	leftFinite := decodeFloatingPointFinite(left)
+	rightFinite := decodeFloatingPointFinite(right)
+	product := new(big.Int).Mul(
+		leftFinite.magnitude, rightFinite.magnitude,
+	)
+	scale := new(big.Int).Add(leftFinite.scale, rightFinite.scale)
+	return floatingPointRoundExactBinary(
+		mode, exponentBits, significandBits, negative, product, scale,
+	)
+}
+
+func floatingPointMulUint64(
+	mode uint8,
+	exponentBits, significandBits int,
+	leftRaw, rightRaw uint64,
+	negative bool,
+) FloatingPointValue {
+	fractionBits := significandBits - 1
+	exponentMask := uint64(1)<<exponentBits - 1
+	fractionMask := uint64(1)<<fractionBits - 1
+	bias := int64(uint64(1)<<(exponentBits-1) - 1)
+	decode := func(raw uint64) (uint64, int64) {
+		exponent := raw >> fractionBits & exponentMask
+		fraction := raw & fractionMask
+		if exponent == 0 {
+			return fraction, 1 - bias - int64(fractionBits)
+		}
+		return fraction | uint64(1)<<fractionBits,
+			int64(exponent) - bias - int64(fractionBits)
+	}
+	leftMagnitude, leftScale := decode(leftRaw)
+	rightMagnitude, rightScale := decode(rightRaw)
+	return floatingPointRoundExactBinaryUint64(
+		mode, exponentBits, significandBits, negative,
+		leftMagnitude*rightMagnitude, leftScale+rightScale,
+	)
+}
+
 type floatingPointFiniteUint64 struct {
 	negative  bool
 	magnitude uint64

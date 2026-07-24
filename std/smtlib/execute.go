@@ -43,6 +43,7 @@ type dynamicTerm struct {
 	floatingPointMinMax  *dynamicFloatingPointMinMax
 	floatingPointAdd     *dynamicFloatingPointAdd
 	floatingPointSub     *dynamicFloatingPointSub
+	floatingPointMul     *dynamicFloatingPointMul
 	floatingPointSymbol  int
 	uninterpreted        smt.Term[smt.UninterpretedSort]
 	arrayIntInt          smt.Term[smt.ArraySort[smt.IntSort, smt.IntSort]]
@@ -78,6 +79,12 @@ type dynamicFloatingPointAdd struct {
 }
 
 type dynamicFloatingPointSub struct {
+	exponentBits, significandBits int
+	leftSymbolID, rightSymbolID   int
+	mode                          smt.FloatingPointRoundingMode
+}
+
+type dynamicFloatingPointMul struct {
 	exponentBits, significandBits int
 	leftSymbolID, rightSymbolID   int
 	mode                          smt.FloatingPointRoundingMode
@@ -2350,6 +2357,7 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 			floatingPointMinMax: terms[0].floatingPointMinMax,
 			floatingPointAdd:    terms[0].floatingPointAdd,
 			floatingPointSub:    terms[0].floatingPointSub,
+			floatingPointMul:    terms[0].floatingPointMul,
 			bitVectorSymbol:     terms[0].floatingPointSymbol,
 		}, nil
 	}
@@ -2424,6 +2432,45 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 			sort: sortFloatingPoint, bitWidth: left.bitWidth,
 			exponentBits: left.exponentBits, significandBits: left.significandBits,
 			floatingPointSub: &dynamicFloatingPointSub{
+				exponentBits: left.exponentBits, significandBits: left.significandBits,
+				leftSymbolID:  left.floatingPointSymbol,
+				rightSymbolID: right.floatingPointSymbol,
+				mode:          terms[0].roundingMode,
+			},
+		}, nil
+	}
+	if operator == "fp.mul" && len(terms) == 3 &&
+		terms[0].sort == sortRoundingMode &&
+		terms[1].sort == sortFloatingPoint &&
+		terms[2].sort == sortFloatingPoint &&
+		terms[1].exponentBits == terms[2].exponentBits &&
+		terms[1].significandBits == terms[2].significandBits {
+		left, right := terms[1], terms[2]
+		if left.bitVectorExact && right.bitVectorExact {
+			product := smt.FloatingPointMul(
+				terms[0].roundingMode,
+				smt.FloatingPointFromBits(
+					left.exponentBits, left.significandBits, left.bitVectorValue,
+				),
+				smt.FloatingPointFromBits(
+					right.exponentBits, right.significandBits, right.bitVectorValue,
+				),
+			)
+			bits := smt.FloatingPointBits(product)
+			return dynamicTerm{
+				sort: sortFloatingPoint, bitWidth: left.bitWidth,
+				exponentBits: left.exponentBits, significandBits: left.significandBits,
+				bitVector:      smt.BitVectorTerm(bits),
+				bitVectorExact: true, bitVectorValue: bits,
+			}, nil
+		}
+		if left.floatingPointSymbol == 0 || right.floatingPointSymbol == 0 {
+			return dynamicTerm{}, fmt.Errorf("fp.mul currently requires ground values or direct symbols")
+		}
+		return dynamicTerm{
+			sort: sortFloatingPoint, bitWidth: left.bitWidth,
+			exponentBits: left.exponentBits, significandBits: left.significandBits,
+			floatingPointMul: &dynamicFloatingPointMul{
 				exponentBits: left.exponentBits, significandBits: left.significandBits,
 				leftSymbolID:  left.floatingPointSymbol,
 				rightSymbolID: right.floatingPointSymbol,
@@ -3048,6 +3095,22 @@ func buildApplication(operator string, terms []dynamicTerm) (dynamicTerm, error)
 				return dynamicTerm{
 					sort: sortBool,
 					boolean: smt.NewFloatingPointSubRelation(
+						relation.exponentBits, relation.significandBits,
+						relation.leftSymbolID, relation.rightSymbolID,
+						relation.mode, exact.bitVectorValue,
+					),
+				}, nil
+			}
+			product, exact := terms[0], terms[1]
+			if product.floatingPointMul == nil {
+				product, exact = terms[1], terms[0]
+			}
+			if product.floatingPointMul != nil && exact.bitVectorExact &&
+				product.bitWidth == exact.bitWidth {
+				relation := product.floatingPointMul
+				return dynamicTerm{
+					sort: sortBool,
+					boolean: smt.NewFloatingPointMulRelation(
 						relation.exponentBits, relation.significandBits,
 						relation.leftSymbolID, relation.rightSymbolID,
 						relation.mode, exact.bitVectorValue,

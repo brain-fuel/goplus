@@ -320,6 +320,16 @@ func TestFloatingPointAddBinary128Tie(t *testing.T) {
 	if !EqualBitVectorValue(FloatingPointBits(subAway), wantAway) {
 		t.Fatalf("binary128 fp.sub RNA tie=%v, want %v", FloatingPointBits(subAway), wantAway)
 	}
+	two := FloatingPointFromComponents(
+		15, 113,
+		NewBitVectorUint64(1, 0),
+		NewBitVectorUint64(15, 0x4000),
+		NewBitVectorUint64(112, 0),
+	)
+	product := FloatingPointMul(RoundNearestTiesToEven(), one, two)
+	if !EqualBitVectorValue(FloatingPointBits(product), FloatingPointBits(two)) {
+		t.Fatalf("binary128 fp.mul=%v, want %v", FloatingPointBits(product), FloatingPointBits(two))
+	}
 }
 
 func TestFloatingPointSubBinary32(t *testing.T) {
@@ -369,6 +379,57 @@ func TestFloatingPointSubSpecialValues(t *testing.T) {
 		RoundNearestTiesToEven(), positiveInfinity, negativeInfinity,
 	); !FloatingPointIsInfinite(difference) || FloatingPointIsNegative(difference) {
 		t.Fatal("positive infinity minus negative infinity must be positive infinity")
+	}
+}
+
+func TestFloatingPointMulBinary32(t *testing.T) {
+	modes := []FloatingPointRoundingMode{
+		RoundNearestTiesToEven(),
+		RoundNearestTiesToAway(),
+		RoundTowardPositive(),
+		RoundTowardNegative(),
+		RoundTowardZero(),
+	}
+	tests := []struct {
+		name        string
+		left, right uint64
+		want        [5]uint64
+	}{
+		{"exact", 0x3fc00000, 0x40100000, [5]uint64{0x40580000, 0x40580000, 0x40580000, 0x40580000, 0x40580000}},
+		{"subnormal exact", 0x00800000, 0x3f000000, [5]uint64{0x00400000, 0x00400000, 0x00400000, 0x00400000, 0x00400000}},
+		{"positive underflow tie", 0x00000001, 0x3f000000, [5]uint64{0, 1, 1, 0, 0}},
+		{"negative underflow tie", 0x80000001, 0x3f000000, [5]uint64{0x80000000, 0x80000001, 0x80000000, 0x80000001, 0x80000000}},
+		{"overflow", 0x7f7fffff, 0x40000000, [5]uint64{0x7f800000, 0x7f800000, 0x7f800000, 0x7f7fffff, 0x7f7fffff}},
+	}
+	for _, test := range tests {
+		for modeIndex, mode := range modes {
+			product := FloatingPointMul(
+				mode,
+				FloatingPointFromUint64(8, 24, test.left),
+				FloatingPointFromUint64(8, 24, test.right),
+			)
+			got, ok := FloatingPointBits(product).Uint64()
+			if !ok || got != test.want[modeIndex] {
+				t.Fatalf("%s mode %d bits=%#08x,%v, want %#08x,true", test.name, modeIndex, got, ok, test.want[modeIndex])
+			}
+		}
+	}
+}
+
+func TestFloatingPointMulSpecialValues(t *testing.T) {
+	positiveInfinity := FloatingPointPositiveInfinity(8, 24)
+	negativeZero := FloatingPointNegativeZero(8, 24)
+	if !FloatingPointIsNaN(FloatingPointMul(
+		RoundNearestTiesToEven(), positiveInfinity, negativeZero,
+	)) {
+		t.Fatal("infinity times zero must produce NaN")
+	}
+	negative := FloatingPointMul(
+		RoundNearestTiesToEven(), positiveInfinity,
+		FloatingPointFromUint64(8, 24, 0xbf800000),
+	)
+	if !FloatingPointIsInfinite(negative) || !FloatingPointIsNegative(negative) {
+		t.Fatal("positive infinity times negative finite must be negative infinity")
 	}
 }
 

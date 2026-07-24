@@ -537,6 +537,14 @@ func FloatingPointSub(mode FloatingPointRoundingMode, left FloatingPointValue, r
 	return floatingPointSub(floatingPointRoundingModeCode(mode), left, right)
 }
 
+// FloatingPointMul implements exact SMT-LIB fp.mul rounding for arbitrary
+// valid floating-point formats.
+//
+//goplus:dep FloatingPointMul(0 e nat, 0 s nat, mode FloatingPointRoundingMode, left FloatingPointValue[e, s], right FloatingPointValue[e, s]) FloatingPointValue[e, s]
+func FloatingPointMul(mode FloatingPointRoundingMode, left FloatingPointValue, right FloatingPointValue) FloatingPointValue {
+	return floatingPointMul(floatingPointRoundingModeCode(mode), left, right)
+}
+
 func floatingPointSignificandNonzero(bits BitVectorValue, significandBits int) bool {
 	for index := 0; index < significandBits-1; index++ {
 		if bits.Bit(index) {
