@@ -1,5 +1,95 @@
 package smt
 
+type integerAffineReal struct {
+	integer Term[IntSort]
+	offset  Rational
+}
+
+func decomposeIntegerAffineReal(term Term[RealSort]) (integerAffineReal, bool) {
+	switch value := term.(type) {
+	case Real:
+		return integerAffineReal{offset: value.Value}, true
+	case integerToReal:
+		return integerAffineReal{integer: value.value}, true
+	case RealAdd:
+		result := integerAffineReal{}
+		for _, item := range value.Values {
+			next, ok := decomposeIntegerAffineReal(item)
+			if !ok {
+				return integerAffineReal{}, false
+			}
+			result.integer = addAffineIntegerTerms(result.integer, next.integer)
+			result.offset = AddRational(result.offset, next.offset)
+		}
+		return result, true
+	case RealSubtract:
+		left, leftOK := decomposeIntegerAffineReal(value.Left)
+		right, rightOK := decomposeIntegerAffineReal(value.Right)
+		if !leftOK || !rightOK {
+			return integerAffineReal{}, false
+		}
+		left.integer = subtractAffineIntegerTerms(left.integer, right.integer)
+		left.offset = SubtractRational(left.offset, right.offset)
+		return left, true
+	case RealScale:
+		if !value.Coefficient.IsInteger() {
+			return integerAffineReal{}, false
+		}
+		item, ok := decomposeIntegerAffineReal(value.Value)
+		if !ok {
+			return integerAffineReal{}, false
+		}
+		coefficient := FloorRational(value.Coefficient)
+		if item.integer != nil {
+			item.integer = ScaleInteger(coefficient, item.integer)
+		}
+		item.offset = MultiplyRational(value.Coefficient, item.offset)
+		return item, true
+	default:
+		return integerAffineReal{}, false
+	}
+}
+
+func addAffineIntegerTerms(left, right Term[IntSort]) Term[IntSort] {
+	if left == nil {
+		return right
+	}
+	if right == nil {
+		return left
+	}
+	return Add{Values: []Term[IntSort]{left, right}}
+}
+
+func subtractAffineIntegerTerms(left, right Term[IntSort]) Term[IntSort] {
+	if right == nil {
+		return left
+	}
+	if left == nil {
+		return ScaleInteger(NewIntegerValue(-1), right)
+	}
+	return Subtract{Left: left, Right: right}
+}
+
+func floorIntegerAffineReal(term Term[RealSort]) (Term[IntSort], bool) {
+	value, ok := decomposeIntegerAffineReal(term)
+	if !ok || value.integer == nil {
+		return nil, false
+	}
+	offset := FloorRational(value.offset)
+	if CompareIntegerValue(offset, IntegerValue{}) == 0 {
+		return value.integer, true
+	}
+	return addAffineIntegerTerms(value.integer, IntegerTerm(offset)), true
+}
+
+func integerAffineRealIsIntegral(term Term[RealSort]) (bool, bool) {
+	value, ok := decomposeIntegerAffineReal(term)
+	if !ok || value.integer == nil {
+		return false, false
+	}
+	return value.offset.IsInteger(), true
+}
+
 // rewriteSymbolicIntegerToReal lowers the complete conjunctive fragment in
 // which symbolic to_real terms are compared with another to_real term or an
 // exact rational constant. The resulting integer relations preserve SMT-LIB

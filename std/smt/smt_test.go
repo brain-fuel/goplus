@@ -1854,6 +1854,38 @@ func TestSymbolicIntegerRealRoundTrips(t *testing.T) {
 	}
 }
 
+func TestAffineIntegerRealCoercions(t *testing.T) {
+	x := IntegerVariable(1)
+	xReal := IntToReal(x)
+	fractional := RealAdd{Values: []Term[RealSort]{
+		xReal,
+		Real{Value: MustParseRational("3/2")},
+	}}
+	scaled := RealSubtract{
+		Left: RealScale{
+			Coefficient: NewRational(2, 1),
+			Value:       xReal,
+		},
+		Right: Real{Value: MustParseRational("5/2")},
+	}
+	integral := RealAdd{Values: []Term[RealSort]{
+		xReal,
+		Real{Value: MustParseRational("4/2")},
+	}}
+	formula := And{Values: []Term[BoolSort]{
+		Equal{Left: x, Right: Integer{Value: 7}},
+		Equal{Left: RealToInt(fractional), Right: Integer{Value: 8}},
+		Equal{Left: RealToInt(scaled), Right: Integer{Value: 11}},
+		Equal{Left: RealToInt(integral), Right: Integer{Value: 9}},
+		Not{Value: RealIsInt(fractional)},
+		Not{Value: RealIsInt(scaled)},
+		RealIsInt(integral),
+	}}
+	if result := Check(Assert(1, New(), formula)); func() bool { _, ok := result.(Satisfiable); return ok }() == false {
+		t.Fatalf("result=%T", result)
+	}
+}
+
 func TestSharedRealEUFExchangesLRAImpliedEquality(t *testing.T) {
 	x := RealSymbol{ID: 1, Name: "x"}
 	y := RealSymbol{ID: 2, Name: "y"}

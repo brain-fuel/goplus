@@ -2046,6 +2046,26 @@ func TestExecuteSymbolicIntegerRealRoundTrips(t *testing.T) {
 	}
 }
 
+func TestExecuteAffineIntegerRealCoercions(t *testing.T) {
+	source := `(set-logic QF_LIRA)
+(declare-const x Int)
+(assert (= x 7))
+(assert (= (to_int (+ (to_real x) 1.5)) 8))
+(assert (= (to_int (- (* 2.0 (to_real x)) 2.5)) 11))
+(assert (= (to_int (+ (to_real x) 2.0)) 9))
+(assert (not (is_int (+ (to_real x) 1.5))))
+(assert (not (is_int (- (* 2.0 (to_real x)) 2.5))))
+(assert (is_int (+ (to_real x) 2.0)))
+(check-sat)`
+	result, ok := Execute(source).(Executed)
+	if !ok {
+		t.Fatalf("result=%#v", Execute(source))
+	}
+	if _, ok := result.Responses[len(result.Responses)-1].(Satisfiable); !ok {
+		t.Fatalf("check response=%#v", result.Responses[len(result.Responses)-1])
+	}
+}
+
 func TestExecuteConditionalIntegerFunctionArithmetic(t *testing.T) {
 	for _, source := range []string{
 		`(set-logic QF_UFLIA)

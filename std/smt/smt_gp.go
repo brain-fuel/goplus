@@ -3290,8 +3290,8 @@ func RealToInt(value Term[RealSort]) Term[IntSort] {
 	if exact, ok := ExactRealConstant(value); ok {
 		return IntegerTerm(FloorRational(exact))
 	}
-	if coerced, ok := value.(integerToReal); ok {
-		return coerced.value
+	if affine, ok := floorIntegerAffineReal(value); ok {
+		return affine
 	}
 	return realToInteger{value: value}
 }
@@ -3299,8 +3299,8 @@ func RealIsInt(value Term[RealSort]) Term[BoolSort] {
 	if exact, ok := ExactRealConstant(value); ok {
 		return Bool{Value: exact.IsInteger()}
 	}
-	if _, ok := value.(integerToReal); ok {
-		return Bool{Value: true}
+	if integral, ok := integerAffineRealIsIntegral(value); ok {
+		return Bool{Value: integral}
 	}
 	return realIsInteger{value: value}
 }
