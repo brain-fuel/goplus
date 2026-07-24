@@ -1462,6 +1462,119 @@ func TestNonlinearIntegerAffineFourSquareRelations(t *testing.T) {
 	}
 }
 
+func TestNonlinearIntegerAffineFourSquareBounds(t *testing.T) {
+	x := IntSymbol{ID: 133, Name: "x"}
+	y := IntSymbol{ID: 134, Name: "y"}
+	z := IntSymbol{ID: 135, Name: "z"}
+	w := IntSymbol{ID: 136, Name: "w"}
+	first := Add{Values: []Term[IntSort]{
+		ScaleInteger(NewIntegerValue(2), x),
+		IntegerTerm(NewIntegerValue(1)),
+	}}
+	second := ScaleInteger(NewIntegerValue(2), y)
+	third := Add{Values: []Term[IntSort]{
+		ScaleInteger(NewIntegerValue(3), z),
+		IntegerTerm(NewIntegerValue(-1)),
+	}}
+	fourth := Add{Values: []Term[IntSort]{
+		ScaleInteger(NewIntegerValue(2), w),
+		IntegerTerm(NewIntegerValue(1)),
+	}}
+	sum := Add{Values: []Term[IntSort]{
+		MultiplyInteger(first, first),
+		MultiplyInteger(second, second),
+		MultiplyInteger(third, third),
+		MultiplyInteger(fourth, fourth),
+	}}
+	shell := And{Values: []Term[BoolSort]{
+		Less{Left: IntegerTerm(NewIntegerValue(6)), Right: sum},
+		Less{Left: sum, Right: IntegerTerm(NewIntegerValue(8))},
+	}}
+	checked := Check(Assert(1, New(), shell))
+	result, ok := checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("affine four-square shell=%#v", checked)
+	}
+	xValue, xFound := IntegerModelValue(result.Value, x)
+	yValue, yFound := IntegerModelValue(result.Value, y)
+	zValue, zFound := IntegerModelValue(result.Value, z)
+	wValue, wFound := IntegerModelValue(result.Value, w)
+	values := [4]IntegerValue{
+		AddIntegerValue(
+			MultiplyIntegerValue(NewIntegerValue(2), xValue),
+			NewIntegerValue(1),
+		),
+		MultiplyIntegerValue(NewIntegerValue(2), yValue),
+		AddIntegerValue(
+			MultiplyIntegerValue(NewIntegerValue(3), zValue),
+			NewIntegerValue(-1),
+		),
+		AddIntegerValue(
+			MultiplyIntegerValue(NewIntegerValue(2), wValue),
+			NewIntegerValue(1),
+		),
+	}
+	sumValue := IntegerValue{}
+	for _, value := range values {
+		sumValue = AddIntegerValue(
+			sumValue, MultiplyIntegerValue(value, value),
+		)
+	}
+	if !xFound || !yFound || !zFound || !wFound ||
+		CompareIntegerValue(sumValue, NewIntegerValue(6)) <= 0 ||
+		CompareIntegerValue(sumValue, NewIntegerValue(8)) >= 0 {
+		t.Fatalf(
+			"four-square shell x=%v/%v y=%v/%v z=%v/%v w=%v/%v",
+			xValue, xFound, yValue, yFound, zValue, zFound, wValue, wFound,
+		)
+	}
+	emptyShell := And{Values: []Term[BoolSort]{
+		Less{Left: IntegerTerm(NewIntegerValue(6)), Right: sum},
+		Less{Left: sum, Right: IntegerTerm(NewIntegerValue(7))},
+	}}
+	got := Check(Assert(2, New(), emptyShell))
+	if _, ok := got.(Unsatisfiable); !ok {
+		t.Fatalf("empty four-square shell=%#v", got)
+	}
+	checked = Check(Assert(3, New(), Not{Value: LessEqual{
+		Left: sum, Right: IntegerTerm(NewIntegerValue(7)),
+	}}))
+	if _, ok := checked.(Satisfiable); !ok {
+		t.Fatalf("negated four-square bound=%#v", checked)
+	}
+	largeShell := And{Values: []Term[BoolSort]{
+		LessEqual{
+			Left: IntegerTerm(NewIntegerValue(10001)), Right: sum,
+		},
+		LessEqual{
+			Left: sum, Right: IntegerTerm(NewIntegerValue(10000)),
+		},
+	}}
+	got = Check(Assert(4, New(), largeShell))
+	if _, ok := got.(Unknown); !ok {
+		t.Fatalf("large four-square shell=%#v", got)
+	}
+	wideRoot, err := ParseIntegerValue("1267650600228229401496703205376")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wideBound := MultiplyIntegerValue(wideRoot, wideRoot)
+	wideSum := Add{Values: []Term[IntSort]{
+		MultiplyInteger(x, x),
+		MultiplyInteger(y, y),
+		MultiplyInteger(z, z),
+		MultiplyInteger(w, w),
+	}}
+	wideShell := And{Values: []Term[BoolSort]{
+		LessEqual{Left: IntegerTerm(wideBound), Right: wideSum},
+		LessEqual{Left: wideSum, Right: IntegerTerm(wideBound)},
+	}}
+	checked = Check(Assert(5, New(), wideShell))
+	if _, ok := checked.(Satisfiable); !ok {
+		t.Fatalf("wide four-square shell=%#v", checked)
+	}
+}
+
 func TestNonlinearIntegerAffineFactorProducts(t *testing.T) {
 	x := IntSymbol{ID: 110, Name: "x"}
 	y := IntSymbol{ID: 111, Name: "y"}

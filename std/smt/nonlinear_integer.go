@@ -256,6 +256,27 @@ type IntegerAffineFourSquareSystem struct {
 
 func (IntegerAffineFourSquareSystem) isTerm(BoolSort) {}
 
+// IntegerAffineFourSquareBound represents a strict or non-strict bound over
+// the sum of four squared affine integer factors.
+type IntegerAffineFourSquareBound struct {
+	First, Second, Third, Fourth IntegerAffineFactor
+	Bound                        IntegerValue
+	Lower                        bool
+	Strict                       bool
+}
+
+func (IntegerAffineFourSquareBound) isTerm(BoolSort) {}
+
+// IntegerAffineFourSquareBoundSystem is an allocation-free conjunction of
+// four-square bounds.
+type IntegerAffineFourSquareBoundSystem struct {
+	Count    int
+	Inline   [4]IntegerAffineFourSquareBound
+	Overflow []IntegerAffineFourSquareBound
+}
+
+func (IntegerAffineFourSquareBoundSystem) isTerm(BoolSort) {}
+
 // IntegerSquareBound represents x² <(=) k when Lower is false and
 // k <(=) x² when Lower is true.
 type IntegerSquareBound struct {
@@ -391,6 +412,8 @@ type nonlinearIntegerProblem struct {
 	threeSquareBounds     [nonlinearIntegerRelationLimit]IntegerAffineThreeSquareBound
 	fourSquareCount       int
 	fourSquares           [nonlinearIntegerRelationLimit]IntegerAffineFourSquareRelation
+	fourSquareBoundCount  int
+	fourSquareBounds      [nonlinearIntegerRelationLimit]IntegerAffineFourSquareBound
 	impossible            bool
 }
 
@@ -408,7 +431,8 @@ func solveNonlinearIntegerAssertions(
 		problem.cubeBoundCount == 0 && problem.powerCount == 0 &&
 		problem.powerBoundCount == 0 && problem.twoSquareCount == 0 &&
 		problem.twoSquareBoundCount == 0 && problem.threeSquareCount == 0 &&
-		problem.threeSquareBoundCount == 0 && problem.fourSquareCount == 0 {
+		problem.threeSquareBoundCount == 0 && problem.fourSquareCount == 0 &&
+		problem.fourSquareBoundCount == 0 {
 		return checkOutcome{}, false
 	}
 	if problem.impossible {
@@ -705,6 +729,28 @@ func (problem *nonlinearIntegerProblem) boolean(
 			}
 		}
 		return true
+	case IntegerAffineFourSquareBound:
+		if negated {
+			value.Lower = !value.Lower
+			value.Strict = !value.Strict
+		}
+		return problem.addAffineFourSquareBound(value)
+	case IntegerAffineFourSquareBoundSystem:
+		if negated || value.Count < 0 {
+			return false
+		}
+		bounds := value.Overflow
+		if value.Count <= len(value.Inline) {
+			bounds = value.Inline[:value.Count]
+		} else if len(bounds) != value.Count {
+			return false
+		}
+		for _, bound := range bounds {
+			if !problem.addAffineFourSquareBound(bound) {
+				return false
+			}
+		}
+		return true
 	case IntegerSquareBound:
 		if negated {
 			value.Lower = !value.Lower
@@ -801,9 +847,29 @@ func (problem *nonlinearIntegerProblem) boolean(
 func (problem *nonlinearIntegerProblem) squareComparison(
 	left, right Term[IntSort], strict, negated bool,
 ) bool {
-	first, second, third, target, ok :=
-		nonlinearIntegerAffineThreeSquareEquality(left, right)
+	first, second, third, fourth, target, ok :=
+		nonlinearIntegerAffineFourSquareEquality(left, right)
 	lower := false
+	if !ok {
+		first, second, third, fourth, target, ok =
+			nonlinearIntegerAffineFourSquareEquality(right, left)
+		lower = true
+	}
+	if ok {
+		if negated {
+			lower = !lower
+			strict = !strict
+		}
+		return problem.addAffineFourSquareBound(
+			IntegerAffineFourSquareBound{
+				First: first, Second: second, Third: third, Fourth: fourth,
+				Bound: target, Lower: lower, Strict: strict,
+			},
+		)
+	}
+	first, second, third, target, ok =
+		nonlinearIntegerAffineThreeSquareEquality(left, right)
+	lower = false
 	if !ok {
 		first, second, third, target, ok =
 			nonlinearIntegerAffineThreeSquareEquality(right, left)
@@ -1530,6 +1596,104 @@ func (problem *nonlinearIntegerProblem) addFourSquareCandidates(
 		}
 	}
 	return complete
+}
+
+func (problem *nonlinearIntegerProblem) addAffineFourSquareBound(
+	bound IntegerAffineFourSquareBound,
+) bool {
+	if problem.fourSquareBoundCount == len(problem.fourSquareBounds) {
+		return false
+	}
+	first, firstAdded := problem.ensureSymbol(bound.First.SymbolID)
+	second, secondAdded := problem.ensureSymbol(bound.Second.SymbolID)
+	third, thirdAdded := problem.ensureSymbol(bound.Third.SymbolID)
+	fourth, fourthAdded := problem.ensureSymbol(bound.Fourth.SymbolID)
+	if !firstAdded || !secondAdded || !thirdAdded || !fourthAdded {
+		return false
+	}
+	factors := [4]struct {
+		position int
+		factor   IntegerAffineFactor
+	}{
+		{first, bound.First}, {second, bound.Second},
+		{third, bound.Third}, {fourth, bound.Fourth},
+	}
+	zero := IntegerValue{}
+	if bound.Lower {
+		for _, item := range factors {
+			problem.addAffineFactorCandidate(
+				item.position, item.factor, zero,
+			)
+		}
+		if CompareIntegerValue(bound.Bound, zero) > 0 {
+			minimum := integerSquareRoot(bound.Bound)
+			exact := CompareIntegerValue(
+				MultiplyIntegerValue(minimum, minimum), bound.Bound,
+			) == 0
+			if bound.Strict || !exact {
+				minimum = AddIntegerValue(
+					minimum, NewIntegerValue(1),
+				)
+			}
+			for _, item := range factors {
+				for _, candidate := range [2]IntegerValue{
+					minimum, NegateIntegerValue(minimum),
+				} {
+					problem.addAffineFactorCandidate(
+						item.position, item.factor, candidate,
+					)
+				}
+			}
+			large := AddIntegerValue(
+				AddIntegerValue(
+					absoluteIntegerValue(bound.Bound),
+					absoluteIntegerValue(bound.First.Offset),
+				),
+				AddIntegerValue(
+					AddIntegerValue(
+						absoluteIntegerValue(bound.Second.Offset),
+						absoluteIntegerValue(bound.Third.Offset),
+					),
+					AddIntegerValue(
+						absoluteIntegerValue(bound.Fourth.Offset),
+						NewIntegerValue(4),
+					),
+				),
+			)
+			problem.candidates[first].add(large)
+			problem.candidates[first].add(NegateIntegerValue(large))
+			problem.candidates[second].add(IntegerValue{})
+			problem.candidates[third].add(IntegerValue{})
+			problem.candidates[fourth].add(IntegerValue{})
+		}
+	} else if CompareIntegerValue(bound.Bound, zero) < 0 ||
+		bound.Strict && CompareIntegerValue(bound.Bound, zero) == 0 {
+		problem.impossible = true
+	} else {
+		maximum := integerSquareRoot(bound.Bound)
+		if bound.Strict && CompareIntegerValue(
+			MultiplyIntegerValue(maximum, maximum), bound.Bound,
+		) == 0 {
+			maximum = AddIntegerValue(maximum, NewIntegerValue(-1))
+		}
+		complete := true
+		for _, item := range factors {
+			if !problem.addAffineSquareRange(
+				item.position, item.factor, maximum,
+			) {
+				complete = false
+			}
+		}
+		if complete {
+			problem.domainComplete[first] = true
+			problem.domainComplete[second] = true
+			problem.domainComplete[third] = true
+			problem.domainComplete[fourth] = true
+		}
+	}
+	problem.fourSquareBounds[problem.fourSquareBoundCount] = bound
+	problem.fourSquareBoundCount++
+	return true
 }
 
 func (problem *nonlinearIntegerProblem) addAffineThreeSquareBound(
@@ -3057,6 +3221,53 @@ func (problem *nonlinearIntegerProblem) valid(
 		)
 		holds := CompareIntegerValue(sum, relation.Target) == 0
 		if holds == relation.Negated {
+			return false
+		}
+	}
+	for _, bound := range problem.fourSquareBounds[:problem.fourSquareBoundCount] {
+		first := problem.symbolPosition(bound.First.SymbolID)
+		second := problem.symbolPosition(bound.Second.SymbolID)
+		third := problem.symbolPosition(bound.Third.SymbolID)
+		fourth := problem.symbolPosition(bound.Fourth.SymbolID)
+		if first < 0 || second < 0 || third < 0 || fourth < 0 ||
+			!assigned[first] || !assigned[second] ||
+			!assigned[third] || !assigned[fourth] {
+			continue
+		}
+		firstValue := evaluateIntegerAffineFactor(
+			bound.First, values[first],
+		)
+		secondValue := evaluateIntegerAffineFactor(
+			bound.Second, values[second],
+		)
+		thirdValue := evaluateIntegerAffineFactor(
+			bound.Third, values[third],
+		)
+		fourthValue := evaluateIntegerAffineFactor(
+			bound.Fourth, values[fourth],
+		)
+		sum := AddIntegerValue(
+			AddIntegerValue(
+				MultiplyIntegerValue(firstValue, firstValue),
+				MultiplyIntegerValue(secondValue, secondValue),
+			),
+			AddIntegerValue(
+				MultiplyIntegerValue(thirdValue, thirdValue),
+				MultiplyIntegerValue(fourthValue, fourthValue),
+			),
+		)
+		comparison := CompareIntegerValue(sum, bound.Bound)
+		holds := comparison <= 0
+		if bound.Strict {
+			holds = comparison < 0
+		}
+		if bound.Lower {
+			holds = comparison >= 0
+			if bound.Strict {
+				holds = comparison > 0
+			}
+		}
+		if !holds {
 			return false
 		}
 	}
