@@ -171,6 +171,28 @@ type IntegerAffineTwoSquareSystem struct {
 
 func (IntegerAffineTwoSquareSystem) isTerm(BoolSort) {}
 
+// IntegerAffineTwoSquareBound represents
+// (a*x+b)^2+(c*y+d)^2 <(=) k when Lower is false and
+// k <(=) (a*x+b)^2+(c*y+d)^2 when Lower is true.
+type IntegerAffineTwoSquareBound struct {
+	Left, Right IntegerAffineFactor
+	Bound       IntegerValue
+	Lower       bool
+	Strict      bool
+}
+
+func (IntegerAffineTwoSquareBound) isTerm(BoolSort) {}
+
+// IntegerAffineTwoSquareBoundSystem is an allocation-free conjunction of
+// two-square bounds.
+type IntegerAffineTwoSquareBoundSystem struct {
+	Count    int
+	Inline   [4]IntegerAffineTwoSquareBound
+	Overflow []IntegerAffineTwoSquareBound
+}
+
+func (IntegerAffineTwoSquareBoundSystem) isTerm(BoolSort) {}
+
 // IntegerSquareBound represents x² <(=) k when Lower is false and
 // k <(=) x² when Lower is true.
 type IntegerSquareBound struct {
@@ -274,31 +296,33 @@ func (values *nonlinearIntegerCandidates) add(value IntegerValue) bool {
 }
 
 type nonlinearIntegerProblem struct {
-	symbolCount       int
-	symbols           [nonlinearIntegerSymbolLimit]int
-	candidates        [nonlinearIntegerSymbolLimit]nonlinearIntegerCandidates
-	domainComplete    [nonlinearIntegerSymbolLimit]bool
-	relationCount     int
-	relations         [nonlinearIntegerRelationLimit]nonlinearIntegerProductRelation
-	boundCount        int
-	bounds            [nonlinearIntegerRelationLimit]IntegerAffineSquareBound
-	productBoundCount int
-	productBounds     [nonlinearIntegerRelationLimit]IntegerAffineProductBound
-	cubeCount         int
-	cubes             [nonlinearIntegerRelationLimit]IntegerAffineCubeRelation
-	cubeBoundCount    int
-	cubeBounds        [nonlinearIntegerRelationLimit]IntegerAffineCubeBound
-	cubeHasLower      [nonlinearIntegerSymbolLimit]bool
-	cubeHasUpper      [nonlinearIntegerSymbolLimit]bool
-	cubeLower         [nonlinearIntegerSymbolLimit]IntegerValue
-	cubeUpper         [nonlinearIntegerSymbolLimit]IntegerValue
-	powerCount        int
-	powers            [nonlinearIntegerRelationLimit]IntegerAffinePowerRelation
-	powerBoundCount   int
-	powerBounds       [nonlinearIntegerRelationLimit]IntegerAffinePowerBound
-	twoSquareCount    int
-	twoSquares        [nonlinearIntegerRelationLimit]IntegerAffineTwoSquareRelation
-	impossible        bool
+	symbolCount         int
+	symbols             [nonlinearIntegerSymbolLimit]int
+	candidates          [nonlinearIntegerSymbolLimit]nonlinearIntegerCandidates
+	domainComplete      [nonlinearIntegerSymbolLimit]bool
+	relationCount       int
+	relations           [nonlinearIntegerRelationLimit]nonlinearIntegerProductRelation
+	boundCount          int
+	bounds              [nonlinearIntegerRelationLimit]IntegerAffineSquareBound
+	productBoundCount   int
+	productBounds       [nonlinearIntegerRelationLimit]IntegerAffineProductBound
+	cubeCount           int
+	cubes               [nonlinearIntegerRelationLimit]IntegerAffineCubeRelation
+	cubeBoundCount      int
+	cubeBounds          [nonlinearIntegerRelationLimit]IntegerAffineCubeBound
+	cubeHasLower        [nonlinearIntegerSymbolLimit]bool
+	cubeHasUpper        [nonlinearIntegerSymbolLimit]bool
+	cubeLower           [nonlinearIntegerSymbolLimit]IntegerValue
+	cubeUpper           [nonlinearIntegerSymbolLimit]IntegerValue
+	powerCount          int
+	powers              [nonlinearIntegerRelationLimit]IntegerAffinePowerRelation
+	powerBoundCount     int
+	powerBounds         [nonlinearIntegerRelationLimit]IntegerAffinePowerBound
+	twoSquareCount      int
+	twoSquares          [nonlinearIntegerRelationLimit]IntegerAffineTwoSquareRelation
+	twoSquareBoundCount int
+	twoSquareBounds     [nonlinearIntegerRelationLimit]IntegerAffineTwoSquareBound
+	impossible          bool
 }
 
 func solveNonlinearIntegerAssertions(
@@ -313,7 +337,8 @@ func solveNonlinearIntegerAssertions(
 	if problem.relationCount == 0 && problem.boundCount == 0 &&
 		problem.productBoundCount == 0 && problem.cubeCount == 0 &&
 		problem.cubeBoundCount == 0 && problem.powerCount == 0 &&
-		problem.powerBoundCount == 0 && problem.twoSquareCount == 0 {
+		problem.powerBoundCount == 0 && problem.twoSquareCount == 0 &&
+		problem.twoSquareBoundCount == 0 {
 		return checkOutcome{}, false
 	}
 	if problem.impossible {
@@ -524,6 +549,28 @@ func (problem *nonlinearIntegerProblem) boolean(
 			}
 		}
 		return true
+	case IntegerAffineTwoSquareBound:
+		if negated {
+			value.Lower = !value.Lower
+			value.Strict = !value.Strict
+		}
+		return problem.addAffineTwoSquareBound(value)
+	case IntegerAffineTwoSquareBoundSystem:
+		if negated || value.Count < 0 {
+			return false
+		}
+		bounds := value.Overflow
+		if value.Count <= len(value.Inline) {
+			bounds = value.Inline[:value.Count]
+		} else if len(bounds) != value.Count {
+			return false
+		}
+		for _, bound := range bounds {
+			if !problem.addAffineTwoSquareBound(bound) {
+				return false
+			}
+		}
+		return true
 	case IntegerSquareBound:
 		if negated {
 			value.Lower = !value.Lower
@@ -620,10 +667,30 @@ func (problem *nonlinearIntegerProblem) boolean(
 func (problem *nonlinearIntegerProblem) squareComparison(
 	left, right Term[IntSort], strict, negated bool,
 ) bool {
+	leftSquare, rightSquare, target, ok :=
+		nonlinearIntegerAffineTwoSquareEquality(left, right)
+	lower := false
+	if !ok {
+		leftSquare, rightSquare, target, ok =
+			nonlinearIntegerAffineTwoSquareEquality(right, left)
+		lower = true
+	}
+	if ok {
+		if negated {
+			lower = !lower
+			strict = !strict
+		}
+		return problem.addAffineTwoSquareBound(
+			IntegerAffineTwoSquareBound{
+				Left: leftSquare, Right: rightSquare,
+				Bound: target, Lower: lower, Strict: strict,
+			},
+		)
+	}
 	power, exponent, target, ok := nonlinearIntegerAffinePowerEquality(
 		left, right,
 	)
-	lower := false
+	lower = false
 	if !ok {
 		power, exponent, target, ok = nonlinearIntegerAffinePowerEquality(
 			right, left,
@@ -970,6 +1037,83 @@ func (problem *nonlinearIntegerProblem) addAffineTwoSquareRelation(
 	}
 	problem.twoSquares[problem.twoSquareCount] = value
 	problem.twoSquareCount++
+	return true
+}
+
+func (problem *nonlinearIntegerProblem) addAffineTwoSquareBound(
+	bound IntegerAffineTwoSquareBound,
+) bool {
+	if problem.twoSquareBoundCount == len(problem.twoSquareBounds) {
+		return false
+	}
+	left, leftAdded := problem.ensureSymbol(bound.Left.SymbolID)
+	right, rightAdded := problem.ensureSymbol(bound.Right.SymbolID)
+	if !leftAdded || !rightAdded {
+		return false
+	}
+	zero := IntegerValue{}
+	if bound.Lower {
+		if CompareIntegerValue(bound.Bound, zero) <= 0 {
+			problem.candidates[left].add(IntegerValue{})
+			problem.candidates[right].add(IntegerValue{})
+		} else {
+			minimum := integerSquareRoot(bound.Bound)
+			exact := CompareIntegerValue(
+				MultiplyIntegerValue(minimum, minimum), bound.Bound,
+			) == 0
+			if bound.Strict || !exact {
+				minimum = AddIntegerValue(
+					minimum, NewIntegerValue(1),
+				)
+			}
+			for _, candidate := range [2]IntegerValue{
+				minimum, NegateIntegerValue(minimum),
+			} {
+				problem.addAffineFactorCandidate(
+					left, bound.Left, candidate,
+				)
+				problem.addAffineFactorCandidate(
+					right, bound.Right, candidate,
+				)
+			}
+			large := AddIntegerValue(
+				AddIntegerValue(
+					absoluteIntegerValue(bound.Bound),
+					absoluteIntegerValue(bound.Left.Offset),
+				),
+				AddIntegerValue(
+					absoluteIntegerValue(bound.Right.Offset),
+					NewIntegerValue(2),
+				),
+			)
+			problem.candidates[left].add(large)
+			problem.candidates[left].add(NegateIntegerValue(large))
+			problem.candidates[right].add(IntegerValue{})
+			problem.candidates[right].add(NewIntegerValue(1))
+		}
+	} else if CompareIntegerValue(bound.Bound, zero) < 0 ||
+		bound.Strict && CompareIntegerValue(bound.Bound, zero) == 0 {
+		problem.impossible = true
+	} else {
+		maximum := integerSquareRoot(bound.Bound)
+		if bound.Strict && CompareIntegerValue(
+			MultiplyIntegerValue(maximum, maximum), bound.Bound,
+		) == 0 {
+			maximum = AddIntegerValue(maximum, NewIntegerValue(-1))
+		}
+		leftComplete := problem.addAffineSquareRange(
+			left, bound.Left, maximum,
+		)
+		rightComplete := problem.addAffineSquareRange(
+			right, bound.Right, maximum,
+		)
+		if leftComplete && rightComplete {
+			problem.domainComplete[left] = true
+			problem.domainComplete[right] = true
+		}
+	}
+	problem.twoSquareBounds[problem.twoSquareBoundCount] = bound
+	problem.twoSquareBoundCount++
 	return true
 }
 
@@ -2119,6 +2263,37 @@ func (problem *nonlinearIntegerProblem) valid(
 		)
 		holds := CompareIntegerValue(sum, relation.Target) == 0
 		if holds == relation.Negated {
+			return false
+		}
+	}
+	for _, bound := range problem.twoSquareBounds[:problem.twoSquareBoundCount] {
+		left := problem.symbolPosition(bound.Left.SymbolID)
+		right := problem.symbolPosition(bound.Right.SymbolID)
+		if left < 0 || right < 0 || !assigned[left] || !assigned[right] {
+			continue
+		}
+		leftValue := evaluateIntegerAffineFactor(
+			bound.Left, values[left],
+		)
+		rightValue := evaluateIntegerAffineFactor(
+			bound.Right, values[right],
+		)
+		sum := AddIntegerValue(
+			MultiplyIntegerValue(leftValue, leftValue),
+			MultiplyIntegerValue(rightValue, rightValue),
+		)
+		comparison := CompareIntegerValue(sum, bound.Bound)
+		holds := comparison <= 0
+		if bound.Strict {
+			holds = comparison < 0
+		}
+		if bound.Lower {
+			holds = comparison >= 0
+			if bound.Strict {
+				holds = comparison > 0
+			}
+		}
+		if !holds {
 			return false
 		}
 	}

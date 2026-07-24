@@ -978,6 +978,135 @@ func TestNonlinearIntegerAffineTwoSquareRelations(t *testing.T) {
 	}
 }
 
+func TestNonlinearIntegerAffineTwoSquareBounds(t *testing.T) {
+	x := IntSymbol{ID: 121, Name: "x"}
+	y := IntSymbol{ID: 122, Name: "y"}
+	left := Add{Values: []Term[IntSort]{
+		ScaleInteger(NewIntegerValue(2), x),
+		IntegerTerm(NewIntegerValue(1)),
+	}}
+	right := Add{Values: []Term[IntSort]{
+		ScaleInteger(NewIntegerValue(3), y),
+		IntegerTerm(NewIntegerValue(-2)),
+	}}
+	sum := Add{Values: []Term[IntSort]{
+		MultiplyInteger(left, left),
+		MultiplyInteger(right, right),
+	}}
+	annulus := And{Values: []Term[BoolSort]{
+		LessEqual{Left: IntegerTerm(NewIntegerValue(25)), Right: sum},
+		LessEqual{Left: sum, Right: IntegerTerm(NewIntegerValue(50))},
+	}}
+	checked := Check(Assert(1, New(), annulus))
+	result, ok := checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("affine two-square annulus=%#v", checked)
+	}
+	xValue, xFound := IntegerModelValue(result.Value, x)
+	yValue, yFound := IntegerModelValue(result.Value, y)
+	leftValue := AddIntegerValue(
+		MultiplyIntegerValue(NewIntegerValue(2), xValue),
+		NewIntegerValue(1),
+	)
+	rightValue := AddIntegerValue(
+		MultiplyIntegerValue(NewIntegerValue(3), yValue),
+		NewIntegerValue(-2),
+	)
+	sumValue := AddIntegerValue(
+		MultiplyIntegerValue(leftValue, leftValue),
+		MultiplyIntegerValue(rightValue, rightValue),
+	)
+	if !xFound || !yFound ||
+		CompareIntegerValue(sumValue, NewIntegerValue(25)) < 0 ||
+		CompareIntegerValue(sumValue, NewIntegerValue(50)) > 0 {
+		t.Fatalf("two-square annulus model x=%v/%v y=%v/%v", xValue, xFound, yValue, yFound)
+	}
+
+	emptyAnnulus := And{Values: []Term[BoolSort]{
+		LessEqual{Left: IntegerTerm(NewIntegerValue(3)), Right: sum},
+		LessEqual{Left: sum, Right: IntegerTerm(NewIntegerValue(4))},
+	}}
+	emptyResult := Check(Assert(2, New(), emptyAnnulus))
+	if _, ok := emptyResult.(Unsatisfiable); !ok {
+		t.Fatalf("empty two-square annulus=%#v", emptyResult)
+	}
+
+	negated := Not{Value: LessEqual{
+		Left: sum, Right: IntegerTerm(NewIntegerValue(50)),
+	}}
+	checked = Check(Assert(3, New(), negated))
+	result, ok = checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("negated two-square bound=%#v", checked)
+	}
+	xValue, xFound = IntegerModelValue(result.Value, x)
+	yValue, yFound = IntegerModelValue(result.Value, y)
+	leftValue = AddIntegerValue(
+		MultiplyIntegerValue(NewIntegerValue(2), xValue),
+		NewIntegerValue(1),
+	)
+	rightValue = AddIntegerValue(
+		MultiplyIntegerValue(NewIntegerValue(3), yValue),
+		NewIntegerValue(-2),
+	)
+	if !xFound || !yFound || CompareIntegerValue(
+		AddIntegerValue(
+			MultiplyIntegerValue(leftValue, leftValue),
+			MultiplyIntegerValue(rightValue, rightValue),
+		),
+		NewIntegerValue(50),
+	) <= 0 {
+		t.Fatalf("negated two-square model x=%v y=%v", xValue, yValue)
+	}
+
+	largeAnnulus := And{Values: []Term[BoolSort]{
+		LessEqual{
+			Left: IntegerTerm(NewIntegerValue(10001)), Right: sum,
+		},
+		LessEqual{
+			Left: sum, Right: IntegerTerm(NewIntegerValue(10000)),
+		},
+	}}
+	largeResult := Check(Assert(4, New(), largeAnnulus))
+	if _, ok := largeResult.(Unknown); !ok {
+		t.Fatalf("large two-square annulus=%#v", largeResult)
+	}
+
+	wideRoot, err := ParseIntegerValue("1267650600228229401496703205376")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wideBound := MultiplyIntegerValue(wideRoot, wideRoot)
+	wideLeft := Add{Values: []Term[IntSort]{
+		x, IntegerTerm(NewIntegerValue(2)),
+	}}
+	wideSum := Add{Values: []Term[IntSort]{
+		MultiplyInteger(wideLeft, wideLeft),
+		MultiplyInteger(y, y),
+	}}
+	wideAnnulus := And{Values: []Term[BoolSort]{
+		LessEqual{Left: IntegerTerm(wideBound), Right: wideSum},
+		LessEqual{Left: wideSum, Right: IntegerTerm(wideBound)},
+	}}
+	checked = Check(Assert(5, New(), wideAnnulus))
+	result, ok = checked.(Satisfiable)
+	if !ok {
+		t.Fatalf("wide two-square annulus=%#v", checked)
+	}
+	xValue, xFound = IntegerModelValue(result.Value, x)
+	yValue, yFound = IntegerModelValue(result.Value, y)
+	wideX := AddIntegerValue(xValue, NewIntegerValue(2))
+	if !xFound || !yFound || CompareIntegerValue(
+		AddIntegerValue(
+			MultiplyIntegerValue(wideX, wideX),
+			MultiplyIntegerValue(yValue, yValue),
+		),
+		wideBound,
+	) != 0 {
+		t.Fatalf("wide two-square annulus model x=%v y=%v", xValue, yValue)
+	}
+}
+
 func TestNonlinearIntegerAffineFactorProducts(t *testing.T) {
 	x := IntSymbol{ID: 110, Name: "x"}
 	y := IntSymbol{ID: 111, Name: "y"}
