@@ -82,6 +82,15 @@ boundary protection.
 
 `std/nonempty` provides owned sequences with total head, last, and reduction;
 it is shared by `std/algebra` and the `goforge.dev/lo` compatibility module.
+`std/iter` is the lazy sequence algebra: a `Seq[T]` wraps the standard
+`iter.Seq[T]` with fluent combinators (`Map`, `Filter`, `FilterMap`, `FlatMap`,
+`Uniq`, `Take`/`Drop`/`TakeWhile`/`DropWhile`, `Reverse`, `Chunk`, `Concat`,
+`Fold`) and `Seq()` erases back to the standard iterator at any boundary.
+Fallible pipelines carry `std/result.Result` elements (`TryFold`,
+`CollectResults`); its laws (round-trip, `map∘filter` fusion, `take`/`drop`
+partition, reverse involution) are property-checked. The `goforge.dev/lo/it`
+iterator package is a thin facade over `std/iter`, so the engine and its laws
+have a single home.
 `std/vec` now adds equal-length `Zip`, `Fin[n]` bounds evidence, and total
 `At`. Constructor-produced indices survive long enough for cross-package
 checking: different vector lengths and out-of-range evidence are rejected
