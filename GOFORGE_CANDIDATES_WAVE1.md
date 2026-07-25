@@ -677,11 +677,11 @@ page have all been verified.
 
 | Project | Project tag | Go+ tag | stdlib tag | Pinned upstream | Module resolution | Site URL | Evidence |
 |---|---|---|---|---|---|---|---|
-| Viper | — | — | — | v1.21.0 | 404 / unpublished | `/viper/` absent | Not released |
-| Validator | v1.0.0 | v0.137.0 | std/v0.200.0 | v10.30.3 | brain-fuel/gpvalidator (goforge.dev/validator) | `/validator/` published | 106/106 decls + 210/210 behaviors; tags pushed 2026-07-24; deploy propagating |
-| GJSON | — | — | — | v1.19.0 | 404 / unpublished | `/gjson/` absent | Not released |
-| Lo | v1.0.0 | v0.137.0 | std/v0.200.0 | v1.53.0 | brain-fuel/gplodash (goforge.dev/lo) | `/lo/` published | 651/651 parity; tags pushed 2026-07-24; proxy/site deploy propagating |
-| Chi | — | — | — | v5.3.1 | 404 / unpublished | `/chi/` absent | Not released |
+| Viper | v1.0.0 | v0.137.0 | std/v0.201.0 | v1.21.0 | brain-fuel/gpviper (`goforge.dev/gpviper`) | `/viper/` published | 192/192; released 2026-07-24 |
+| Validator | v1.0.0 | v0.137.0 | std/v0.200.0 | v10.30.3 | brain-fuel/gpvalidator (`goforge.dev/gpvalidator`) | `/validator/` published | 106/106 + 210/210; released 2026-07-24 |
+| GJSON | v1.0.0 | v0.137.0 | std/v0.201.0 | v1.19.0 | brain-fuel/gpgjson (`goforge.dev/gpgjson`) | `/gjson/` published | 45/45 + 1,301/1,301 paths; std/pathquery shipped; released 2026-07-24 |
+| Lo | v1.0.0 | v0.137.0 | std/v0.200.0 | v1.53.0 | brain-fuel/gplodash (`goforge.dev/gplodash`) | `/lo/` published | 651/651 parity; released 2026-07-24 |
+| Chi | v1.0.0 | v0.137.0 | std/v0.201.0 | v5.3.1 | brain-fuel/gpchi (`goforge.dev/gpchi`) | `/chi/` published | 127/127; released 2026-07-24 |
 
 ## Verification commands
 
