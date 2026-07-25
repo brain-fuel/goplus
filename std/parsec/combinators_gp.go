@@ -119,8 +119,6 @@ func Opt[T any](p Parser[T], dflt T) Parser[T] {
 
 // Chainl1 parses one or more p separated by op, folding left — the
 // standard left-associative operator chain.
-//
-//goplus:dep Chainl1[T any](p Parser[T], op Parser[func(T, T) T]) Parser[T]
 func Chainl1[T any](p Parser[T], op Parser[func(T, T) T]) Parser[T] {
 	var rest func(T) Parser[T]
 	rest = func(x T) Parser[T] {

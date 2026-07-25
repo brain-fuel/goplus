@@ -466,6 +466,20 @@ func termShapedText(a string) bool {
 	if a[0] >= '0' && a[0] <= '9' {
 		return true
 	}
+	// A Go *type* argument is not an index term even when its syntax contains a
+	// character that also appears in arithmetic. Pointer (`*T`) and slice/array
+	// (`[]T`, `[N]T`) lead with type syntax, and the composite-type keywords are
+	// unambiguously types — none is a leading infix arithmetic operator. Index
+	// terms are numbers, nat variables, or infix arithmetic over them (`n+1`,
+	// `2*k`, `(a+b)`), so only those remain term-shaped after this guard.
+	if a[0] == '*' || a[0] == '[' {
+		return false
+	}
+	for _, kw := range []string{"map[", "func", "chan ", "chan<-", "<-chan", "interface", "struct"} {
+		if strings.HasPrefix(a, kw) {
+			return false
+		}
+	}
 	return strings.ContainsAny(a, "+-*()")
 }
 
