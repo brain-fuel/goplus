@@ -678,7 +678,7 @@ page have all been verified.
 | Project | Project tag | Go+ tag | stdlib tag | Pinned upstream | Module resolution | Site URL | Evidence |
 |---|---|---|---|---|---|---|---|
 | Viper | — | — | — | v1.21.0 | 404 / unpublished | `/viper/` absent | Not released |
-| Validator | — | — | — | v10.30.3 | 404 / unpublished | `/validator/` absent | Not released |
+| Validator | v1.0.0 | v0.137.0 | std/v0.200.0 | v10.30.3 | brain-fuel/gpvalidator (goforge.dev/validator) | `/validator/` published | 106/106 decls + 210/210 behaviors; tags pushed 2026-07-24; deploy propagating |
 | GJSON | — | — | — | v1.19.0 | 404 / unpublished | `/gjson/` absent | Not released |
 | Lo | v1.0.0 | v0.137.0 | std/v0.200.0 | v1.53.0 | brain-fuel/gplodash (goforge.dev/lo) | `/lo/` published | 651/651 parity; tags pushed 2026-07-24; proxy/site deploy propagating |
 | Chi | — | — | — | v5.3.1 | 404 / unpublished | `/chi/` absent | Not released |
