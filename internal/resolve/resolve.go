@@ -10,6 +10,7 @@
 package resolve
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -126,6 +127,9 @@ func Fixpoint(in *Input) (*Output, error) {
 						if err != nil {
 							return 0, nil, err
 						}
+						if bytes.Equal(applied, src) {
+							continue
+						}
 						texts[path] = applied
 						editCount += len(edits)
 					}
@@ -144,6 +148,7 @@ func Fixpoint(in *Input) (*Output, error) {
 			// them — `_ "path"` keeps side-effects and marker
 			// resolvability — and go around once more.
 			blanks := 0
+			blankedDone := map[string]bool{}
 			for _, pkg := range pkgs {
 				for i, fileAST := range pkg.Syntax {
 					if i >= len(pkg.CompiledGoFiles) {
@@ -151,16 +156,20 @@ func Fixpoint(in *Input) (*Output, error) {
 					}
 					path := pkg.CompiledGoFiles[i]
 					src, ours := texts[path]
-					if !ours {
+					if !ours || blankedDone[path] {
 						continue
 					}
-					edits := blankUnusedImports(fileAST, pkg.Fset, src)
+					blankedDone[path] = true
+					edits := blankUnusedImports(fileAST, pkg.Fset, pkg.TypesInfo, src)
 					if len(edits) == 0 {
 						continue
 					}
 					applied, aerr := lower.Apply(src, edits)
 					if aerr != nil {
 						return nil, aerr
+					}
+					if bytes.Equal(applied, src) {
+						continue
 					}
 					texts[path] = applied
 					blanks += len(edits)

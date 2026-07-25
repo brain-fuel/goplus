@@ -50,6 +50,23 @@ func TestAtomicValidationAndWitness(t *testing.T) {
 	if len(failures) != 1 || failures[0].Code != "required" || failures.Error() != "required" {
 		t.Fatalf("failures = %#v (%q)", failures, failures.Error())
 	}
+	if descriptor := failures[0].Descriptor(); descriptor != (Descriptor{Code: "required"}) {
+		t.Fatalf("descriptor = %#v", descriptor)
+	}
+}
+
+func TestIsValidDoesNotMaterializeFailures(t *testing.T) {
+	rule := Atom[string](91, "required", "", func(value string) bool {
+		return value != ""
+	})
+	if IsValid(rule, "") {
+		t.Fatal("empty value unexpectedly passed")
+	}
+	if allocations := testing.AllocsPerRun(1000, func() {
+		_ = IsValid(rule, "")
+	}); allocations != 0 {
+		t.Fatalf("IsValid failure allocations = %.1f, want 0", allocations)
+	}
 }
 
 func TestConjunctionAndTypedPaths(t *testing.T) {
@@ -66,6 +83,31 @@ func TestConjunctionAndTypedPaths(t *testing.T) {
 	}
 	if !PredicateEqual(PredicateOfRule(rule), Both{Left: Named{ID: 1}, Right: Named{ID: 2}}) {
 		t.Fatal("conjunction predicate witness differs")
+	}
+}
+
+func TestCrossValueRelation(t *testing.T) {
+	const matchesPredicate = 7
+	rule := Relate[string, string](
+		matchesPredicate,
+		"eqfield",
+		"confirmation",
+		func(value, confirmation string) bool { return value == confirmation },
+	)
+
+	accepted := Validate(rule, PairOf("secret", "secret"))
+	if failures := FailuresOf(accepted); len(failures) != 0 {
+		t.Fatalf("matching pair failed: %v", failures)
+	}
+	if !PredicateEqual(PredicateOfRule(rule), Named{ID: matchesPredicate}) {
+		t.Fatalf("relation predicate = %#v", PredicateOfRule(rule))
+	}
+
+	failures := Check(rule, PairOf("secret", "different"))
+	if len(failures) != 1 ||
+		failures[0].Code != "eqfield" ||
+		failures[0].Param != "confirmation" {
+		t.Fatalf("relation failures = %#v", failures)
 	}
 }
 

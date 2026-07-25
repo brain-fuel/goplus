@@ -22,10 +22,19 @@ total func PredicateBothID(left nat, right nat) nat {
 
 // Failure describes one failed atomic rule. Path uses dotted Go/JSON field
 // notation and Code/Param retain machine-readable validation semantics.
+type Descriptor struct {
+	Code string
+	Param string
+}
+
 type Failure struct {
 	Path string
 	Code string
 	Param string
+}
+
+func (f Failure) Descriptor() Descriptor {
+	return Descriptor{Code: f.Code, Param: f.Param}
 }
 
 func (f Failure) Error() string {
@@ -45,11 +54,12 @@ func (failures Failures) Error() string {
 }
 
 type runner[T any] func(value T, path string, failures Failures) Failures
+type tester[T any] func(value T) bool
 
 // Rule is an immutable executable witness for predicate p.
 //goplus:derive off
 type Rule[T any, p nat] enum {
-	ruleValue(Predicate Predicate, Run runner[T]) Rule[T, p]
+	ruleValue(Predicate Predicate, Run runner[T], Test tester[T]) Rule[T, p]
 }
 
 // Validated can only be constructed by this package after a rule succeeds.
@@ -71,8 +81,18 @@ type Path[T any, V any] struct {
 	Get func(T) V
 }
 
-func makeRule[T any](0 p nat, predicate Predicate, run runner[T]) Rule[T, p] {
-	return ruleValue(predicate, run)
+// Pair is the neutral input shape for cross-value validation.
+type Pair[A any, B any] struct {
+	Left A
+	Right B
+}
+
+func PairOf[A any, B any](left A, right B) Pair[A, B] {
+	return Pair[A, B]{Left: left, Right: right}
+}
+
+func makeRule[T any](0 p nat, predicate Predicate, run runner[T], test tester[T]) Rule[T, p] {
+	return ruleValue(predicate, run, test)
 }
 
 func Field[T any, V any](name string, get func(T) V) Path[T, V] {
@@ -98,32 +118,45 @@ func Atom[T any](id nat, code string, param string, check func(T) bool) Rule[T, 
 		if check(value) { return failures }
 		return append(failures, Failure{Path: path, Code: code, Param: param})
 	}
-	return makeRule(PredicateAtomID(id), predicate, run)
+	return makeRule(PredicateAtomID(id), predicate, run, check)
+}
+
+// Relate constructs an atomic rule over two values. It is the typed semantic
+// foundation for cross-field and VarWithValue-style validation without
+// reflection, field-name strings, or ambient "other value" state.
+func Relate[A any, B any](id nat, code string, param string, check func(A, B) bool) Rule[Pair[A, B], PredicateAtomID(id)] {
+	if check == nil { panic("validate: nil relation check") }
+	return Atom(id, code, param, func(values Pair[A, B]) bool {
+		return check(values.Left, values.Right)
+	})
 }
 
 // At lifts a value rule through a typed field projection without changing its
 // proposition.
 func At[T any, V any](0 p nat, path Path[T, V], rule Rule[V, p]) Rule[T, p] {
 	match rule {
-	case ruleValue(predicate, run):
+	case ruleValue(predicate, run, test):
 		lifted := func(value T, prefix string, failures Failures) Failures {
 			return run(path.Get(value), joinPath(prefix, path.Name), failures)
 		}
-		return ruleValue(predicate, lifted)
+		return ruleValue(predicate, lifted, func(value T) bool {
+			return test(path.Get(value))
+		})
 	}
 }
 
 // And forms conjunction and evaluates both sides in declaration order.
 func And[T any](0 p nat, 0 q nat, left Rule[T, p], right Rule[T, q]) Rule[T, PredicateBothID(p, q)] {
 	match left {
-	case ruleValue(leftPredicate, leftRun):
+	case ruleValue(leftPredicate, leftRun, leftTest):
 		match right {
-		case ruleValue(rightPredicate, rightRun):
+		case ruleValue(rightPredicate, rightRun, rightTest):
 			run := func(value T, path string, failures Failures) Failures {
 				failures = leftRun(value, path, failures)
 				return rightRun(value, path, failures)
 			}
-			return makeRule(PredicateBothID(p, q), Both(leftPredicate, rightPredicate), run)
+			return makeRule(PredicateBothID(p, q), Both(leftPredicate, rightPredicate), run,
+				func(value T) bool { return leftTest(value) && rightTest(value) })
 		}
 	}
 }
@@ -131,7 +164,7 @@ func And[T any](0 p nat, 0 q nat, left Rule[T, p], right Rule[T, q]) Rule[T, Pre
 // Validate executes rule and seals successful values with predicate p.
 func Validate[T any](0 p nat, rule Rule[T, p], value T) Outcome[T, p] {
 	match rule {
-	case ruleValue(predicate, run):
+	case ruleValue(predicate, run, _):
 		failures := run(value, "", nil)
 		if len(failures) != 0 { return Rejected(failures) }
 		return Accepted(validatedValue(predicate, value, rule))
@@ -142,7 +175,7 @@ func Validate[T any](0 p nat, rule Rule[T, p], value T) Outcome[T, p] {
 // return. Success returns nil without constructing a proof-bearing Outcome.
 func Check[T any](0 p nat, rule Rule[T, p], value T) Failures {
 	match rule {
-	case ruleValue(_, run):
+	case ruleValue(_, run, _):
 		return run(value, "", nil)
 	}
 }
@@ -151,8 +184,8 @@ func Check[T any](0 p nat, rule Rule[T, p], value T) Failures {
 // a witness or structured failures.
 func IsValid[T any](0 p nat, rule Rule[T, p], value T) bool {
 	match rule {
-	case ruleValue(_, run):
-		return len(run(value, "", nil)) == 0
+	case ruleValue(_, _, test):
+		return test(value)
 	}
 }
 
@@ -165,7 +198,7 @@ func Value[T any](0 p nat, value Validated[T, p]) T {
 
 func PredicateOfRule[T any](0 p nat, rule Rule[T, p]) Predicate {
 	match rule {
-	case ruleValue(predicate, _):
+	case ruleValue(predicate, _, _):
 		return predicate
 	}
 }

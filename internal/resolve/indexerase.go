@@ -3,6 +3,7 @@ package resolve
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 	"strings"
 
 	"goforge.dev/goplus/internal/lower"
@@ -105,7 +106,7 @@ func (r *fileResolver) enclosingParam(node ast.Expr) (fn, param string, ok bool)
 // and the import line must SURVIVE (markers resolve qualified sorts
 // through it — reconstruction treats `_ "path"` as aliasable by the
 // path's last segment).
-func blankUnusedImports(file *ast.File, fset *token.FileSet, src []byte) []lower.Edit {
+func blankUnusedImports(file *ast.File, fset *token.FileSet, info *types.Info, src []byte) []lower.Edit {
 	tokFile := fset.File(file.Pos())
 	used := map[string]bool{}
 	ast.Inspect(file, func(n ast.Node) bool {
@@ -126,6 +127,11 @@ func blankUnusedImports(file *ast.File, fset *token.FileSet, src []byte) []lower
 		}
 		path := strings.Trim(imp.Path.Value, `"`)
 		alias := path[strings.LastIndex(path, "/")+1:]
+		if info != nil {
+			if pkgName, ok := info.Implicits[imp].(*types.PkgName); ok {
+				alias = pkgName.Name()
+			}
+		}
 		if used[alias] {
 			continue
 		}

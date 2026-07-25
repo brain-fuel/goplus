@@ -341,6 +341,13 @@ func guardEdits(f *sourceFile, fd *ast.FuncDecl, params []guardParam, plan *enum
 	src := f.gp
 	var guards []string
 	for _, p := range params {
+		// A blank parameter carries no runtime witness to test, and `_`
+		// cannot be used as a value — the phantom compile-time index already
+		// guarantees the caller passed a correctly-indexed value, so no
+		// runtime guard is emitted (or expressible) for it.
+		if p.name == "_" {
+			continue
+		}
 		base, argTexts := instantiationOf(p.typeText)
 		if base == "" {
 			continue
@@ -401,7 +408,10 @@ func guardEdits(f *sourceFile, fd *ast.FuncDecl, params []guardParam, plan *enum
 		return nil
 	}
 	at := src.Offset(fd.Body.Lbrace) + 1
-	return []lower.Edit{{Start: at, End: at, New: "\n" + strings.Join(guards, "\n")}}
+	// Trailing newline separates the injected guards from the rest of the
+	// body: without it, a one-liner body (`{ return X() }`) would glue the
+	// final guard's `}` to `return`, producing unparseable Go.
+	return []lower.Edit{{Start: at, End: at, New: "\n" + strings.Join(guards, "\n") + "\n"}}
 }
 
 // instantiationOf splits "Vec[T, n+1]" into base name and argument
