@@ -24,6 +24,10 @@ type Spec struct {
 	Stdout    io.Writer
 	Stderr    io.Writer
 	Sensitive bool
+	// Clean runs the process with exactly Env as its environment, without
+	// inheriting the parent's (a tighter effect capability). When false, a
+	// non-nil Env is appended to the inherited environment.
+	Clean bool
 }
 
 type Output struct {
@@ -56,7 +60,9 @@ func Run(ctx context.Context, spec Spec) (Output, error) {
 	var outBuf, errBuf bytes.Buffer
 	cmd := exec.CommandContext(ctx, spec.Path, spec.Args...)
 	cmd.Dir, cmd.Stdin = spec.Dir, spec.Stdin
-	if spec.Env != nil {
+	if spec.Clean {
+		cmd.Env = spec.Env
+	} else if spec.Env != nil {
 		cmd.Env = append(os.Environ(), spec.Env...)
 	}
 	cmd.Stdout = io.MultiWriter(&outBuf, writerOrDiscard(spec.Stdout))
