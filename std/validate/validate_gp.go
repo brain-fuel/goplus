@@ -8,7 +8,11 @@ package validate
 import "strings"
 
 // Predicate is first-order index data. Named identifies an atomic proposition;
-// Both is an ordered, collision-free conjunction.
+// Both is an ordered conjunction (∧); Either is an ordered disjunction (∨); and
+// Optional is the nil-guarded refinement "absent, or Inner holds" — the option
+// refinement that a nullable field indexes. Together they close the fragment a
+// data-validation surface needs: conjunction of fields, disjunction of arms,
+// and optionality.
 //
 //goplus:enum Predicate
 //goplus:derive off
@@ -29,17 +33,51 @@ type Both struct {
 
 func (Both) isPredicate() {}
 
-// PredicateAtomID and PredicateBothID form a disjoint, collision-free natural
-// encoding: atoms are even and ordered conjunctions are odd Cantor pairs
-// (multiplied by two to avoid division).
+//goplus:variant (Predicate) Either(Left Predicate, Right Predicate)
+type Either struct {
+	Left  Predicate
+	Right Predicate
+}
+
+func (Either) isPredicate() {}
+
+//goplus:variant (Predicate) Optional(Inner Predicate)
+type Optional struct {
+	Inner Predicate
+}
+
+func (Optional) isPredicate() {}
+
+// predicatePair is a division-free, injective ordering pairing: for a fixed
+// sum s = left+right the term s(s+1) is even and strictly separates successive
+// sums, so adding right in 0..s stays within one non-overlapping band.
+//
+//goplus:total predicatePair(left nat, right nat) nat
+func predicatePair(left int, right int) int {
+	return (left+right)*(left+right+1) + right
+}
+
+// The four constructors occupy disjoint residue classes mod 4, so any two
+// predicates built from different connectives — even over identical operands —
+// carry different erased indices, and injectivity within each class follows
+// from predicatePair (and identity for the unary/atomic forms). Atoms are ≡0,
+// conjunctions ≡1, disjunctions ≡2, and option refinements ≡3.
 //
 //goplus:total PredicateAtomID(id nat) nat
-func PredicateAtomID(id int) int { return id * 2 }
+func PredicateAtomID(id int) int { return id * 4 }
 
 //goplus:total PredicateBothID(left nat, right nat) nat
 func PredicateBothID(left int, right int) int {
-	return ((left+right)*(left+right+1)+right)*2 + 1
+	return predicatePair(left, right)*4 + 1
 }
+
+//goplus:total PredicateEitherID(left nat, right nat) nat
+func PredicateEitherID(left int, right int) int {
+	return predicatePair(left, right)*4 + 2
+}
+
+//goplus:total PredicateOptionalID(inner nat) nat
+func PredicateOptionalID(inner int) int { return inner*4 + 3 }
 
 // Failure describes one failed atomic rule. Path uses dotted Go/JSON field
 // notation and Code/Param retain machine-readable validation semantics.
@@ -264,14 +302,81 @@ func And[T any](left Rule[T], right Rule[T]) Rule[T] {
 	}
 }
 
+// Or forms disjunction: the value satisfies the rule when either side holds.
+// Failures are only surfaced when neither side holds, and then both branches'
+// diagnostics are reported in declaration order so a union rejection explains
+// every alternative it failed — matching how a value must satisfy at least one
+// arm of a sum. This is the ∨ dual of And and the type-level foundation for
+// Optional/Union-style refinements.
+//
+//goplus:dep Or[T any](0 p nat, 0 q nat, left Rule[T, p], right Rule[T, q]) Rule[T, PredicateEitherID(p, q)]
+func Or[T any](left Rule[T], right Rule[T]) Rule[T] {
+	switch __gp_m3 := any(left).(type) {
+	case ruleValue[T]:
+		leftPredicate := __gp_m3.predicate
+		leftRun := __gp_m3.run
+		leftTest := __gp_m3.test
+
+		switch __gp_m4 := any(right).(type) {
+		case ruleValue[T]:
+			rightPredicate := __gp_m4.predicate
+			rightRun := __gp_m4.run
+			rightTest := __gp_m4.test
+
+			run := func(value T, path string, failures Failures) Failures {
+				if leftTest(value) || rightTest(value) {
+					return failures
+				}
+				failures = leftRun(value, path, failures)
+				return rightRun(value, path, failures)
+			}
+			return makeRule(Either{Left: leftPredicate, Right: rightPredicate}, run,
+				func(value T) bool { return leftTest(value) || rightTest(value) })
+		default:
+			panic("goplus: impossible enum value in match")
+		}
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+}
+
+// Nullable lifts an inner rule over an optional pointer: nil satisfies it
+// vacuously, and a present value must satisfy inner. It is a nil-biased
+// disjunction — unlike Or, a present-but-invalid value reports only inner's
+// failures, never a spurious "should be absent" — so it models a nullable
+// field exactly. The result index Optional(inner) is disjoint from the
+// conjunction and disjunction of the same operand, so an optional proof can
+// never be mistaken for a required one.
+//
+//goplus:dep Nullable[V any](0 p nat, inner Rule[V, p]) Rule[*V, PredicateOptionalID(p)]
+func Nullable[V any](inner Rule[V]) Rule[*V] {
+	switch __gp_m5 := any(inner).(type) {
+	case ruleValue[V]:
+		innerPredicate := __gp_m5.predicate
+		innerRun := __gp_m5.run
+		innerTest := __gp_m5.test
+
+		test := func(value *V) bool { return value == nil || innerTest(*value) }
+		run := func(value *V, path string, failures Failures) Failures {
+			if value == nil {
+				return failures
+			}
+			return innerRun(*value, path, failures)
+		}
+		return makeRule(Optional{Inner: innerPredicate}, run, test)
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+}
+
 // Validate executes rule and seals successful values with predicate p.
 //
 //goplus:dep Validate[T any](0 p nat, rule Rule[T, p], value T) Outcome[T, p]
 func Validate[T any](rule Rule[T], value T) Outcome[T] {
-	switch __gp_m3 := any(rule).(type) {
+	switch __gp_m6 := any(rule).(type) {
 	case ruleValue[T]:
-		predicate := __gp_m3.predicate
-		run := __gp_m3.run
+		predicate := __gp_m6.predicate
+		run := __gp_m6.run
 
 		failures := run(value, "", nil)
 		if len(failures) != 0 {
@@ -288,9 +393,9 @@ func Validate[T any](rule Rule[T], value T) Outcome[T] {
 //
 //goplus:dep Check[T any](0 p nat, rule Rule[T, p], value T) Failures
 func Check[T any](rule Rule[T], value T) Failures {
-	switch __gp_m4 := any(rule).(type) {
+	switch __gp_m7 := any(rule).(type) {
 	case ruleValue[T]:
-		run := __gp_m4.run
+		run := __gp_m7.run
 
 		return run(value, "", nil)
 	default:
@@ -303,9 +408,9 @@ func Check[T any](rule Rule[T], value T) Failures {
 //
 //goplus:dep IsValid[T any](0 p nat, rule Rule[T, p], value T) bool
 func IsValid[T any](rule Rule[T], value T) bool {
-	switch __gp_m5 := any(rule).(type) {
+	switch __gp_m8 := any(rule).(type) {
 	case ruleValue[T]:
-		test := __gp_m5.test
+		test := __gp_m8.test
 
 		return test(value)
 	default:
@@ -315,9 +420,9 @@ func IsValid[T any](rule Rule[T], value T) bool {
 
 //goplus:dep Value[T any](0 p nat, value Validated[T, p]) T
 func Value[T any](value Validated[T]) T {
-	switch __gp_m6 := any(value).(type) {
+	switch __gp_m9 := any(value).(type) {
 	case validatedValue[T]:
-		raw := __gp_m6.value
+		raw := __gp_m9.value
 
 		return raw
 	default:
@@ -327,9 +432,9 @@ func Value[T any](value Validated[T]) T {
 
 //goplus:dep PredicateOfRule[T any](0 p nat, rule Rule[T, p]) Predicate
 func PredicateOfRule[T any](rule Rule[T]) Predicate {
-	switch __gp_m7 := any(rule).(type) {
+	switch __gp_m10 := any(rule).(type) {
 	case ruleValue[T]:
-		predicate := __gp_m7.predicate
+		predicate := __gp_m10.predicate
 
 		return predicate
 	default:
@@ -339,9 +444,9 @@ func PredicateOfRule[T any](rule Rule[T]) Predicate {
 
 //goplus:dep PredicateOf[T any](0 p nat, value Validated[T, p]) Predicate
 func PredicateOf[T any](value Validated[T]) Predicate {
-	switch __gp_m8 := any(value).(type) {
+	switch __gp_m11 := any(value).(type) {
 	case validatedValue[T]:
-		predicate := __gp_m8.predicate
+		predicate := __gp_m11.predicate
 
 		return predicate
 	default:
@@ -350,31 +455,75 @@ func PredicateOf[T any](value Validated[T]) Predicate {
 }
 
 func PredicateEqual(left Predicate, right Predicate) bool {
-	switch __gp_m9 := any(left).(type) {
+	switch __gp_m12 := any(left).(type) {
 	case Named:
-		leftID := __gp_m9.ID
+		leftID := __gp_m12.ID
 
-		switch __gp_m10 := any(right).(type) {
+		switch __gp_m13 := any(right).(type) {
 		case Named:
-			rightID := __gp_m10.ID
+			rightID := __gp_m13.ID
 			return leftID == rightID
 		case Both:
+			return false
+		case Either:
+			return false
+		case Optional:
 			return false
 		default:
 			panic("goplus: impossible enum value in match")
 		}
 	case Both:
-		leftA := __gp_m9.Left
-		leftB := __gp_m9.Right
+		leftA := __gp_m12.Left
+		leftB := __gp_m12.Right
 
-		switch __gp_m11 := any(right).(type) {
+		switch __gp_m14 := any(right).(type) {
 		case Named:
 			return false
 		case Both:
-			rightA := __gp_m11.Left
-			rightB := __gp_m11.Right
+			rightA := __gp_m14.Left
+			rightB := __gp_m14.Right
 
 			return PredicateEqual(leftA, rightA) && PredicateEqual(leftB, rightB)
+		case Either:
+			return false
+		case Optional:
+			return false
+		default:
+			panic("goplus: impossible enum value in match")
+		}
+	case Either:
+		leftA := __gp_m12.Left
+		leftB := __gp_m12.Right
+
+		switch __gp_m15 := any(right).(type) {
+		case Named:
+			return false
+		case Both:
+			return false
+		case Either:
+			rightA := __gp_m15.Left
+			rightB := __gp_m15.Right
+
+			return PredicateEqual(leftA, rightA) && PredicateEqual(leftB, rightB)
+		case Optional:
+			return false
+		default:
+			panic("goplus: impossible enum value in match")
+		}
+	case Optional:
+		leftInner := __gp_m12.Inner
+
+		switch __gp_m16 := any(right).(type) {
+		case Named:
+			return false
+		case Both:
+			return false
+		case Either:
+			return false
+		case Optional:
+			rightInner := __gp_m16.Inner
+
+			return PredicateEqual(leftInner, rightInner)
 		default:
 			panic("goplus: impossible enum value in match")
 		}
@@ -402,10 +551,10 @@ func Map[T any](value Validated[T], transform func(T) T) Outcome[T] {
 	if transform == nil {
 		panic("validate: nil transform")
 	}
-	switch __gp_m12 := any(value).(type) {
+	switch __gp_m17 := any(value).(type) {
 	case validatedValue[T]:
-		raw := __gp_m12.value
-		rule := __gp_m12.rule
+		raw := __gp_m17.value
+		rule := __gp_m17.rule
 
 		return Validate(rule, transform(raw))
 	default:
@@ -415,11 +564,11 @@ func Map[T any](value Validated[T], transform func(T) T) Outcome[T] {
 
 //goplus:dep FailuresOf[T any](0 p nat, outcome Outcome[T, p]) Failures
 func FailuresOf[T any](outcome Outcome[T]) Failures {
-	switch __gp_m13 := any(outcome).(type) {
+	switch __gp_m18 := any(outcome).(type) {
 	case Accepted[T]:
 		return nil
 	case Rejected[T]:
-		failures := __gp_m13.Failures
+		failures := __gp_m18.Failures
 		return failures
 	default:
 		panic("goplus: impossible enum value in match")

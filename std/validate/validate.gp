@@ -5,20 +5,39 @@ package validate
 import "strings"
 
 // Predicate is first-order index data. Named identifies an atomic proposition;
-// Both is an ordered, collision-free conjunction.
+// Both is an ordered conjunction (∧); Either is an ordered disjunction (∨); and
+// Optional is the nil-guarded refinement "absent, or Inner holds" — the option
+// refinement that a nullable field indexes. Together they close the fragment a
+// data-validation surface needs: conjunction of fields, disjunction of arms,
+// and optionality.
 //goplus:derive off
 type Predicate enum {
 	Named(ID int)
 	Both(Left Predicate, Right Predicate)
+	Either(Left Predicate, Right Predicate)
+	Optional(Inner Predicate)
 }
 
-// PredicateAtomID and PredicateBothID form a disjoint, collision-free natural
-// encoding: atoms are even and ordered conjunctions are odd Cantor pairs
-// (multiplied by two to avoid division).
-total func PredicateAtomID(id nat) nat { return id*2 }
-total func PredicateBothID(left nat, right nat) nat {
-	return ((left+right)*(left+right+1)+right)*2+1
+// predicatePair is a division-free, injective ordering pairing: for a fixed
+// sum s = left+right the term s(s+1) is even and strictly separates successive
+// sums, so adding right in 0..s stays within one non-overlapping band.
+total func predicatePair(left nat, right nat) nat {
+	return (left+right)*(left+right+1)+right
 }
+
+// The four constructors occupy disjoint residue classes mod 4, so any two
+// predicates built from different connectives — even over identical operands —
+// carry different erased indices, and injectivity within each class follows
+// from predicatePair (and identity for the unary/atomic forms). Atoms are ≡0,
+// conjunctions ≡1, disjunctions ≡2, and option refinements ≡3.
+total func PredicateAtomID(id nat) nat { return id*4 }
+total func PredicateBothID(left nat, right nat) nat {
+	return predicatePair(left, right)*4+1
+}
+total func PredicateEitherID(left nat, right nat) nat {
+	return predicatePair(left, right)*4+2
+}
+total func PredicateOptionalID(inner nat) nat { return inner*4+3 }
 
 // Failure describes one failed atomic rule. Path uses dotted Go/JSON field
 // notation and Code/Param retain machine-readable validation semantics.
@@ -161,6 +180,47 @@ func And[T any](0 p nat, 0 q nat, left Rule[T, p], right Rule[T, q]) Rule[T, Pre
 	}
 }
 
+// Or forms disjunction: the value satisfies the rule when either side holds.
+// Failures are only surfaced when neither side holds, and then both branches'
+// diagnostics are reported in declaration order so a union rejection explains
+// every alternative it failed — matching how a value must satisfy at least one
+// arm of a sum. This is the ∨ dual of And and the type-level foundation for
+// Optional/Union-style refinements.
+func Or[T any](0 p nat, 0 q nat, left Rule[T, p], right Rule[T, q]) Rule[T, PredicateEitherID(p, q)] {
+	match left {
+	case ruleValue(leftPredicate, leftRun, leftTest):
+		match right {
+		case ruleValue(rightPredicate, rightRun, rightTest):
+			run := func(value T, path string, failures Failures) Failures {
+				if leftTest(value) || rightTest(value) { return failures }
+				failures = leftRun(value, path, failures)
+				return rightRun(value, path, failures)
+			}
+			return makeRule(PredicateEitherID(p, q), Either(leftPredicate, rightPredicate), run,
+				func(value T) bool { return leftTest(value) || rightTest(value) })
+		}
+	}
+}
+
+// Nullable lifts an inner rule over an optional pointer: nil satisfies it
+// vacuously, and a present value must satisfy inner. It is a nil-biased
+// disjunction — unlike Or, a present-but-invalid value reports only inner's
+// failures, never a spurious "should be absent" — so it models a nullable
+// field exactly. The result index Optional(inner) is disjoint from the
+// conjunction and disjunction of the same operand, so an optional proof can
+// never be mistaken for a required one.
+func Nullable[V any](0 p nat, inner Rule[V, p]) Rule[*V, PredicateOptionalID(p)] {
+	match inner {
+	case ruleValue(innerPredicate, innerRun, innerTest):
+		test := func(value *V) bool { return value == nil || innerTest(*value) }
+		run := func(value *V, path string, failures Failures) Failures {
+			if value == nil { return failures }
+			return innerRun(*value, path, failures)
+		}
+		return makeRule(PredicateOptionalID(p), Optional(innerPredicate), run, test)
+	}
+}
+
 // Validate executes rule and seals successful values with predicate p.
 func Validate[T any](0 p nat, rule Rule[T, p], value T) Outcome[T, p] {
 	match rule {
@@ -216,12 +276,32 @@ func PredicateEqual(left Predicate, right Predicate) bool {
 		match right {
 		case Named(rightID): return leftID == rightID
 		case Both(_, _): return false
+		case Either(_, _): return false
+		case Optional(_): return false
 		}
 	case Both(leftA, leftB):
 		match right {
 		case Named(_): return false
 		case Both(rightA, rightB):
 			return PredicateEqual(leftA, rightA) && PredicateEqual(leftB, rightB)
+		case Either(_, _): return false
+		case Optional(_): return false
+		}
+	case Either(leftA, leftB):
+		match right {
+		case Named(_): return false
+		case Both(_, _): return false
+		case Either(rightA, rightB):
+			return PredicateEqual(leftA, rightA) && PredicateEqual(leftB, rightB)
+		case Optional(_): return false
+		}
+	case Optional(leftInner):
+		match right {
+		case Named(_): return false
+		case Both(_, _): return false
+		case Either(_, _): return false
+		case Optional(rightInner):
+			return PredicateEqual(leftInner, rightInner)
 		}
 	}
 }
