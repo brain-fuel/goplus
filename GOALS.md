@@ -30,6 +30,38 @@ structured code.
 Counts are rounded snapshots, not ranking scores. The order deliberately moves
 semantic forcing cases above some larger repositories.
 
+## Execution policy
+
+Across the rewrite program, **feature parity and compatibility are the hard
+priorities**. A family is considered complete for release only after it has:
+
+- a pinned-upstream-compatible declaration inventory,
+- compatible and sound behavior on the differential corpus,
+- and generation and interoperability gates at baseline compatibility.
+
+Only after a family is parity-green do we prioritize NFR work on
+throughput and heap-allocation reduction. We keep that work focused on the
+highest-yield workloads and stop it once additional NFR tuning only yields
+diminishing returns or risks semantic/coverage regressions. Exact throughput and
+allocation parity is acceptable as a stop condition for an individual family
+when further optimization is low-yield, while compiler/std-ecosystem improvements
+that materially improve semantics, guarantees, or problem expression quality remain
+in scope.
+
+In practical terms, once a family is parity-green we should first use compiler and
+stdlib constructs to improve encoding quality, semantic clarity, and user-facing
+problem formulation. If those improvements do not unlock material runtime wins, or
+if further micro-optimizing yields only incremental/noisy gains, exact throughput
+and allocation parity is an acceptable release state for that family.
+
+The practical sequence remains:
+`feature parity and compatibility → NFR pass (throughput + allocations) → stable
+termination at material parity or parity-safe exact parity`.
+
+For each family, this means the sequence is:
+feature parity first → NFR pass → release when either both goals are green or
+parity is green and NFR has reached a materially stable point.
+
 ## Goals
 
 ### `/goals/01-decimal` - `shopspring/decimal` -> `std/decimal` (complete)

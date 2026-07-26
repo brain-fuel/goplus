@@ -1,8 +1,24 @@
-# GoForge candidates — Wave 2 (draft for review)
+# GoForge candidates — Wave 2
 
-_Drafted 2026-07-24. **This is a proposal to peruse, not a committed plan.**
-Nothing here is started. Membership, sizing, and ordering are open decisions
-flagged inline for the maintainer._
+_Drafted 2026-07-24. Membership/sizing/ordering below remain proposals except
+where a ledger says otherwise. **Started 2026-07-24: direnv (candidate 1) —
+differential-first foundation landed.**_
+
+## Progress
+
+| # | Project | Module | Status |
+|---:|---|---|---|
+| 1 | [`direnv/direnv`](https://github.com/direnv/direnv) v2.37.1 | `goforge.dev/gpdirenv` | **In progress** — **6 packages at byte-exact parity**, differential + property tested, race/vet/determinism clean: 3 library (`dotenv`, `sri`, `gzenv`) + 3 pure engine cores in Go+ (`env` diff/patch/reverse, `shell` w/ byte-exact `BashEscape` + json/gzenv, `xdg`). Pending: 9 more shells, effectful engine (`rc`/allow-deny, `watches`, `config`), CLI (0/23), stdlib (0/59), `std/config` extension. See [`../direnv/PARITY.md`](../direnv/PARITY.md). |
+| 2–5 | sqlc / go-task / yq / goreleaser | — | Not started (proposals below) |
+
+**Meta-tools leveled up while building direnv (2026-07-25):**
+- **goforge** gained (a) **Go+/`.gp` awareness** — `deps`/boundary/worker-type analysis now scans `.gp` files (tolerant import scanner; prefers generated `_gp.go` when present), so a Go+ brick is no longer invisible; (b) **`goforge check format:json`** — machine-readable diagnostics for CI/agents (the explicit Wave 2 item); (c) a **`goforge gen`** command wrapping `go tool goplus gen ./...`. Verified end-to-end on a scaffolded `.gp` workspace. (Warrants a goforge minor bump at release.)
+- **cupel** became **model-agnostic** — a new `openaichat` component (OpenAI Chat Completions wire format, configurable base URL + key) behind the existing `completer` seam covers **Claude, Codex, ollama, LM Studio, vLLM, and any local or remote OpenAI-compatible endpoint**; provider selection via `provider:`/`CUPEL_PROVIDER`, `base-url:`/`CUPEL_BASE_URL`. Claude path unchanged; all offline-tested via `httptest`. (Warrants a cupel minor bump at release.)
+
+direnv was picked first per the selection thesis: smallest, differential-
+friendly, and the second `std/config` consumer that retires Viper's open Wave 1
+stdlib item. Building the pure cores first establishes the differential harness
+before the CLI and engine land on top.
 
 Wave 2 is drawn from the same ranked audit as Wave 1
 ([`GOFORGE_CANDIDATES.md`](GOFORGE_CANDIDATES.md)). Wave 1 members were ranks
