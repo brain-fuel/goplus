@@ -268,14 +268,16 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table, probe domainPro
 		}
 		indexResolver := goplusCallResolver(pkgPath, f.gp.AST)
 
+		boxed := enumBoxPointer(e)
 		spec := &lower.EnumSpec{
 			Name:        enumName,
 			TParamsSrc:  tparamsSrc,
 			TParamNames: tparamNames,
 			MarkerName:  naming.MarkerMethodName(enumName),
 			EnumMarker:  directive.EnumMarker{Name: enumName, TParams: origTParamsSrc}.String(),
+			BoxPointer:  boxed,
 		}
-		model := &registry.Enum{PkgPath: pkgPath, Name: enumName, TParams: tparamNames, Indices: indices, IsDomain: tagDomains[enumName] != nil}
+		model := &registry.Enum{PkgPath: pkgPath, Name: enumName, TParams: tparamNames, Indices: indices, IsDomain: tagDomains[enumName] != nil, BoxPointer: boxed}
 		ok := true
 
 		for _, v := range e.Variants {
@@ -510,7 +512,7 @@ func planEnums(idx *pkgIndex, pkgPath string, tbl *naming.Table, probe domainPro
 			}
 			spec.Transparent = true
 		}
-		if enumNeedsErasedView(model) {
+		if !boxed && enumNeedsErasedView(model) {
 			spec.ViewName = naming.ErasedViewName(enumName)
 			spec.ViewMethod = naming.ErasedViewMethodName(enumName)
 			if err := tbl.AddGenerated(spec.ViewName, "erased eliminator for enum "+enumName+" at "+idx.fset.Position(e.Spec.Name.Pos()).String()); err != nil {

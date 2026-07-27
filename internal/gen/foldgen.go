@@ -51,6 +51,22 @@ func deriveMode(e *syntax.EnumDecl) (off bool, genOptIn bool, unknown string) {
 	return false, false, ""
 }
 
+// enumBoxPointer reports whether the enum carries //goplus:box pointer.
+// Pointer-boxed enums store variants behind pointers and are consumed via
+// match/type-switch, so they never derive the value-semantic fold, traversal,
+// equal, or erased-view helpers.
+func enumBoxPointer(e *syntax.EnumDecl) bool {
+	if e.Gen == nil || e.Gen.Doc == nil {
+		return false
+	}
+	for _, c := range e.Gen.Doc.List {
+		if arg, ok := directive.ParseBoxMarker(c.Text); ok && arg == "pointer" {
+			return true
+		}
+	}
+	return false
+}
+
 // foldHeadArgs computes the identity-instantiation head arguments for a
 // variant: for each occurring tparam, the enum tparam name at the bare
 // position that binds it. ok=false when some occurring tparam has no bare
@@ -95,6 +111,7 @@ func planFolds(idx *pkgIndex, plan *enumPlan, tbl *naming.Table, shared map[stri
 		spec := plan.specs[e]
 		model := plan.model[e]
 		off, _, unknown := deriveMode(e)
+		off = off || enumBoxPointer(e)
 		if unknown != "" {
 			errs = append(errs, fmt.Errorf("%s: unknown //goplus:derive argument %q; supported arguments: 'off', 'gen'",
 				idx.fset.Position(e.Spec.Pos()), unknown))

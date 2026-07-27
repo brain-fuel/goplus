@@ -174,6 +174,24 @@ func ParseDeriveMarker(line string) (string, bool) {
 	return rest, true
 }
 
+// BoxMarker is the //goplus:box directive on an enum declaration. `pointer`
+// stores variants behind pointers: markers are generated on pointer receivers
+// so only *Variant satisfies the sealed interface, matching the ubiquitous Go
+// pattern of pointer-boxed sum types (mutated in place, avoiding node copies).
+// A `match` over a pointer-boxed enum lowers to `case *Variant:` heads and
+// binds the pointer, so exhaustive match works on such enums.
+const boxPrefix = "//goplus:box"
+
+// ParseBoxMarker parses a //goplus:box line, returning its argument
+// (e.g. "pointer").
+func ParseBoxMarker(line string) (string, bool) {
+	rest, ok := cutDirective(line, boxPrefix)
+	if !ok {
+		return "", false
+	}
+	return strings.TrimSpace(rest), true
+}
+
 // DelegatePrefix marks generated delegation forwarders and pass-1
 // delegate fields (v0.6.0).
 const DelegatePrefix = "//goplus:delegate"

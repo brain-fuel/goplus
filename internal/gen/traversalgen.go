@@ -208,6 +208,7 @@ func planTraversals(idx *pkgIndex, plan *enumPlan, tbl *naming.Table) []error {
 		spec := plan.specs[e]
 		model := plan.model[e]
 		off, _, unknown := deriveMode(e)
+		off = off || enumBoxPointer(e)
 		if off || unknown != "" { // unknown already reported by planFolds
 			continue
 		}

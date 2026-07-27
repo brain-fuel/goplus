@@ -213,6 +213,12 @@ func (r *fileResolver) rpatCaseType(p *rpat, at token.Pos) (string, bool) {
 		}
 		name = alias + "." + name
 	}
+	// A pointer-boxed enum (//goplus:box pointer) is satisfied only by
+	// *Variant, so the lowered type-switch head is `case *Variant:`; the bound
+	// scrutinee then has the pointer type, enabling in-place mutation.
+	if p.col.enum.BoxPointer {
+		name = "*" + name
+	}
 	occ := p.variant.OccursIn(p.col.enum)
 	if len(occ) == 0 {
 		return name, true
@@ -501,7 +507,7 @@ func (r *fileResolver) resolveRPat(node syntax.PatNode, col patCol, topLevel boo
 		return nil, fmt.Sprintf("pattern %s has %d fields but %s declares %d",
 			node.String(), len(node.Args), v.Name, len(v.Params))
 	}
-	if !node.HasArgs && len(v.Params) > 0 {
+	if !node.HasArgs && len(v.Params) > 0 && !col.enum.BoxPointer {
 		return nil, fmt.Sprintf("pattern %s must bind %d fields (or use %s(_%s))",
 			v.Name, len(v.Params), v.Name, strings.Repeat(", _", len(v.Params)-1))
 	}

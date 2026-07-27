@@ -100,12 +100,13 @@ func typeIdentNames(e ast.Expr) []string {
 
 // Enum is a sealed sum type visible to a compilation.
 type Enum struct {
-	PkgPath  string
-	Name     string        // enum (interface) type name
-	TParams  []string      // ERASED type parameter names
-	Indices  []IndexBinder // value-index binders (v0.7.0); nil otherwise
-	IsDomain bool          // usable as a first-order index domain (v0.9.0)
-	Variants []*EnumVariant
+	PkgPath    string
+	Name       string        // enum (interface) type name
+	TParams    []string      // ERASED type parameter names
+	Indices    []IndexBinder // value-index binders (v0.7.0); nil otherwise
+	IsDomain   bool          // usable as a first-order index domain (v0.9.0)
+	BoxPointer bool          // //goplus:box pointer — variants stored behind pointers
+	Variants   []*EnumVariant
 }
 
 // DomainTags returns tag name → arity for a domain enum.
@@ -263,6 +264,14 @@ func EnumsFromPackageMarkers(pkgPath string, files map[string][]byte, extern Ext
 			for _, c := range docLines(gd.Doc) {
 				if m, ok := directive.ParseEnumMarker(c); ok {
 					e := &Enum{PkgPath: pkgPath, Name: m.Name}
+					// The //goplus:box directive is preserved in the same doc
+					// group above the generated interface; read it back so
+					// cross-package consumers know the enum is pointer-boxed.
+					for _, bc := range docLines(gd.Doc) {
+						if arg, ok := directive.ParseBoxMarker(bc); ok && arg == "pointer" {
+							e.BoxPointer = true
+						}
+					}
 					rawTParams[m.Name] = m.TParams
 					declFile[m.Name] = pf.file
 					enums[m.Name] = e

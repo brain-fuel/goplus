@@ -23,6 +23,7 @@ type EnumSpec struct {
 	ViewName      string // erased GADT view helper; empty when every case head is spellable
 	ViewMethod    string // sealed per-variant payload method
 	Transparent   bool   // concrete alias representation for one monomorphic variant
+	BoxPointer    bool   // //goplus:box pointer — markers on pointer receivers
 }
 
 // EnumVariantSpec is one variant ready to render.
@@ -90,8 +91,12 @@ func EnumEdits(f *syntax.File, e *syntax.EnumDecl, spec *EnumSpec) []Edit {
 			}
 			b.WriteString("}\n")
 		}
-		fmt.Fprintf(&b, "\nfunc (%s%s) %s(%s) {}\n",
-			v.TypeName, bracket(strings.Join(v.TParamNames, ", ")), spec.MarkerName, strings.Join(v.MarkerArgs, ", "))
+		markerStar := ""
+		if spec.BoxPointer {
+			markerStar = "*" // only *Variant satisfies the sealed interface
+		}
+		fmt.Fprintf(&b, "\nfunc (%s%s%s) %s(%s) {}\n",
+			markerStar, v.TypeName, bracket(strings.Join(v.TParamNames, ", ")), spec.MarkerName, strings.Join(v.MarkerArgs, ", "))
 		if spec.ViewName != "" {
 			fmt.Fprintf(&b, "\nfunc (v %s%s) %s() (int, []any) {\n",
 				v.TypeName, bracket(strings.Join(v.TParamNames, ", ")), spec.ViewMethod)
