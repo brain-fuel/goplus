@@ -21,6 +21,14 @@ type Seq[T any] struct {
 	seq stditer.Seq[T]
 }
 
+// Indexed pairs a value with its 0-based position in a sequence. It is what
+// Enumerate yields, so the index is available to a following Map / Filter /
+// ForEach without threading a counter through every callback.
+type Indexed[T any] struct {
+	Index int
+	Value T
+}
+
 // Of wraps a standard iterator as a Seq.
 func Of[T any](seq stditer.Seq[T]) Seq[T] {
 	return Seq[T]{seq: seq}
@@ -33,6 +41,27 @@ func FromSlice[T any](s []T) Seq[T] {
 			if !yield(s[i]) {
 				return
 			}
+		}
+	}}
+}
+
+// Enumerate pairs each element with its 0-based index (as in Rust's enumerate or
+// Python's enumerate), so a following Map / Filter / ForEach can use the position
+// without an ad-hoc index parameter on every callback:
+//
+//	iter.Enumerate(s).ForEach(func(it Indexed[T]) { use(it.Index, it.Value) })
+//
+// It is a free function, not a method, because a method on Seq[T] returning
+// Seq[Indexed[T]] is an illegal instantiation cycle in Go's type system — the same
+// constraint that pushes lo-style libraries to bake an int into every callback.
+func Enumerate[T any](s Seq[T]) Seq[Indexed[T]] {
+	return Seq[Indexed[T]]{seq: func(yield func(Indexed[T]) bool) {
+		i := 0
+		for v := range s.seq {
+			if !yield(Indexed[T]{Index: i, Value: v}) {
+				return
+			}
+			i++
 		}
 	}}
 }

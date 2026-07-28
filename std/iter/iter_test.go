@@ -2,6 +2,7 @@ package iter_test
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"testing/quick"
@@ -238,4 +239,41 @@ func TestChunkConcatLaw(t *testing.T) {
 		got := iter.Concat(iter.FromSlice(a), iter.FromSlice(b)).Collect()
 		return intsEqual(got, append(append([]int{}, a...), b...))
 	})
+}
+
+func TestEnumerate(t *testing.T) {
+	// pair each element with its index, then Map the Indexed pairs to strings.
+	// (In generated Go, the type-changing Map is the free function iter.Map; in
+	// Go+ source the same call is the fluent method s.Map(...).)
+	got := iter.Map(
+		iter.Enumerate(iter.FromSlice([]string{"a", "b", "c"})),
+		func(it iter.Indexed[string]) string { return fmt.Sprintf("%d:%s", it.Index, it.Value) },
+	).Collect()
+	want := []string{"0:a", "1:b", "2:c"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Enumerate/Map = %v, want %v", got, want)
+	}
+
+	// Enumerate is lazy: Take(2) must stop the source after 2 pulls
+	pulls := 0
+	src := iter.Of(func(yield func(int) bool) {
+		for i := 0; ; i++ {
+			pulls++
+			if !yield(i * 10) {
+				return
+			}
+		}
+	})
+	pairs := iter.Enumerate(src).Take(2).Collect()
+	if len(pairs) != 2 || pairs[0] != (iter.Indexed[int]{0, 0}) || pairs[1] != (iter.Indexed[int]{1, 10}) {
+		t.Fatalf("Enumerate lazy = %v", pairs)
+	}
+	if pulls != 2 {
+		t.Fatalf("Enumerate over-pulled: %d, want 2", pulls)
+	}
+
+	// empty
+	if n := len(iter.Enumerate(iter.FromSlice([]int{})).Collect()); n != 0 {
+		t.Fatalf("Enumerate empty = %d, want 0", n)
+	}
 }
