@@ -102,11 +102,22 @@ func LowerTailCalls(filename string, src []byte) ([]byte, []TailError) {
 			}
 			replacement := "continue " + label
 			if len(params) > 0 {
-				args := make([]string, len(call.Args))
+				// Build the parameter re-binding, dropping self-assignments
+				// (param i whose argument is textually the same identifier), so
+				// the lowered loop does not emit `x = x` — which `go vet` flags as
+				// a self-assignment.
+				var lhs, rhs []string
 				for i, arg := range call.Args {
-					args[i] = sourceText(src, fset, arg.Pos(), arg.End())
+					argText := sourceText(src, fset, arg.Pos(), arg.End())
+					if strings.TrimSpace(argText) == params[i] {
+						continue
+					}
+					lhs = append(lhs, params[i])
+					rhs = append(rhs, argText)
 				}
-				replacement = "{ " + strings.Join(params, ", ") + " = " + strings.Join(args, ", ") + "; continue " + label + " }"
+				if len(lhs) > 0 {
+					replacement = "{ " + strings.Join(lhs, ", ") + " = " + strings.Join(rhs, ", ") + "; continue " + label + " }"
+				}
 			}
 			edits = append(edits, Edit{Start: offset(fset, call.Pos()), End: offset(fset, call.End()), New: replacement})
 		}
@@ -114,8 +125,13 @@ func LowerTailCalls(filename string, src []byte) ([]byte, []TailError) {
 			return
 		}
 		loopEnd := "\n}\n"
-		if typ.Results == nil || len(typ.Results.List) == 0 {
-			// Preserve ordinary fallthrough for a result-less function.
+		resultless := typ.Results == nil || len(typ.Results.List) == 0
+		// A result-less function may fall through the bottom of its body (recur is
+		// not required on every path). It then needs an explicit `break` to leave
+		// the lowered loop. But when the body is proven to always terminate (return
+		// or recur on every path), that trailing `break` is unreachable — which
+		// `go vet` flags — so omit it.
+		if resultless && !tailBlockTerminates(body, allowed) {
 			loopEnd = "\nbreak\n}\n"
 		}
 		edits = append(edits,
