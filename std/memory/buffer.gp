@@ -11,5 +11,6 @@ func (buffer *Buffer[T]) Append(value T) { buffer.values = append(buffer.values,
 func (buffer Buffer[T]) At(index int) option.Option[T] { if index < 0 || index >= len(buffer.values) { return option.None[T]() }; return option.Some(buffer.values[index]) }
 func (buffer *Buffer[T]) Set(index int, value T) bool { if index < 0 || index >= len(buffer.values) { return false }; buffer.values[index] = value; return true }
 func (buffer *Buffer[T]) Remove(index int) option.Option[T] { if index < 0 || index >= len(buffer.values) { return option.None[T]() }; removed := buffer.values[index]; copy(buffer.values[index:], buffer.values[index+1:]); var zero T; buffer.values[len(buffer.values)-1] = zero; buffer.values = buffer.values[:len(buffer.values)-1]; return option.Some(removed) }
+func (buffer *Buffer[T]) Truncate(length int) bool { if length < 0 || length > len(buffer.values) { return false }; clear(buffer.values[length:]); buffer.values = buffer.values[:length]; return true }
 func (buffer *Buffer[T]) Reset() { clear(buffer.values); buffer.values = buffer.values[:0] }
 func (buffer *Buffer[T]) Release() { clear(buffer.values); buffer.values = nil }

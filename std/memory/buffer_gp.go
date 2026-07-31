@@ -40,5 +40,13 @@ func (buffer *Buffer[T]) Remove(index int) option.Option[T] {
 	buffer.values = buffer.values[:len(buffer.values)-1]
 	return option.Some[T]{Value: removed}
 }
+func (buffer *Buffer[T]) Truncate(length int) bool {
+	if length < 0 || length > len(buffer.values) {
+		return false
+	}
+	clear(buffer.values[length:])
+	buffer.values = buffer.values[:length]
+	return true
+}
 func (buffer *Buffer[T]) Reset()   { clear(buffer.values); buffer.values = buffer.values[:0] }
 func (buffer *Buffer[T]) Release() { clear(buffer.values); buffer.values = nil }

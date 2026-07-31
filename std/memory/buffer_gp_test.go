@@ -75,3 +75,26 @@ func TestBufferResetRetainsAndReleaseDropsCapacity(t *testing.T) {
 		t.Fatalf("release = %d/%d", buffer.Len(), buffer.Cap())
 	}
 }
+
+func TestBufferTruncateClearsTailAndRejectsGrowth(t *testing.T) {
+	buffer := NewBuffer[int](4)
+	buffer.Append(1)
+	buffer.Append(2)
+	if !buffer.Truncate(1) || buffer.Len() != 1 {
+		t.Fatalf("truncate = %d", buffer.Len())
+	}
+	if buffer.Truncate(2) {
+		t.Fatal("truncate grew buffer")
+	}
+	switch __gp_m3 := any(buffer.At(0)).(type) {
+	case option.None[int]:
+		t.Fatal("prefix was removed")
+	case option.Some[int]:
+		value := __gp_m3.Value
+		if value != 1 {
+			t.Fatalf("prefix = %d", value)
+		}
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+}
