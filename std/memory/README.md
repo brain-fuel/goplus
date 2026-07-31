@@ -26,3 +26,10 @@ operation remain invalid even when their spans are reused.
 from and back to `Row2` and `Row3` AoS values. `Reset` clears logical contents
 while retaining capacity for hot-path reuse; `Release` clears and drops the
 backing columns.
+
+## Reusable typed buffers
+
+`Buffer[T]` provides capacity-preserving reset for pointer-bearing runtime
+state. Indexed removal clears the vacated slot before shortening the slice so
+discarded objects stop being GC roots. `Release` clears all elements and drops
+the backing allocation as one ownership group.
