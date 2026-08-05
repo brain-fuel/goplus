@@ -8,8 +8,13 @@ import (
 	"strings"
 )
 
-// Version is the goplus toolchain version.
-const Version = "v0.28.0"
+// Version is the goplus distribution version reported by the CLI and LSP.
+const Version = "v0.141.1"
+
+// Vintage is the generated-source compatibility version. It advances only
+// when generated Go requires a newer language lowering, independently of
+// module distribution releases.
+const Vintage = "v0.28.0"
 
 // Newer reports whether a is a strictly newer release than b. Inputs
 // are "vMAJOR.MINOR.PATCH"; anything unparseable compares as not newer

@@ -19,7 +19,7 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
-## v0.141.0 — Deterministic Java 25+ Target
+## v0.141.1 — Deterministic Java 25+ Target
 
 Go remains the default backend, and `goplus gen`, `build`, `test`, and `run`
 now accept `--target java` for the checked portable subset documented in
@@ -33,7 +33,10 @@ with source-mapped diagnostics rather than silently changing behavior.
 The public `compiler` package exposes independently versioned artifact sets,
 while `goplus.toml` records explicit targets and Java artifact policy. CI runs
 the Java integration suite on JDK 25. The stdlib version line is independent
-and remains `std/v0.210.0`.
+and remains `std/v0.210.0`. The v0.141.1 patch also separates the distribution
+version reported by the CLI and LSP from the generated-source compatibility
+vintage, so installed binaries report the module release accurately without
+forcing an unrelated stdlib regeneration.
 
 ## v0.28.0 — Solver-Driven Representation and Existential Foundations
 
