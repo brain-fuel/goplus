@@ -3,18 +3,18 @@
 package cli
 
 import (
-	"goforge.dev/goplus/internal/lsp"
-	"goforge.dev/goplus/internal/version"
-	"os"
-
 	"fmt"
 	"io"
+	"os"
+
+	"goforge.dev/goplus/internal/lsp"
+	"goforge.dev/goplus/internal/version"
 )
 
 // Version is the goplus toolchain version reported by `goplus version`.
 const Version = version.Version
 
-const usageText = `goplus is the Go+ toolchain: a strict superset of Go that emits portable Go.
+const usageText = `goplus is the Go+ toolchain: a strict superset of Go targeting Go and Java 25+.
 
 Usage:
 
@@ -22,15 +22,18 @@ Usage:
 
 Commands:
 
-	gen      generate Go from .gp files (flags: -check, -stage)
+	gen      generate target sources (flags: -target, -check, -stage)
 	init     scaffold //go:generate wiring for this package (flag: -hook)
 	lsp      speak the Language Server Protocol over stdio
-	build    generate, then run 'go build'
-	test     generate, then run 'go test'
-	run      generate, then run 'go run'
-	vet      generate, then run 'go vet'
+	build    generate and build selected targets
+	test     generate and test selected targets
+	run      generate and run one selected target
+	vet      validate selected targets
 	version  print goplus version
 	help     print this help
+
+Targets default to ["go"], or default_targets in goplus.toml. Use a repeatable
+--target go|java flag to override the configured collection.
 `
 
 // Run executes the goplus CLI and returns its exit code.

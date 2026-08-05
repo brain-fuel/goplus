@@ -1,0 +1,41 @@
+name: Java 25 backend
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  java25:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.x'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Verify toolchains
+        run: |
+          go version
+          javac -version
+      - name: Java backend unit and end-to-end tests
+        run: >-
+          go test -race
+          ./compiler
+          ./internal/artifactio
+          ./internal/cli
+          ./internal/javabackend
+          ./internal/javaclass
+          ./internal/javaffi
+          ./internal/javatool
+          ./internal/projectconfig
+      - name: Vet
+        run: go vet ./...

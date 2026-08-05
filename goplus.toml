@@ -1,0 +1,19 @@
+schema_version = 1
+default_targets = ["go"]
+
+[targets.go]
+
+[targets.java]
+release = 25
+kind = "app"
+source_dir = "gen/java"
+class_dir = ".goplus/build/java/classes"
+jar = "dist/goplus-java.jar"
+runtime_jar = ".goplus/build/java/goplus-runtime-abi1.jar"
+package_prefix = "dev.goforge.goplus"
+module_name = "dev.goforge.goplus"
+main_package = "goforge.dev/goplus/cmd/goplus"
+classpath_files = []
+modulepath_files = []
+bundle = false
+strong_module = false

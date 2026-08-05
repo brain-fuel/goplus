@@ -22,8 +22,9 @@ func Backstop(in *Input, maps map[string]*sourcemap.Map) ([]diag.Diagnostic, err
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
 			packages.NeedImports | packages.NeedDeps | packages.NeedTypes |
 			packages.NeedSyntax | packages.NeedTypesInfo,
-		Dir:     in.Dir,
-		Overlay: in.Texts,
+		Dir:        in.Dir,
+		Overlay:    in.Texts,
+		BuildFlags: in.BuildFlags,
 	}
 	pkgs, err := packages.Load(cfg, in.Patterns...)
 	if err != nil {

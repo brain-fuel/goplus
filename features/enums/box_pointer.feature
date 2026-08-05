@@ -94,7 +94,7 @@ Feature: Pointer-boxed enums
       func main() {}
       """
     When I run goplus with arguments "gen ."
-    Then the exit code is 1
+    Then the exit code is 2
     And stderr contains "non-exhaustive match on Expr: missing Lit"
 
   Scenario: A wildcard arm opts out of exhaustiveness

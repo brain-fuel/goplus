@@ -1,5 +1,6 @@
 # Binaries
 /goplus
 /dist/
+/.goplus/
 
 # Never ignore generated Go — emitted *_gp.go files are committed artifacts.

@@ -278,6 +278,6 @@ Feature: Native tail calls
     And stdout contains "done"
     And the file "main_gp.go" contains:
       """
-      n, value = n-1, value
+      n = n - 1
       """
     And the file "main_gp.go" does not contain "b, n, value ="

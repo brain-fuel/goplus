@@ -31,10 +31,11 @@ import (
 
 // Options configures a generation run.
 type Options struct {
-	Dir      string   // working directory; resolved against pattern paths
-	Patterns []string // go-style package patterns; default ["./..."]
-	Check    bool     // verify only: report stale outputs, write nothing
-	Stage    bool     // after writing, git-add changed/deleted outputs
+	Dir       string   // working directory; resolved against pattern paths
+	Patterns  []string // go-style package patterns; default ["./..."]
+	Check     bool     // verify only: report stale outputs, write nothing
+	Stage     bool     // after writing, git-add changed/deleted outputs
+	BuildTags []string // target-specific tags used by go/packages validation
 
 	// Overlay substitutes in-memory contents for on-disk .gp files
 	// (absolute path → bytes) — the LSP's unsaved buffers.
@@ -79,7 +80,7 @@ func Run(opts Options) (*Result, error) {
 		if es, ok := probeCache[importPath]; ok {
 			return es, es != nil
 		}
-		cfg := &packages.Config{Mode: packages.NeedName | packages.NeedFiles, Dir: opts.Dir}
+		cfg := &packages.Config{Mode: packages.NeedName | packages.NeedFiles, Dir: opts.Dir, BuildFlags: tagBuildFlags(opts.BuildTags)}
 		pkgs, perr := packages.Load(cfg, importPath)
 		if perr != nil || len(pkgs) == 0 {
 			probeCache[importPath] = nil
@@ -191,6 +192,7 @@ func Run(opts Options) (*Result, error) {
 			TotalsByDir:      totalsByDir,
 			DepsByDir:        depsByDir,
 			RefinementsByDir: refinementsByDir,
+			BuildFlags:       tagBuildFlags(opts.BuildTags),
 		}
 		out, err := resolve.Fixpoint(in)
 		if err != nil {

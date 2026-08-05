@@ -9,6 +9,13 @@ import (
 	"strings"
 )
 
+func tagBuildFlags(tags []string) []string {
+	if len(tags) == 0 {
+		return nil
+	}
+	return []string{"-tags=" + strings.Join(tags, ",")}
+}
+
 // expandPatterns resolves go-style package patterns ("./...", ".", "./pkg",
 // "pkg/...") to directories under root, following the go tool's convention
 // of skipping vendor, testdata, and dot/underscore-prefixed directories.

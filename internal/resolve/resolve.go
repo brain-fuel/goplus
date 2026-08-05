@@ -47,6 +47,7 @@ type Input struct {
 	TotalsByDir      map[string][]*registry.Total
 	DepsByDir        map[string][]*registry.DepFn
 	RefinementsByDir map[string][]*registry.Refinement
+	BuildFlags       []string
 }
 
 // Output is the fixpoint result.
@@ -77,9 +78,10 @@ func Fixpoint(in *Input) (*Output, error) {
 			Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
 				packages.NeedImports | packages.NeedDeps | packages.NeedTypes |
 				packages.NeedSyntax | packages.NeedTypesInfo,
-			Dir:     in.Dir,
-			Overlay: texts,
-			Tests:   true, // goplus test sources (foo_test.gp) resolve too
+			Dir:        in.Dir,
+			Overlay:    texts,
+			Tests:      true, // goplus test sources (foo_test.gp) resolve too
+			BuildFlags: in.BuildFlags,
 		}
 		pkgs, err := packages.Load(cfg, in.Patterns...)
 		if err != nil {
