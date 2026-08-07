@@ -41,6 +41,8 @@ minimal command-line-only setups.
 v0.142.3 publishes a new identity to two Central-supported keyservers and
 automatically retries the identical deployment while Central's key cache
 propagates, covering the last first-publication timing edge case.
+v0.142.4 adds byte-exact `strconv.QuoteRune` lowering so diagnostic-producing
+libraries can keep one semantic source across Go and Java targets.
 
 ## v0.141.1 — Deterministic Java 25+ Target
 

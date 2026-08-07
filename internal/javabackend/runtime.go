@@ -680,6 +680,44 @@ public final class GpRuntime {
 		return GpString.fromJava(new String(Character.toChars(rune)));
 	}
 
+	public static GpString quoteRune(long value) {
+		int rune = (int) value;
+		String escaped = switch (rune) {
+			case '\u0007' -> "\\a";
+			case '\b' -> "\\b";
+			case '\f' -> "\\f";
+			case '\n' -> "\\n";
+			case '\r' -> "\\r";
+			case '\t' -> "\\t";
+			case '\u000b' -> "\\v";
+			case '\\' -> "\\\\";
+			case '\'' -> "\\'";
+			default -> printableRune(rune)
+				? new String(Character.toChars(rune))
+				: rune <= 0xffff ? String.format(java.util.Locale.ROOT, "\\u%04x", rune)
+				: String.format(java.util.Locale.ROOT, "\\U%08x", rune);
+		};
+		return GpString.fromJava("'" + escaped + "'");
+	}
+
+	private static boolean printableRune(int rune) {
+		if (rune == 0x20) return true;
+		return switch (Character.getType(rune)) {
+			case Character.UPPERCASE_LETTER, Character.LOWERCASE_LETTER,
+				Character.TITLECASE_LETTER, Character.MODIFIER_LETTER,
+				Character.OTHER_LETTER, Character.NON_SPACING_MARK,
+				Character.COMBINING_SPACING_MARK, Character.ENCLOSING_MARK,
+				Character.DECIMAL_DIGIT_NUMBER, Character.LETTER_NUMBER,
+				Character.OTHER_NUMBER, Character.CONNECTOR_PUNCTUATION,
+				Character.DASH_PUNCTUATION, Character.START_PUNCTUATION,
+				Character.END_PUNCTUATION, Character.INITIAL_QUOTE_PUNCTUATION,
+				Character.FINAL_QUOTE_PUNCTUATION, Character.OTHER_PUNCTUATION,
+				Character.MATH_SYMBOL, Character.CURRENCY_SYMBOL,
+				Character.MODIFIER_SYMBOL, Character.OTHER_SYMBOL -> true;
+			default -> false;
+		};
+	}
+
 	public static GpString stringFromBytes(GpSlice<Integer> values) {
 		byte[] bytes = new byte[values.length()];
 		for (int i = 0; i < bytes.length; i++) bytes[i] = (byte) (int) values.get(i);

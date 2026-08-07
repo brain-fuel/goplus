@@ -799,6 +799,8 @@ func (e *emitter) stdCall(path, name string, raw []ast.Expr) (string, bool) {
 		return "GpString.fromJava(" + args[0] + ".toJava().toUpperCase(java.util.Locale.ROOT))", true
 	case "strconv.Itoa":
 		return "GpString.fromJava(Long.toString(" + args[0] + "))", true
+	case "strconv.QuoteRune":
+		return "GpRuntime.quoteRune(" + args[0] + ")", true
 	}
 	if path == "fmt" || path == "strings" || path == "strconv" {
 		e.unsupported(nil, "standard-library adapter %s.%s is not implemented for Java", path, name)
