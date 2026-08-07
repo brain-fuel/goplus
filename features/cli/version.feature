@@ -5,7 +5,7 @@ Feature: goplus version
   Scenario: Reporting the toolchain version
     When I run goplus with arguments "version"
     Then the exit code is 0
-    And stdout contains "goplus version v0.142.1"
+    And stdout contains "goplus version v0.142.2"
 
   Scenario: Unknown commands fail with usage guidance
     When I run goplus with arguments "frobnicate"

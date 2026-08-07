@@ -39,3 +39,16 @@ func TestLoadCredentialsExpandsEnvironment(t *testing.T) {
 		t.Fatalf("credentials=%+v error=%v", credentials, err)
 	}
 }
+
+func TestLoadCredentialsFromCompactServerDocument(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.xml")
+	settings := `<server><id>${server}</id><username>compact-user</username><password>compact-password</password></server>`
+	if err := os.WriteFile(path, []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MAVEN_SETTINGS", path)
+	credentials, err := LoadCredentials(t.TempDir())
+	if err != nil || credentials.Username != "compact-user" || credentials.Password != "compact-password" {
+		t.Fatalf("credentials=%+v error=%v", credentials, err)
+	}
+}

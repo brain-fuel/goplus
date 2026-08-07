@@ -36,6 +36,8 @@ operation. `goplus publish --target java` discovers Portal tokens in
 first use, publishes its public key, derives signature time from the Git commit
 (or `SOURCE_DATE_EPOCH`), validates every signature locally, uploads, and waits
 until Central reports `PUBLISHED`. No Maven or GPG executable is required.
+v0.142.2 also accepts the compact single-`server` credential document used by
+minimal command-line-only setups.
 
 ## v0.141.1 — Deterministic Java 25+ Target
 

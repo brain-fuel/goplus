@@ -54,6 +54,12 @@ func LoadCredentials(root string) (Credentials, error) {
 		if err := xml.Unmarshal(data, &settings); err != nil {
 			return Credentials{}, fmt.Errorf("reading Maven settings %s: %w", path, err)
 		}
+		if len(settings.Servers) == 0 {
+			var compact mavenServer
+			if err := xml.Unmarshal(data, &compact); err == nil && (compact.Username != "" || compact.Password != "") {
+				settings.Servers = append(settings.Servers, compact)
+			}
+		}
 		server, ok := selectServer(settings.Servers)
 		if !ok {
 			return Credentials{}, fmt.Errorf("Maven settings %s has no Central server credentials", path)
