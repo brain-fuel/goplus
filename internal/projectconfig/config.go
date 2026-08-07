@@ -40,6 +40,29 @@ type Java struct {
 	ModulepathFiles []string
 	Bundle          bool
 	StrongModule    bool
+	Maven           Maven
+}
+
+// Maven is the immutable publication metadata required by Maven Central.
+// Credentials and signing passphrases are deliberately never stored here.
+type Maven struct {
+	GroupID                string
+	ArtifactID             string
+	Version                string
+	Name                   string
+	Description            string
+	URL                    string
+	LicenseName            string
+	LicenseURL             string
+	DeveloperID            string
+	DeveloperName          string
+	DeveloperEmail         string
+	DeveloperURL           string
+	SCMURL                 string
+	SCMConnection          string
+	SCMDeveloperConnection string
+	GPGKey                 string
+	Bundle                 string
 }
 
 // Defaults returns the no-file configuration. Go remains the default target.
@@ -120,7 +143,7 @@ func Parse(path string) (Config, error) {
 			}
 			section = strings.TrimSpace(line[1 : len(line)-1])
 			switch section {
-			case "targets.go", "targets.java":
+			case "targets.go", "targets.java", "targets.java.maven":
 			default:
 				return Config{}, at(abs, lineNo, fmt.Errorf("unknown table %q", section))
 			}
@@ -167,6 +190,10 @@ func Parse(path string) (Config, error) {
 			if err := setJava(&cfg.Java, key, raw); err != nil {
 				return Config{}, at(abs, lineNo, err)
 			}
+		case "targets.java.maven":
+			if err := setMaven(&cfg.Java.Maven, key, raw); err != nil {
+				return Config{}, at(abs, lineNo, err)
+			}
 		}
 	}
 	if err := s.Err(); err != nil {
@@ -179,6 +206,52 @@ func Parse(path string) (Config, error) {
 		return Config{}, fmt.Errorf("%s: %w", abs, err)
 	}
 	return cfg, nil
+}
+
+func setMaven(m *Maven, key, raw string) error {
+	v, err := parseString(raw)
+	if err != nil {
+		return err
+	}
+	switch key {
+	case "group_id":
+		m.GroupID = v
+	case "artifact_id":
+		m.ArtifactID = v
+	case "version":
+		m.Version = v
+	case "name":
+		m.Name = v
+	case "description":
+		m.Description = v
+	case "url":
+		m.URL = v
+	case "license_name":
+		m.LicenseName = v
+	case "license_url":
+		m.LicenseURL = v
+	case "developer_id":
+		m.DeveloperID = v
+	case "developer_name":
+		m.DeveloperName = v
+	case "developer_email":
+		m.DeveloperEmail = v
+	case "developer_url":
+		m.DeveloperURL = v
+	case "scm_url":
+		m.SCMURL = v
+	case "scm_connection":
+		m.SCMConnection = v
+	case "scm_developer_connection":
+		m.SCMDeveloperConnection = v
+	case "gpg_key":
+		m.GPGKey = v
+	case "bundle":
+		m.Bundle = v
+	default:
+		return fmt.Errorf("unknown targets.java.maven key %q", key)
+	}
+	return nil
 }
 
 func setJava(j *Java, key, raw string) error {
@@ -265,6 +338,34 @@ func (c Config) validate() error {
 	if c.Java.Kind != "library" && c.Java.Kind != "app" {
 		return fmt.Errorf("targets.java.kind must be %q or %q", "library", "app")
 	}
+	if m := c.Java.Maven; mavenConfigured(m) {
+		if c.Java.Kind != "library" {
+			return fmt.Errorf("targets.java.maven requires targets.java.kind = %q", "library")
+		}
+		if !c.Java.Bundle {
+			return fmt.Errorf("targets.java.maven requires targets.java.bundle = true")
+		}
+		for _, item := range []struct{ name, value string }{
+			{"group_id", m.GroupID}, {"artifact_id", m.ArtifactID}, {"version", m.Version},
+			{"name", m.Name}, {"description", m.Description}, {"url", m.URL},
+			{"license_name", m.LicenseName}, {"license_url", m.LicenseURL},
+			{"developer_id", m.DeveloperID}, {"developer_name", m.DeveloperName},
+			{"developer_email", m.DeveloperEmail}, {"scm_url", m.SCMURL},
+			{"scm_connection", m.SCMConnection}, {"scm_developer_connection", m.SCMDeveloperConnection},
+		} {
+			if strings.TrimSpace(item.value) == "" {
+				return fmt.Errorf("targets.java.maven.%s must not be empty", item.name)
+			}
+		}
+		if !validMavenPart(m.GroupID, true) || !validMavenPart(m.ArtifactID, false) || !validMavenPart(m.Version, true) {
+			return fmt.Errorf("targets.java.maven coordinates contain unsupported characters")
+		}
+		if m.Bundle != "" {
+			if filepath.IsAbs(m.Bundle) || relativePathOutside(m.Bundle) {
+				return fmt.Errorf("targets.java.maven.bundle must stay within the module root")
+			}
+		}
+	}
 	for _, item := range []struct{ name, value string }{
 		{"package_prefix", c.Java.PackagePrefix},
 		{"module_name", c.Java.ModuleName},
@@ -314,6 +415,28 @@ func (c Config) validate() error {
 		}
 	}
 	return nil
+}
+
+func mavenConfigured(m Maven) bool {
+	return m.GroupID != "" || m.ArtifactID != "" || m.Version != "" || m.Name != "" ||
+		m.Description != "" || m.URL != "" || m.LicenseName != "" || m.LicenseURL != "" ||
+		m.DeveloperID != "" || m.DeveloperName != "" || m.DeveloperEmail != "" || m.DeveloperURL != "" ||
+		m.SCMURL != "" || m.SCMConnection != "" || m.SCMDeveloperConnection != "" || m.GPGKey != "" || m.Bundle != ""
+}
+
+func validMavenPart(value string, dots bool) bool {
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || dots && r == '.' {
+			continue
+		}
+		return false
+	}
+	return value != ""
+}
+
+func relativePathOutside(value string) bool {
+	clean := filepath.Clean(value)
+	return clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator))
 }
 
 func validJavaNamespace(value string) bool {

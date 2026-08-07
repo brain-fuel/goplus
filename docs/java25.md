@@ -33,6 +33,9 @@ go tool goplus test --target java ./...
 
 # Run the configured app; arguments after -- go to main.
 go tool goplus run --target java ./cmd/app -- arg1 arg2
+
+# Build, sign, validate, and upload a library to Maven Central.
+go tool goplus publish --target java --automatic ./...
 ```
 
 `--target` is repeatable for `gen`, `build`, `test`, and `vet`. `run` requires
@@ -72,6 +75,25 @@ classpath_files = ["java/classpath.txt"]
 modulepath_files = ["java/modulepath.txt"]
 bundle = false
 strong_module = false
+
+[targets.java.maven]
+group_id = "com.example"
+artifact_id = "project"
+version = "1.0.0"
+name = "Example Project"
+description = "An example Go+ library for Java 25+"
+url = "https://example.com/project"
+license_name = "MIT License"
+license_url = "https://opensource.org/license/mit"
+developer_id = "example"
+developer_name = "Example Maintainer"
+developer_email = "opensource@example.com"
+developer_url = "https://example.com"
+scm_url = "https://github.com/example/project"
+scm_connection = "scm:git:https://github.com/example/project.git"
+scm_developer_connection = "scm:git:ssh://git@github.com/example/project.git"
+gpg_key = "0123456789ABCDEF"
+bundle = "dist/central/project-1.0.0-bundle.zip"
 ```
 
 Output paths must be relative and remain inside the module root. Each path
@@ -82,6 +104,33 @@ by a build system; checked-in manifests should use relative entries.
 `package_prefix` defaults to the reversed module domain
 (`example.com/acme` becomes `com.example.acme`). `module_name` defaults to that
 package prefix.
+
+## Maven Central publication
+
+Maven Central publication is library-only and currently requires `bundle =
+true`, so the versioned Go+ runtime ABI is included in the primary artifact and
+Java consumers need one dependency. Install `gpg`, publish its public key to a
+keyserver accepted by Central, and keep the private key in the local keyring or
+agent. Set Portal user-token credentials only in the process environment:
+
+```sh
+export MAVEN_CENTRAL_USERNAME='token username'
+export MAVEN_CENTRAL_PASSWORD='token password'
+
+# Creates and internally inspects the complete signed bundle without network I/O.
+goplus publish --target java --bundle-only ./...
+
+# Uploads, waits for validation, and publishes an immutable release.
+goplus publish --target java --automatic ./...
+```
+
+Without `--automatic`, the command stops successfully at `VALIDATED` so the
+deployment can be tested and released in the Central Portal. The publisher
+never reads Maven settings files and never writes credentials or passphrases.
+The source JAR contains the generated Java plus bundled runtime sources. Until
+the emitter carries JavaDoc comments through the complete portable subset, the
+required Javadoc JAR contains a transparent documentation pointer to the
+project URL rather than fabricated API prose.
 
 Generated project sources land under `source_dir`. Runtime ABI sources land
 under `.goplus/build/java/runtime-src`; classes and runtime classes are build
@@ -254,7 +303,7 @@ Diagnosed as unsupported today:
 - automatic `requires` discovery for external dependencies in a strong JPMS
   project module;
 - self-hosting the Go+ compiler, native-image production, and automatic
-  Maven/Gradle dependency resolution.
+  Maven/Gradle dependency resolution (publication itself is supported).
 
 This ledger is intentionally explicit: a successful Go build does not imply a
 successful Java build. Run `goplus gen --target java --check` and the JDK build

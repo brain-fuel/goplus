@@ -4,6 +4,7 @@
 package javaffi
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -80,6 +81,12 @@ type importedType struct {
 }
 
 func prepareFile(path string, src []byte) ([]byte, bool, error) {
+	// Most Go+ files contain no Java FFI imports and may use syntax (enums,
+	// matches, refinements) that go/parser intentionally does not understand.
+	// Leave those files to the Go+ front end instead of reparsing them here.
+	if !bytes.Contains(src, []byte(`"java:type/`)) && !bytes.Contains(src, []byte(`"java:package/`)) {
+		return src, false, nil
+	}
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, path, src, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {

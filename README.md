@@ -19,6 +19,17 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.142.0 — Maven Central Publication
+
+`goplus publish --target java` turns a bundled Java library into a Maven
+repository-layout deployment: the primary JAR, generated Java sources, API
+documentation pointer, required POM provenance, detached OpenPGP signatures,
+MD5/SHA-1 checksums, and a Central Portal upload bundle. Publication uses
+short-lived Portal token credentials from the environment, supports a fully
+validated `--bundle-only` path, and can either stop after Central validation or
+publish automatically with `--automatic`. Coordinates and public metadata are
+explicit in `[targets.java.maven]`; secrets never enter `goplus.toml`.
+
 ## v0.141.1 — Deterministic Java 25+ Target
 
 Go remains the default backend, and `goplus gen`, `build`, `test`, and `run`

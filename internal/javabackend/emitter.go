@@ -175,6 +175,7 @@ func isTestFunction(obj types.Object, name string) bool {
 func (e *emitter) emitFacade(decls []ast.Decl, app bool) []byte {
 	w := newJavaWriter()
 	e.fileHeader(w)
+	w.line("@SuppressWarnings({\"unchecked\", \"cast\"})")
 	w.line("public final class GpPackage {")
 	w.indent++
 	w.line("private GpPackage() {}")
@@ -430,12 +431,36 @@ func (e *emitter) implementedInterfaces(named *types.Named) []string {
 			continue
 		}
 		iface.Complete()
-		if types.Implements(named, iface) || types.Implements(types.NewPointer(named), iface) {
+		if types.Implements(named, iface) || types.Implements(types.NewPointer(named), iface) || methodSetCovers(named, iface) {
 			out = append(out, javaIdent(name, ast.IsExported(name))+typeArgs(other.TypeParams()))
 		}
 	}
 	sort.Strings(out)
 	return compactStrings(out)
+}
+
+func methodSetCovers(named *types.Named, iface *types.Interface) bool {
+	if iface.NumExplicitMethods() == 0 {
+		return false
+	}
+	methods := types.NewMethodSet(named)
+	for i := 0; i < iface.NumExplicitMethods(); i++ {
+		want := iface.ExplicitMethod(i)
+		// This fallback exists for Go+'s sealed, package-private marker methods
+		// after dependent indexes are erased. Never use name-only matching to
+		// claim an ordinary public behavioral interface.
+		if want.Exported() || !strings.HasPrefix(want.Name(), "is") {
+			return false
+		}
+		selection := methods.Lookup(want.Pkg(), want.Name())
+		if selection == nil {
+			return false
+		}
+		// Dependent indexes intentionally disappear before Java generation, so
+		// the ordinary-Go marker signatures may differ only in erased phantom
+		// parameters. Package identity plus the unexported is* name seals them.
+	}
+	return true
 }
 
 func compactStrings(values []string) []string {
@@ -483,7 +508,7 @@ func (e *emitter) emitFunction(w *javaWriter, decl *ast.FuncDecl, static bool, n
 	previousSig := e.currentSig
 	e.currentSig = sig
 	defer func() { e.currentSig = previousSig }()
-	visibility := ast.IsExported(decl.Name.Name)
+	visibility := ast.IsExported(decl.Name.Name) || !static
 	header := e.signature(name, sig, static, visibility)
 	w.line("%s {", header)
 	w.indent++
@@ -541,7 +566,7 @@ func (e *emitter) signature(name string, sig *types.Signature, static, public bo
 	}
 	b.WriteString(result)
 	b.WriteByte(' ')
-	b.WriteString(javaIdent(name, public))
+	b.WriteString(javaIdent(name, ast.IsExported(name)))
 	b.WriteByte('(')
 	var params []string
 	for i := 0; i < sig.Params().Len(); i++ {

@@ -26,6 +26,7 @@ Commands:
 	init     scaffold //go:generate wiring for this package (flag: -hook)
 	lsp      speak the Language Server Protocol over stdio
 	build    generate and build selected targets
+	publish  build and publish a Java library to Maven Central
 	test     generate and test selected targets
 	run      generate and run one selected target
 	vet      validate selected targets
@@ -59,6 +60,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "build", "test", "run", "vet":
 		return runDelegated(cmd, rest, stdout, stderr)
+	case "publish":
+		return runPublish(rest, stdout, stderr)
 	case "version":
 		fmt.Fprintf(stdout, "goplus version %s\n", Version)
 		return 0

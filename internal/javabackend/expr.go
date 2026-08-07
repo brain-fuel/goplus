@@ -271,7 +271,7 @@ func (e *emitter) call(call *ast.CallExpr) string {
 		}
 	}
 	var args []string
-	sig, _ := types.Unalias(e.pkg.TypesInfo.TypeOf(call.Fun)).(*types.Signature)
+	sig, _ := underlyingType(e.pkg.TypesInfo.TypeOf(call.Fun)).(*types.Signature)
 	if sig != nil {
 		args = e.callArguments(call, sig)
 	} else {
@@ -470,6 +470,9 @@ func (e *emitter) conversion(target types.Type, args []ast.Expr) string {
 	}
 	arg := e.expr(args[0])
 	source := e.pkg.TypesInfo.TypeOf(args[0])
+	if basic, ok := types.Unalias(source).(*types.Basic); ok && basic.Kind() == types.UntypedNil {
+		return e.zeroValue(target)
+	}
 	if isStringType(target) {
 		if isStringType(source) {
 			return arg

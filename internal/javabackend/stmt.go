@@ -29,6 +29,14 @@ func (e *emitter) stmt(w *javaWriter, node ast.Stmt) {
 		w.indent--
 		w.line("}")
 	case *ast.ExprStmt:
+		if call, ok := value.X.(*ast.CallExpr); ok {
+			if ident, ok := call.Fun.(*ast.Ident); ok {
+				if builtin, ok := e.pkg.TypesInfo.Uses[ident].(*types.Builtin); ok && builtin.Name() == "panic" && len(call.Args) == 1 {
+					w.line("throw GpRuntime.panicValue(%s);", e.expr(call.Args[0]))
+					return
+				}
+			}
+		}
 		w.line("%s;", e.expr(value.X))
 	case *ast.DeclStmt:
 		e.localDecl(w, value.Decl)
@@ -58,7 +66,7 @@ func (e *emitter) stmt(w *javaWriter, node ast.Stmt) {
 	case *ast.SwitchStmt:
 		e.switchStmt(w, value)
 	case *ast.TypeSwitchStmt:
-		e.unsupported(value, "type switches are not yet in the portable Java subset")
+		e.typeSwitchStmt(w, value)
 	case *ast.SendStmt:
 		w.line("%s.send(%s);", e.expr(value.Chan), e.copyValue(e.expr(value.Value), elementType(e.pkg.TypesInfo.TypeOf(value.Chan))))
 	case *ast.GoStmt:
@@ -72,6 +80,133 @@ func (e *emitter) stmt(w *javaWriter, node ast.Stmt) {
 		e.stmt(w, value.Stmt)
 	default:
 		e.unsupported(node, "Go statement %T is not yet in the portable Java subset", node)
+	}
+}
+
+func (e *emitter) typeSwitchStmt(w *javaWriter, stmt *ast.TypeSwitchStmt) {
+	if stmt.Init != nil {
+		e.stmt(w, stmt.Init)
+	}
+	var asserted ast.Expr
+	var binding *ast.Ident
+	switch assign := stmt.Assign.(type) {
+	case *ast.AssignStmt:
+		if len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+			e.unsupported(stmt, "type-switch binding must have one value")
+			return
+		}
+		binding, _ = assign.Lhs[0].(*ast.Ident)
+		assertion, _ := assign.Rhs[0].(*ast.TypeAssertExpr)
+		if assertion != nil {
+			asserted = assertion.X
+		}
+	case *ast.ExprStmt:
+		assertion, _ := assign.X.(*ast.TypeAssertExpr)
+		if assertion != nil {
+			asserted = assertion.X
+		}
+	}
+	if asserted == nil {
+		e.unsupported(stmt, "invalid type-switch assertion")
+		return
+	}
+	temp := e.nextTemp("typeSwitch")
+	w.line("Object %s = %s;", temp, e.expr(asserted))
+	first := true
+	var defaultClause *ast.CaseClause
+	for _, raw := range stmt.Body.List {
+		clause := raw.(*ast.CaseClause)
+		if len(clause.List) == 0 {
+			defaultClause = clause
+			continue
+		}
+		if len(clause.List) != 1 {
+			e.unsupported(clause, "multi-type switch cases are not yet portable")
+			continue
+		}
+		caseType := clause.List[0]
+		condition := ""
+		decl := ""
+		if ident, ok := caseType.(*ast.Ident); ok && ident.Name == "nil" {
+			condition = temp + " == null"
+		} else {
+			javaType := e.javaType(e.pkg.TypesInfo.TypeOf(caseType), false)
+			condition = temp + " instanceof " + reifiableJavaType(javaType)
+			if binding != nil && binding.Name != "_" {
+				if javaType != reifiableJavaType(javaType) {
+					decl = "@SuppressWarnings(\"unchecked\") "
+				}
+				decl += javaType + " " + javaIdent(binding.Name, false) + " = (" + javaType + ") " + temp + ";"
+			}
+		}
+		if first {
+			w.line("if (%s) {", condition)
+			first = false
+		} else {
+			w.line("else if (%s) {", condition)
+		}
+		w.indent++
+		if decl != "" {
+			w.line("%s", decl)
+		}
+		e.withTypeSwitchBinding(binding, clause, func() {
+			for _, body := range clause.Body {
+				e.stmt(w, body)
+			}
+		})
+		w.indent--
+		w.line("}")
+	}
+	if defaultClause != nil {
+		if first {
+			w.line("{")
+		} else {
+			w.line("else {")
+		}
+		w.indent++
+		if binding != nil && binding.Name != "_" {
+			w.line("Object %s = %s;", javaIdent(binding.Name, false), temp)
+		}
+		e.withTypeSwitchBinding(binding, defaultClause, func() {
+			for _, body := range defaultClause.Body {
+				e.stmt(w, body)
+			}
+		})
+		w.indent--
+		w.line("}")
+	}
+}
+
+func reifiableJavaType(value string) string {
+	start := strings.IndexByte(value, '<')
+	if start < 0 {
+		return value
+	}
+	end := strings.LastIndexByte(value, '>')
+	if end < start {
+		return value[:start]
+	}
+	count := strings.Count(value[start+1:end], ",") + 1
+	return value[:start] + "<" + strings.TrimSuffix(strings.Repeat("?, ", count), ", ") + ">"
+}
+
+func (e *emitter) withTypeSwitchBinding(binding *ast.Ident, clause *ast.CaseClause, emit func()) {
+	if binding == nil {
+		emit()
+		return
+	}
+	obj := e.pkg.TypesInfo.Implicits[clause]
+	if obj == nil {
+		emit()
+		return
+	}
+	old, existed := e.renames[obj]
+	e.renames[obj] = javaIdent(binding.Name, false)
+	emit()
+	if existed {
+		e.renames[obj] = old
+	} else {
+		delete(e.renames, obj)
 	}
 }
 
@@ -238,6 +373,9 @@ func (e *emitter) assignOne(w *javaWriter, lhs ast.Expr, rhs string, tok token.T
 
 func (e *emitter) compound(left, right string, t types.Type, tok token.Token) string {
 	op := strings.TrimSuffix(tok.String(), "=")
+	if tok == token.ADD_ASSIGN && isStringType(t) {
+		return left + ".concat(" + right + ")"
+	}
 	if isUnsigned(t) {
 		switch tok {
 		case token.QUO_ASSIGN:

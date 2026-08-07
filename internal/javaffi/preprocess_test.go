@@ -55,3 +55,14 @@ func use(value List[string]) { _ = value }
 		t.Fatalf("prepared:\n%s", got)
 	}
 }
+
+func TestPrepareLeavesRichGoPlusWithoutJavaImportsToFrontEnd(t *testing.T) {
+	source := []byte("package demo\n\ntype Result[T any] enum { Ok(Value T); Failed(Message string) }\n")
+	got, changed, err := prepareFile("demo.gp", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed || string(got) != string(source) {
+		t.Fatalf("non-FFI Go+ source was rewritten: changed=%v\n%s", changed, got)
+	}
+}

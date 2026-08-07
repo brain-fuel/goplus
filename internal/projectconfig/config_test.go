@@ -37,7 +37,7 @@ default_targets = ["go", "java"]
 
 [targets.java]
 release = 25
-kind = "app"
+kind = "library"
 source_dir = "build/generated/java"
 class_dir = ".goplus/classes"
 jar = "dist/demo.jar"
@@ -49,6 +49,25 @@ classpath_files = ["deps/classpath.txt"]
 modulepath_files = ["deps/modulepath.txt"]
 bundle = true
 strong_module = true
+
+[targets.java.maven]
+group_id = "dev.goforge"
+artifact_id = "demo"
+version = "1.2.3"
+name = "Demo"
+description = "A demo library"
+url = "https://goforge.dev/demo/"
+license_name = "MIT License"
+license_url = "https://opensource.org/license/mit"
+developer_id = "brain-fuel"
+developer_name = "brain-fuel"
+developer_email = "opensource@goforge.dev"
+developer_url = "https://github.com/brain-fuel"
+scm_url = "https://github.com/brain-fuel/demo"
+scm_connection = "scm:git:https://github.com/brain-fuel/demo.git"
+scm_developer_connection = "scm:git:ssh://git@github.com/brain-fuel/demo.git"
+gpg_key = "0123456789ABCDEF"
+bundle = "dist/central/demo-1.2.3.zip"
 `)
 	cfg, err := Parse(path)
 	if err != nil {
@@ -57,8 +76,11 @@ strong_module = true
 	if !reflect.DeepEqual(cfg.DefaultTargets, []string{"go", "java"}) {
 		t.Fatalf("targets = %v", cfg.DefaultTargets)
 	}
-	if cfg.Java.Kind != "app" || cfg.Java.PackagePrefix != "com.example.demo" || !cfg.Java.Bundle || !cfg.Java.StrongModule {
+	if cfg.Java.Kind != "library" || cfg.Java.PackagePrefix != "com.example.demo" || !cfg.Java.Bundle || !cfg.Java.StrongModule {
 		t.Fatalf("Java config = %+v", cfg.Java)
+	}
+	if cfg.Java.Maven.ArtifactID != "demo" || cfg.Java.Maven.Version != "1.2.3" {
+		t.Fatalf("Maven config = %+v", cfg.Java.Maven)
 	}
 }
 

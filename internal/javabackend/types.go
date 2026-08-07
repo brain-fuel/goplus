@@ -224,6 +224,8 @@ func (e *emitter) zeroValue(t types.Type) string {
 		switch named.Underlying().(type) {
 		case *types.Basic, *types.Slice, *types.Array, *types.Map, *types.Chan, *types.Pointer, *types.Signature:
 			return e.zeroValue(named.Underlying())
+		case *types.Interface:
+			return "null"
 		default:
 			return "new " + e.javaType(named, false) + "()"
 		}
