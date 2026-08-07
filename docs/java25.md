@@ -92,7 +92,7 @@ developer_url = "https://example.com"
 scm_url = "https://github.com/example/project"
 scm_connection = "scm:git:https://github.com/example/project.git"
 scm_developer_connection = "scm:git:ssh://git@github.com/example/project.git"
-gpg_key = "0123456789ABCDEF"
+signing_key = "/secure/path/maven-central-private.asc" # optional
 bundle = "dist/central/project-1.0.0-bundle.zip"
 ```
 
@@ -109,24 +109,43 @@ package prefix.
 
 Maven Central publication is library-only and currently requires `bundle =
 true`, so the versioned Go+ runtime ABI is included in the primary artifact and
-Java consumers need one dependency. Install `gpg`, publish its public key to a
-keyserver accepted by Central, and keep the private key in the local keyring or
-agent. Set Portal user-token credentials only in the process environment:
+Java consumers need one dependency. On first publication Go+ creates a 3072-bit
+OpenPGP identity from the configured developer name/email, stores it with mode
+`0600` under the user configuration directory, and publishes only its public
+key to a Central-supported keyserver. `signing_key` or
+`GOPLUS_MAVEN_SIGNING_KEY` can select another persistent location.
+
+Portal user-token credentials are discovered in this order: environment,
+`maven_settings.xml` in the project or workspace root, then
+`~/.m2/settings.xml`. A conventional settings entry is sufficient:
+
+```xml
+<settings><servers><server>
+  <id>central</id>
+  <username>token username</username>
+  <password>token password</password>
+</server></servers></settings>
+```
+
+Environment credentials remain available for CI:
 
 ```sh
 export MAVEN_CENTRAL_USERNAME='token username'
 export MAVEN_CENTRAL_PASSWORD='token password'
 
-# Creates and internally inspects the complete signed bundle without network I/O.
+# Creates and internally inspects the complete signed bundle without uploading.
 goplus publish --target java --bundle-only ./...
 
-# Uploads, waits for validation, and publishes an immutable release.
-goplus publish --target java --automatic ./...
+# Publishes the public signing key, uploads, validates, and publishes.
+goplus publish --target java ./...
 ```
 
-Without `--automatic`, the command stops successfully at `VALIDATED` so the
-deployment can be tested and released in the Central Portal. The publisher
-never reads Maven settings files and never writes credentials or passphrases.
+`--automatic=true` is the default. Set `--automatic=false` to stop successfully
+at `VALIDATED` for manual review. The publisher never copies Portal credentials
+into the project or bundle. Signature creation time comes from
+`SOURCE_DATE_EPOCH`, or otherwise from the current Git commit, and signature
+randomization is disabled for reproducibility: the same artifacts, metadata,
+key, and epoch produce the same bundle bytes.
 The source JAR contains the generated Java plus bundled runtime sources. Until
 the emitter carries JavaDoc comments through the complete portable subset, the
 required Javadoc JAR contains a transparent documentation pointer to the

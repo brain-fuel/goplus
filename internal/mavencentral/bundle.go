@@ -48,6 +48,10 @@ type Signer interface {
 	Sign(context.Context, string) ([]byte, error)
 }
 
+type signatureVerifier interface {
+	Verify(data, signature []byte) error
+}
+
 // GPGSigner signs through a user's configured gpg keyring or agent.
 type GPGSigner struct{ Key string }
 
@@ -124,6 +128,11 @@ func BuildBundle(ctx context.Context, o BundleOptions) (BundleResult, error) {
 			return BundleResult{}, err
 		}
 		files[name+".asc"] = sig
+		if verifier, ok := o.Signer.(signatureVerifier); ok {
+			if err := verifier.Verify(files[name], sig); err != nil {
+				return BundleResult{}, fmt.Errorf("verifying %s signature: %w", name, err)
+			}
+		}
 		m := md5.Sum(files[name])
 		files[name+".md5"] = []byte(hex.EncodeToString(m[:]))
 		s := sha1.Sum(files[name])

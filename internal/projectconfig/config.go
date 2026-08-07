@@ -62,6 +62,7 @@ type Maven struct {
 	SCMConnection          string
 	SCMDeveloperConnection string
 	GPGKey                 string
+	SigningKey             string
 	Bundle                 string
 }
 
@@ -246,6 +247,8 @@ func setMaven(m *Maven, key, raw string) error {
 		m.SCMDeveloperConnection = v
 	case "gpg_key":
 		m.GPGKey = v
+	case "signing_key":
+		m.SigningKey = v
 	case "bundle":
 		m.Bundle = v
 	default:
@@ -421,7 +424,7 @@ func mavenConfigured(m Maven) bool {
 	return m.GroupID != "" || m.ArtifactID != "" || m.Version != "" || m.Name != "" ||
 		m.Description != "" || m.URL != "" || m.LicenseName != "" || m.LicenseURL != "" ||
 		m.DeveloperID != "" || m.DeveloperName != "" || m.DeveloperEmail != "" || m.DeveloperURL != "" ||
-		m.SCMURL != "" || m.SCMConnection != "" || m.SCMDeveloperConnection != "" || m.GPGKey != "" || m.Bundle != ""
+		m.SCMURL != "" || m.SCMConnection != "" || m.SCMDeveloperConnection != "" || m.GPGKey != "" || m.SigningKey != "" || m.Bundle != ""
 }
 
 func validMavenPart(value string, dots bool) bool {

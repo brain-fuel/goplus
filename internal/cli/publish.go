@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,7 +23,7 @@ func runPublish(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	target := fs.String("target", "java", "publication target (java only)")
 	bundleOnly := fs.Bool("bundle-only", false, "build and inspect the signed Central bundle without uploading")
-	automatic := fs.Bool("automatic", false, "publish automatically after Central validation")
+	automatic := fs.Bool("automatic", true, "publish automatically after Central validation")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -69,7 +71,22 @@ func runPublish(args []string, stdout, stderr io.Writer) int {
 	if output == "" {
 		output = filepath.ToSlash(filepath.Join("dist", "central", m.ArtifactID+"-"+m.Version+"-bundle.zip"))
 	}
-	result, err := mavencentral.BuildBundle(context.Background(), mavencentral.BundleOptions{Root: cfg.Root, Jar: cfg.Java.Jar, SourceDir: cfg.Java.SourceDir, RuntimeSourceDir: ".goplus/build/java/runtime-src", Output: output, Signer: mavencentral.GPGSigner{Key: m.GPGKey}, Metadata: mavencentral.Metadata{GroupID: m.GroupID, ArtifactID: m.ArtifactID, Version: m.Version, Name: m.Name, Description: m.Description, URL: m.URL, LicenseName: m.LicenseName, LicenseURL: m.LicenseURL, DeveloperID: m.DeveloperID, DeveloperName: m.DeveloperName, DeveloperEmail: m.DeveloperEmail, DeveloperURL: m.DeveloperURL, SCMURL: m.SCMURL, SCMConnection: m.SCMConnection, SCMDeveloperConnection: m.SCMDeveloperConnection}})
+	epoch, err := publicationEpoch(cfg.Root)
+	if err != nil {
+		fmt.Fprintf(stderr, "goplus publish: %v\n", err)
+		return 1
+	}
+	keyPath := m.SigningKey
+	if keyPath == "" {
+		keyPath = strings.TrimSpace(os.Getenv("GOPLUS_MAVEN_SIGNING_KEY"))
+	}
+	key, err := mavencentral.EnsureSigningKey(keyPath, m.DeveloperName, m.DeveloperEmail, epoch)
+	if err != nil {
+		fmt.Fprintf(stderr, "goplus publish: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "OpenPGP signing key: %s (%s)\n", key.Fingerprint, key.Path)
+	result, err := mavencentral.BuildBundle(context.Background(), mavencentral.BundleOptions{Root: cfg.Root, Jar: cfg.Java.Jar, SourceDir: cfg.Java.SourceDir, RuntimeSourceDir: ".goplus/build/java/runtime-src", Output: output, Signer: key.Signer, Metadata: mavencentral.Metadata{GroupID: m.GroupID, ArtifactID: m.ArtifactID, Version: m.Version, Name: m.Name, Description: m.Description, URL: m.URL, LicenseName: m.LicenseName, LicenseURL: m.LicenseURL, DeveloperID: m.DeveloperID, DeveloperName: m.DeveloperName, DeveloperEmail: m.DeveloperEmail, DeveloperURL: m.DeveloperURL, SCMURL: m.SCMURL, SCMConnection: m.SCMConnection, SCMDeveloperConnection: m.SCMDeveloperConnection}})
 	if err != nil {
 		fmt.Fprintf(stderr, "goplus publish: %v\n", err)
 		return 1
@@ -82,14 +99,22 @@ func runPublish(args []string, stdout, stderr io.Writer) int {
 	if *bundleOnly {
 		return 0
 	}
-	username, password := strings.TrimSpace(os.Getenv("MAVEN_CENTRAL_USERNAME")), strings.TrimSpace(os.Getenv("MAVEN_CENTRAL_PASSWORD"))
-	if username == "" || password == "" {
-		fmt.Fprintln(stderr, "goplus publish: set MAVEN_CENTRAL_USERNAME and MAVEN_CENTRAL_PASSWORD to a Central Portal user token")
+	credentials, err := mavencentral.LoadCredentials(cfg.Root)
+	if err != nil {
+		fmt.Fprintf(stderr, "goplus publish: %v\n", err)
 		return 2
 	}
+	keyContext, keyCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	if err := mavencentral.PublishPublicKey(keyContext, nil, "", key.Fingerprint, key.PublicArmor); err != nil {
+		keyCancel()
+		fmt.Fprintf(stderr, "goplus publish: %v\n", err)
+		return 1
+	}
+	keyCancel()
+	fmt.Fprintln(stdout, "OpenPGP public key: published")
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
-	client := mavencentral.Client{Username: username, Password: password}
+	client := mavencentral.Client{Username: credentials.Username, Password: credentials.Password}
 	id, err := client.Upload(ctx, result.Path, m.GroupID+":"+m.ArtifactID+":"+m.Version, *automatic)
 	if err != nil {
 		fmt.Fprintf(stderr, "goplus publish: %v\n", err)
@@ -109,4 +134,24 @@ func runPublish(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "validated; publish it in Central Portal or rerun with --automatic")
 	}
 	return 0
+}
+
+func publicationEpoch(root string) (time.Time, error) {
+	if raw := strings.TrimSpace(os.Getenv("SOURCE_DATE_EPOCH")); raw != "" {
+		seconds, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || seconds < 0 {
+			return time.Time{}, fmt.Errorf("SOURCE_DATE_EPOCH must be a non-negative Unix timestamp")
+		}
+		return time.Unix(seconds, 0).UTC(), nil
+	}
+	command := exec.Command("git", "-C", root, "log", "-1", "--format=%ct")
+	output, err := command.Output()
+	if err != nil {
+		return time.Time{}, fmt.Errorf("deterministic publication requires SOURCE_DATE_EPOCH or a Git commit: %w", err)
+	}
+	seconds, err := strconv.ParseInt(strings.TrimSpace(string(output)), 10, 64)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("reading Git commit timestamp: %w", err)
+	}
+	return time.Unix(seconds, 0).UTC(), nil
 }

@@ -30,6 +30,13 @@ validated `--bundle-only` path, and can either stop after Central validation or
 publish automatically with `--automatic`. Coordinates and public metadata are
 explicit in `[targets.java.maven]`; secrets never enter `goplus.toml`.
 
+The v0.142.1 patch makes publication a self-contained, reproducible CLI
+operation. `goplus publish --target java` discovers Portal tokens in
+`maven_settings.xml`, creates and persists the publisher's OpenPGP identity on
+first use, publishes its public key, derives signature time from the Git commit
+(or `SOURCE_DATE_EPOCH`), validates every signature locally, uploads, and waits
+until Central reports `PUBLISHED`. No Maven or GPG executable is required.
+
 ## v0.141.1 — Deterministic Java 25+ Target
 
 Go remains the default backend, and `goplus gen`, `build`, `test`, and `run`
