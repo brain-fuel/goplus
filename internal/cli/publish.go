@@ -104,27 +104,42 @@ func runPublish(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "goplus publish: %v\n", err)
 		return 2
 	}
-	keyContext, keyCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	if err := mavencentral.PublishPublicKey(keyContext, nil, "", key.Fingerprint, key.PublicArmor); err != nil {
+	for _, keyserver := range []string{mavencentral.UbuntuKeyserver, mavencentral.OpenPGPKeyserver} {
+		keyContext, keyCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		err := mavencentral.PublishPublicKey(keyContext, nil, keyserver, key.Fingerprint, key.PublicArmor)
 		keyCancel()
-		fmt.Fprintf(stderr, "goplus publish: %v\n", err)
-		return 1
+		if err != nil {
+			fmt.Fprintf(stderr, "goplus publish: %v\n", err)
+			return 1
+		}
 	}
-	keyCancel()
 	fmt.Fprintln(stdout, "OpenPGP public key: published")
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	client := mavencentral.Client{Username: credentials.Username, Password: credentials.Password}
-	id, err := client.Upload(ctx, result.Path, m.GroupID+":"+m.ArtifactID+":"+m.Version, *automatic)
-	if err != nil {
-		fmt.Fprintf(stderr, "goplus publish: %v\n", err)
-		return 1
-	}
-	fmt.Fprintf(stdout, "Central deployment: %s\n", id)
-	deployment, err := client.Wait(ctx, id, 2*time.Second, !*automatic)
-	if err != nil {
-		fmt.Fprintf(stderr, "goplus publish: %v\n", err)
-		return 1
+	var deployment mavencentral.Deployment
+	for attempt := 1; ; attempt++ {
+		id, err := client.Upload(ctx, result.Path, m.GroupID+":"+m.ArtifactID+":"+m.Version, *automatic)
+		if err != nil {
+			fmt.Fprintf(stderr, "goplus publish: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "Central deployment: %s\n", id)
+		deployment, err = client.Wait(ctx, id, 2*time.Second, !*automatic)
+		if err == nil {
+			break
+		}
+		if !strings.Contains(err.Error(), "Could not find a public key") {
+			fmt.Fprintf(stderr, "goplus publish: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "Central has not indexed the new signing key; retrying identical bundle (attempt %d)\n", attempt+1)
+		select {
+		case <-ctx.Done():
+			fmt.Fprintf(stderr, "goplus publish: %v\n", ctx.Err())
+			return 1
+		case <-time.After(time.Minute):
+		}
 	}
 	fmt.Fprintf(stdout, "Central state: %s\n", deployment.DeploymentState)
 	for _, purl := range deployment.PURLs {

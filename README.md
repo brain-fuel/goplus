@@ -38,6 +38,9 @@ first use, publishes its public key, derives signature time from the Git commit
 until Central reports `PUBLISHED`. No Maven or GPG executable is required.
 v0.142.2 also accepts the compact single-`server` credential document used by
 minimal command-line-only setups.
+v0.142.3 publishes a new identity to two Central-supported keyservers and
+automatically retries the identical deployment while Central's key cache
+propagates, covering the last first-publication timing edge case.
 
 ## v0.141.1 — Deterministic Java 25+ Target
 

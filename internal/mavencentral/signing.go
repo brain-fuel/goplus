@@ -20,6 +20,7 @@ import (
 )
 
 const UbuntuKeyserver = "https://keyserver.ubuntu.com"
+const OpenPGPKeyserver = "https://keys.openpgp.org"
 
 // OpenPGPSigner signs deterministically with one persistent publisher key.
 type OpenPGPSigner struct {
