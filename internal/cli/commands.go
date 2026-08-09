@@ -209,6 +209,7 @@ func runJavaCommand(sub, cwd string, cfg projectconfig.Config, args []string, st
 		Root: cfg.Root, Release: cfg.Java.Release,
 		SourceDir: cfg.Java.SourceDir, RuntimeSourceDir: ".goplus/build/java/runtime-src",
 		ClassDir: cfg.Java.ClassDir, Jar: cfg.Java.Jar, RuntimeJar: cfg.Java.RuntimeJar,
+		SourcesJar: cfg.Java.SourcesJar, JavadocJar: cfg.Java.JavadocJar, BuildManifest: cfg.Java.BuildManifest,
 		ModuleName: set.ModuleName, MainClass: set.MainClass,
 		ClasspathFiles: cfg.Java.ClasspathFiles, ModulepathFiles: cfg.Java.ModulepathFiles,
 		StrongModule: cfg.Java.StrongModule, Bundle: cfg.Java.Bundle,

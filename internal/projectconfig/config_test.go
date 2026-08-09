@@ -30,7 +30,7 @@ func TestLoadDefaultsAtModuleBoundary(t *testing.T) {
 func TestParseJavaTarget(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, FileName)
-	write(t, path, `schema_version = 1
+	write(t, path, `schema_version = 2
 default_targets = ["go", "java"]
 
 [targets.go]
@@ -41,6 +41,9 @@ kind = "library"
 source_dir = "build/generated/java"
 class_dir = ".goplus/classes"
 jar = "dist/demo.jar"
+sources_jar = "dist/demo-sources.jar"
+javadoc_jar = "dist/demo-javadoc.jar"
+build_manifest = ".goplus/build/java/publication.json"
 runtime_jar = ".goplus/runtime.jar"
 package_prefix = "com.example.demo"
 module_name = "com.example.demo"
@@ -49,25 +52,6 @@ classpath_files = ["deps/classpath.txt"]
 modulepath_files = ["deps/modulepath.txt"]
 bundle = true
 strong_module = true
-
-[targets.java.maven]
-group_id = "dev.goforge"
-artifact_id = "demo"
-version = "1.2.3"
-name = "Demo"
-description = "A demo library"
-url = "https://goforge.dev/demo/"
-license_name = "MIT License"
-license_url = "https://opensource.org/license/mit"
-developer_id = "brain-fuel"
-developer_name = "brain-fuel"
-developer_email = "opensource@goforge.dev"
-developer_url = "https://github.com/brain-fuel"
-scm_url = "https://github.com/brain-fuel/demo"
-scm_connection = "scm:git:https://github.com/brain-fuel/demo.git"
-scm_developer_connection = "scm:git:ssh://git@github.com/brain-fuel/demo.git"
-gpg_key = "0123456789ABCDEF"
-bundle = "dist/central/demo-1.2.3.zip"
 `)
 	cfg, err := Parse(path)
 	if err != nil {
@@ -79,8 +63,8 @@ bundle = "dist/central/demo-1.2.3.zip"
 	if cfg.Java.Kind != "library" || cfg.Java.PackagePrefix != "com.example.demo" || !cfg.Java.Bundle || !cfg.Java.StrongModule {
 		t.Fatalf("Java config = %+v", cfg.Java)
 	}
-	if cfg.Java.Maven.ArtifactID != "demo" || cfg.Java.Maven.Version != "1.2.3" {
-		t.Fatalf("Maven config = %+v", cfg.Java.Maven)
+	if cfg.Java.SourcesJar != "dist/demo-sources.jar" || cfg.Java.JavadocJar != "dist/demo-javadoc.jar" {
+		t.Fatalf("Java artifact config = %+v", cfg.Java)
 	}
 }
 
@@ -89,14 +73,15 @@ func TestParseRejectsUnknownAndUnsafeOutput(t *testing.T) {
 		body string
 		want string
 	}{
-		"unknown":         {"schema_version = 1\n[targets.java]\njra = \"x\"\n", "unknown targets.java key"},
-		"escape":          {"schema_version = 1\n[targets.java]\njar = \"../x.jar\"\n", "must stay within"},
-		"old":             {"schema_version = 1\n[targets.java]\nrelease = 24\n", "at least 25"},
-		"same jars":       {"schema_version = 1\n[targets.java]\njar = \"same.jar\"\nruntime_jar = \"same.jar\"\n", "must be different"},
-		"jar in classes":  {"schema_version = 1\n[targets.java]\njar = \".goplus/build/java/classes/project.jar\"\n", "jar must not be inside class_dir"},
-		"duplicate key":   {"schema_version = 1\nschema_version = 1\n", "declared twice"},
-		"duplicate table": {"schema_version = 1\n[targets.java]\n[targets.java]\n", "declared twice"},
-		"non toml bool":   {"schema_version = 1\n[targets.java]\nbundle = TRUE\n", "expected boolean"},
+		"unknown":         {"schema_version = 2\n[targets.java]\njra = \"x\"\n", "unknown targets.java key"},
+		"escape":          {"schema_version = 2\n[targets.java]\njar = \"../x.jar\"\n", "must stay within"},
+		"old":             {"schema_version = 2\n[targets.java]\nrelease = 24\n", "at least 25"},
+		"same jars":       {"schema_version = 2\n[targets.java]\njar = \"same.jar\"\nruntime_jar = \"same.jar\"\n", "must be different"},
+		"jar in classes":  {"schema_version = 2\n[targets.java]\njar = \".goplus/build/java/classes/project.jar\"\n", "jar must not be inside class_dir"},
+		"duplicate key":   {"schema_version = 2\nschema_version = 2\n", "declared twice"},
+		"duplicate table": {"schema_version = 2\n[targets.java]\n[targets.java]\n", "declared twice"},
+		"non toml bool":   {"schema_version = 2\n[targets.java]\nbundle = TRUE\n", "expected boolean"},
+		"maven removed":   {"schema_version = 2\n[targets.java.maven]\n", "unknown table"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), FileName)

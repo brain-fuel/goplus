@@ -14,7 +14,7 @@ import (
 func TestGenJavaUsesConfigAndIsCheckable(t *testing.T) {
 	dir := t.TempDir()
 	writeCLIFile(t, filepath.Join(dir, "go.mod"), "module example.com/demo\n\ngo 1.26.0\n")
-	writeCLIFile(t, filepath.Join(dir, "goplus.toml"), `schema_version = 1
+	writeCLIFile(t, filepath.Join(dir, "goplus.toml"), `schema_version = 2
 default_targets = ["java"]
 
 [targets.java]
@@ -54,7 +54,7 @@ func Sum(a, b int) int { return a + b }
 func TestGenTargetOverridesConfiguredDefault(t *testing.T) {
 	dir := t.TempDir()
 	writeCLIFile(t, filepath.Join(dir, "go.mod"), "module example.com/demo\n\ngo 1.26.0\n")
-	writeCLIFile(t, filepath.Join(dir, "goplus.toml"), "schema_version = 1\ndefault_targets = [\"java\"]\n")
+	writeCLIFile(t, filepath.Join(dir, "goplus.toml"), "schema_version = 2\ndefault_targets = [\"java\"]\n")
 	writeCLIFile(t, filepath.Join(dir, "demo.gp"), "package demo\nfunc Value() int { return 1 }\n")
 	withWorkingDirectory(t, dir, func() {
 		var stdout, stderr bytes.Buffer
@@ -111,7 +111,7 @@ func TestJavaBuildRunAndTestCommands(t *testing.T) {
 	}
 	dir := t.TempDir()
 	writeCLIFile(t, filepath.Join(dir, "go.mod"), "module example.com/app\n\ngo 1.26.0\n")
-	writeCLIFile(t, filepath.Join(dir, "goplus.toml"), `schema_version = 1
+	writeCLIFile(t, filepath.Join(dir, "goplus.toml"), `schema_version = 2
 default_targets = ["java"]
 
 [targets.java]

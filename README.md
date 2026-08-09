@@ -19,30 +19,16 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
-## v0.142.0 — Maven Central Publication
+## v0.143.0 — Java artifact production
 
-`goplus publish --target java` turns a bundled Java library into a Maven
-repository-layout deployment: the primary JAR, generated Java sources, API
-documentation pointer, required POM provenance, detached OpenPGP signatures,
-MD5/SHA-1 checksums, and a Central Portal upload bundle. Publication uses
-short-lived Portal token credentials from the environment, supports a fully
-validated `--bundle-only` path, and can either stop after Central validation or
-publish automatically with `--automatic`. Coordinates and public metadata are
-explicit in `[targets.java.maven]`; secrets never enter `goplus.toml`.
+`go tool goplus build --target java ./...` produces the primary JAR, sources
+JAR, standard-doclet Javadoc JAR, and a deterministic
+`goplus.java.build/v2` manifest. Build configuration is schema v2 and contains
+only compiler and unsigned artifact paths; Maven coordinates, credentials,
+signing, POM generation, and network publication belong to assayxport.
 
-The v0.142.1 patch makes publication a self-contained, reproducible CLI
-operation. `goplus publish --target java` discovers Portal tokens in
-`maven_settings.xml`, creates and persists the publisher's OpenPGP identity on
-first use, publishes its public key, derives signature time from the Git commit
-(or `SOURCE_DATE_EPOCH`), validates every signature locally, uploads, and waits
-until Central reports `PUBLISHED`. No Maven or GPG executable is required.
-v0.142.2 also accepts the compact single-`server` credential document used by
-minimal command-line-only setups.
-v0.142.3 publishes a new identity to two Central-supported keyservers and
-automatically retries the identical deployment while Central's key cache
-propagates, covering the last first-publication timing edge case.
-v0.142.4 adds byte-exact `strconv.QuoteRune` lowering so diagnostic-producing
-libraries can keep one semantic source across Go and Java targets.
+Publish with `ax publish` after the matching Go version is publicly available.
+`goplus publish` is retained only as an actionable compatibility error.
 
 ## v0.141.1 — Deterministic Java 25+ Target
 

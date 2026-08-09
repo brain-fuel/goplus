@@ -1,4 +1,4 @@
-schema_version = 1
+schema_version = 2
 default_targets = ["go"]
 
 [targets.go]
@@ -9,6 +9,9 @@ kind = "app"
 source_dir = "gen/java"
 class_dir = ".goplus/build/java/classes"
 jar = "dist/goplus-java.jar"
+sources_jar = "dist/goplus-java-sources.jar"
+javadoc_jar = "dist/goplus-java-javadoc.jar"
+build_manifest = ".goplus/build/java/publication.json"
 runtime_jar = ".goplus/build/java/goplus-runtime-abi1.jar"
 package_prefix = "dev.goforge.goplus"
 module_name = "dev.goforge.goplus"

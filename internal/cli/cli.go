@@ -26,7 +26,7 @@ Commands:
 	init     scaffold //go:generate wiring for this package (flag: -hook)
 	lsp      speak the Language Server Protocol over stdio
 	build    generate and build selected targets
-	publish  build and publish a Java library to Maven Central
+	publish  explain the assayxport publication migration
 	test     generate and test selected targets
 	run      generate and run one selected target
 	vet      validate selected targets

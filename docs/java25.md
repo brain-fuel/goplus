@@ -34,8 +34,8 @@ go tool goplus test --target java ./...
 # Run the configured app; arguments after -- go to main.
 go tool goplus run --target java ./cmd/app -- arg1 arg2
 
-# Build, sign, validate, and upload a library to Maven Central.
-go tool goplus publish --target java --automatic ./...
+# Validate and publish the completed build with assayxport.
+ax publish
 ```
 
 `--target` is repeatable for `gen`, `build`, `test`, and `vet`. `run` requires
@@ -56,7 +56,7 @@ The file is searched upward to the nearest `go.mod`, has a required version,
 and rejects unknown tables and keys.
 
 ```toml
-schema_version = 1
+schema_version = 2
 default_targets = ["go"]
 
 [targets.go]
@@ -67,6 +67,9 @@ kind = "library" # or "app"
 source_dir = "gen/java"
 class_dir = ".goplus/build/java/classes"
 jar = "dist/project.jar"
+sources_jar = "dist/project-sources.jar"
+javadoc_jar = "dist/project-javadoc.jar"
+build_manifest = ".goplus/build/java/publication.json"
 runtime_jar = ".goplus/build/java/goplus-runtime-abi1.jar"
 package_prefix = "com.example.project"
 module_name = "com.example.project"
@@ -75,25 +78,6 @@ classpath_files = ["java/classpath.txt"]
 modulepath_files = ["java/modulepath.txt"]
 bundle = false
 strong_module = false
-
-[targets.java.maven]
-group_id = "com.example"
-artifact_id = "project"
-version = "1.0.0"
-name = "Example Project"
-description = "An example Go+ library for Java 25+"
-url = "https://example.com/project"
-license_name = "MIT License"
-license_url = "https://opensource.org/license/mit"
-developer_id = "example"
-developer_name = "Example Maintainer"
-developer_email = "opensource@example.com"
-developer_url = "https://example.com"
-scm_url = "https://github.com/example/project"
-scm_connection = "scm:git:https://github.com/example/project.git"
-scm_developer_connection = "scm:git:ssh://git@github.com/example/project.git"
-signing_key = "/secure/path/maven-central-private.asc" # optional
-bundle = "dist/central/project-1.0.0-bundle.zip"
 ```
 
 Output paths must be relative and remain inside the module root. Each path
@@ -107,49 +91,12 @@ package prefix.
 
 ## Maven Central publication
 
-Maven Central publication is library-only and currently requires `bundle =
-true`, so the versioned Go+ runtime ABI is included in the primary artifact and
-Java consumers need one dependency. On first publication Go+ creates a 3072-bit
-OpenPGP identity from the configured developer name/email, stores it with mode
-`0600` under the user configuration directory, and publishes only its public
-key to a Central-supported keyserver. `signing_key` or
-`GOPLUS_MAVEN_SIGNING_KEY` can select another persistent location.
-
-Portal user-token credentials are discovered in this order: environment,
-`maven_settings.xml` in the project or workspace root, then
-`~/.m2/settings.xml`. A conventional settings entry is sufficient:
-
-```xml
-<settings><servers><server>
-  <id>central</id>
-  <username>token username</username>
-  <password>token password</password>
-</server></servers></settings>
-```
-
-Environment credentials remain available for CI:
-
-```sh
-export MAVEN_CENTRAL_USERNAME='token username'
-export MAVEN_CENTRAL_PASSWORD='token password'
-
-# Creates and internally inspects the complete signed bundle without uploading.
-goplus publish --target java --bundle-only ./...
-
-# Publishes the public signing key, uploads, validates, and publishes.
-goplus publish --target java ./...
-```
-
-`--automatic=true` is the default. Set `--automatic=false` to stop successfully
-at `VALIDATED` for manual review. The publisher never copies Portal credentials
-into the project or bundle. Signature creation time comes from
-`SOURCE_DATE_EPOCH`, or otherwise from the current Git commit, and signature
-randomization is disabled for reproducibility: the same artifacts, metadata,
-key, and epoch produce the same bundle bytes.
-The source JAR contains the generated Java plus bundled runtime sources. Until
-the emitter carries JavaDoc comments through the complete portable subset, the
-required Javadoc JAR contains a transparent documentation pointer to the
-project URL rather than fabricated API prose.
+Go+ performs no signing, POM generation, credential discovery, or network
+publication. A library build emits unsigned binary, sources, and genuine
+standard-doclet Javadoc JARs plus a deterministic
+`goplus.java.build/v2` manifest. Configure publication in `assayxport.toml`,
+then use `ax publish --prepare` or `ax publish`. The legacy `goplus publish`
+command exits with a migration message.
 
 Generated project sources land under `source_dir`. Runtime ABI sources land
 under `.goplus/build/java/runtime-src`; classes and runtime classes are build

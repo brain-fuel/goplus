@@ -121,3 +121,34 @@ func TestCreateJarDeterministicProperty(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestWriteBuildManifestIsDeterministicAndRelative(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "gen", "Demo.java")
+	output := filepath.Join(root, "dist", "demo.jar")
+	for path, data := range map[string]string{input: "class Demo {}\n", output: "jar"} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	one := filepath.Join(root, ".goplus", "one.json")
+	two := filepath.Join(root, ".goplus", "two.json")
+	tool := Toolchain{Major: 25, Javac: "/absolute/not-recorded/javac"}
+	if err := writeBuildManifest(root, one, tool, []string{input}, []string{output}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeBuildManifest(root, two, tool, []string{input}, []string{output}); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := os.ReadFile(one)
+	b, _ := os.ReadFile(two)
+	if !bytes.Equal(a, b) {
+		t.Fatal("manifest is not deterministic")
+	}
+	if bytes.Contains(a, []byte(root)) || !bytes.Contains(a, []byte(`"schema": "goplus.java.build/v2"`)) {
+		t.Fatalf("manifest contains an absolute path or lacks schema: %s", a)
+	}
+}

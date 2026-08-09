@@ -32,6 +32,9 @@ type Java struct {
 	SourceDir       string
 	ClassDir        string
 	Jar             string
+	SourcesJar      string
+	JavadocJar      string
+	BuildManifest   string
 	RuntimeJar      string
 	PackagePrefix   string
 	ModuleName      string
@@ -40,45 +43,24 @@ type Java struct {
 	ModulepathFiles []string
 	Bundle          bool
 	StrongModule    bool
-	Maven           Maven
-}
-
-// Maven is the immutable publication metadata required by Maven Central.
-// Credentials and signing passphrases are deliberately never stored here.
-type Maven struct {
-	GroupID                string
-	ArtifactID             string
-	Version                string
-	Name                   string
-	Description            string
-	URL                    string
-	LicenseName            string
-	LicenseURL             string
-	DeveloperID            string
-	DeveloperName          string
-	DeveloperEmail         string
-	DeveloperURL           string
-	SCMURL                 string
-	SCMConnection          string
-	SCMDeveloperConnection string
-	GPGKey                 string
-	SigningKey             string
-	Bundle                 string
 }
 
 // Defaults returns the no-file configuration. Go remains the default target.
 func Defaults(root string) Config {
 	return Config{
 		Root:           root,
-		SchemaVersion:  1,
+		SchemaVersion:  2,
 		DefaultTargets: []string{"go"},
 		Java: Java{
-			Release:    25,
-			Kind:       "library",
-			SourceDir:  "gen/java",
-			ClassDir:   ".goplus/build/java/classes",
-			Jar:        "dist/project.jar",
-			RuntimeJar: ".goplus/build/java/goplus-runtime-abi1.jar",
+			Release:       25,
+			Kind:          "library",
+			SourceDir:     "gen/java",
+			ClassDir:      ".goplus/build/java/classes",
+			Jar:           "dist/project.jar",
+			SourcesJar:    "dist/project-sources.jar",
+			JavadocJar:    "dist/project-javadoc.jar",
+			BuildManifest: ".goplus/build/java/publication.json",
+			RuntimeJar:    ".goplus/build/java/goplus-runtime-abi1.jar",
 		},
 	}
 }
@@ -144,7 +126,7 @@ func Parse(path string) (Config, error) {
 			}
 			section = strings.TrimSpace(line[1 : len(line)-1])
 			switch section {
-			case "targets.go", "targets.java", "targets.java.maven":
+			case "targets.go", "targets.java":
 			default:
 				return Config{}, at(abs, lineNo, fmt.Errorf("unknown table %q", section))
 			}
@@ -191,10 +173,6 @@ func Parse(path string) (Config, error) {
 			if err := setJava(&cfg.Java, key, raw); err != nil {
 				return Config{}, at(abs, lineNo, err)
 			}
-		case "targets.java.maven":
-			if err := setMaven(&cfg.Java.Maven, key, raw); err != nil {
-				return Config{}, at(abs, lineNo, err)
-			}
 		}
 	}
 	if err := s.Err(); err != nil {
@@ -207,54 +185,6 @@ func Parse(path string) (Config, error) {
 		return Config{}, fmt.Errorf("%s: %w", abs, err)
 	}
 	return cfg, nil
-}
-
-func setMaven(m *Maven, key, raw string) error {
-	v, err := parseString(raw)
-	if err != nil {
-		return err
-	}
-	switch key {
-	case "group_id":
-		m.GroupID = v
-	case "artifact_id":
-		m.ArtifactID = v
-	case "version":
-		m.Version = v
-	case "name":
-		m.Name = v
-	case "description":
-		m.Description = v
-	case "url":
-		m.URL = v
-	case "license_name":
-		m.LicenseName = v
-	case "license_url":
-		m.LicenseURL = v
-	case "developer_id":
-		m.DeveloperID = v
-	case "developer_name":
-		m.DeveloperName = v
-	case "developer_email":
-		m.DeveloperEmail = v
-	case "developer_url":
-		m.DeveloperURL = v
-	case "scm_url":
-		m.SCMURL = v
-	case "scm_connection":
-		m.SCMConnection = v
-	case "scm_developer_connection":
-		m.SCMDeveloperConnection = v
-	case "gpg_key":
-		m.GPGKey = v
-	case "signing_key":
-		m.SigningKey = v
-	case "bundle":
-		m.Bundle = v
-	default:
-		return fmt.Errorf("unknown targets.java.maven key %q", key)
-	}
-	return nil
 }
 
 func setJava(j *Java, key, raw string) error {
@@ -280,6 +210,18 @@ func setJava(j *Java, key, raw string) error {
 	case "jar":
 		v, err := stringValue()
 		j.Jar = v
+		return err
+	case "sources_jar":
+		v, err := stringValue()
+		j.SourcesJar = v
+		return err
+	case "javadoc_jar":
+		v, err := stringValue()
+		j.JavadocJar = v
+		return err
+	case "build_manifest":
+		v, err := stringValue()
+		j.BuildManifest = v
 		return err
 	case "runtime_jar":
 		v, err := stringValue()
@@ -319,8 +261,8 @@ func setJava(j *Java, key, raw string) error {
 }
 
 func (c Config) validate() error {
-	if c.SchemaVersion != 1 {
-		return fmt.Errorf("unsupported schema_version %d (want 1)", c.SchemaVersion)
+	if c.SchemaVersion != 2 {
+		return fmt.Errorf("unsupported schema_version %d (want 2)", c.SchemaVersion)
 	}
 	if len(c.DefaultTargets) == 0 {
 		return fmt.Errorf("default_targets must not be empty")
@@ -341,34 +283,6 @@ func (c Config) validate() error {
 	if c.Java.Kind != "library" && c.Java.Kind != "app" {
 		return fmt.Errorf("targets.java.kind must be %q or %q", "library", "app")
 	}
-	if m := c.Java.Maven; mavenConfigured(m) {
-		if c.Java.Kind != "library" {
-			return fmt.Errorf("targets.java.maven requires targets.java.kind = %q", "library")
-		}
-		if !c.Java.Bundle {
-			return fmt.Errorf("targets.java.maven requires targets.java.bundle = true")
-		}
-		for _, item := range []struct{ name, value string }{
-			{"group_id", m.GroupID}, {"artifact_id", m.ArtifactID}, {"version", m.Version},
-			{"name", m.Name}, {"description", m.Description}, {"url", m.URL},
-			{"license_name", m.LicenseName}, {"license_url", m.LicenseURL},
-			{"developer_id", m.DeveloperID}, {"developer_name", m.DeveloperName},
-			{"developer_email", m.DeveloperEmail}, {"scm_url", m.SCMURL},
-			{"scm_connection", m.SCMConnection}, {"scm_developer_connection", m.SCMDeveloperConnection},
-		} {
-			if strings.TrimSpace(item.value) == "" {
-				return fmt.Errorf("targets.java.maven.%s must not be empty", item.name)
-			}
-		}
-		if !validMavenPart(m.GroupID, true) || !validMavenPart(m.ArtifactID, false) || !validMavenPart(m.Version, true) {
-			return fmt.Errorf("targets.java.maven coordinates contain unsupported characters")
-		}
-		if m.Bundle != "" {
-			if filepath.IsAbs(m.Bundle) || relativePathOutside(m.Bundle) {
-				return fmt.Errorf("targets.java.maven.bundle must stay within the module root")
-			}
-		}
-	}
 	for _, item := range []struct{ name, value string }{
 		{"package_prefix", c.Java.PackagePrefix},
 		{"module_name", c.Java.ModuleName},
@@ -384,6 +298,9 @@ func (c Config) validate() error {
 		{"source_dir", c.Java.SourceDir},
 		{"class_dir", c.Java.ClassDir},
 		{"jar", c.Java.Jar},
+		{"sources_jar", c.Java.SourcesJar},
+		{"javadoc_jar", c.Java.JavadocJar},
+		{"build_manifest", c.Java.BuildManifest},
 		{"runtime_jar", c.Java.RuntimeJar},
 	} {
 		if item.value == "" {
@@ -418,28 +335,6 @@ func (c Config) validate() error {
 		}
 	}
 	return nil
-}
-
-func mavenConfigured(m Maven) bool {
-	return m.GroupID != "" || m.ArtifactID != "" || m.Version != "" || m.Name != "" ||
-		m.Description != "" || m.URL != "" || m.LicenseName != "" || m.LicenseURL != "" ||
-		m.DeveloperID != "" || m.DeveloperName != "" || m.DeveloperEmail != "" || m.DeveloperURL != "" ||
-		m.SCMURL != "" || m.SCMConnection != "" || m.SCMDeveloperConnection != "" || m.GPGKey != "" || m.SigningKey != "" || m.Bundle != ""
-}
-
-func validMavenPart(value string, dots bool) bool {
-	for _, r := range value {
-		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || dots && r == '.' {
-			continue
-		}
-		return false
-	}
-	return value != ""
-}
-
-func relativePathOutside(value string) bool {
-	clean := filepath.Clean(value)
-	return clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator))
 }
 
 func validJavaNamespace(value string) bool {

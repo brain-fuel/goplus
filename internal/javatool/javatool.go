@@ -6,6 +6,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -27,6 +30,9 @@ type Config struct {
 	RuntimeSourceDir string
 	ClassDir         string
 	Jar              string
+	SourcesJar       string
+	JavadocJar       string
+	BuildManifest    string
 	RuntimeJar       string
 	ModuleName       string
 	MainClass        string
@@ -38,20 +44,24 @@ type Config struct {
 
 // Toolchain is a verified JDK installation.
 type Toolchain struct {
-	Javac string
-	Java  string
-	Major int
+	Javac   string
+	Java    string
+	Javadoc string
+	Major   int
 }
 
 // BuildResult names the deterministic jars and resolved runtime classpath.
 type BuildResult struct {
-	Jar          string
-	RuntimeJar   string
-	MainClass    string
-	ModuleName   string
-	StrongModule bool
-	Classpath    []string
-	Modulepath   []string
+	Jar           string
+	SourcesJar    string
+	JavadocJar    string
+	BuildManifest string
+	RuntimeJar    string
+	MainClass     string
+	ModuleName    string
+	StrongModule  bool
+	Classpath     []string
+	Modulepath    []string
 }
 
 // Resolve finds and verifies a JDK new enough for release. GOPLUS_JAVA_HOME is
@@ -97,7 +107,11 @@ func Resolve(ctx context.Context, release int) (Toolchain, error) {
 		if _, err := os.Stat(java); err != nil {
 			continue
 		}
-		return Toolchain{Javac: javac, Java: java, Major: major}, nil
+		javadoc := filepath.Join(filepath.Dir(javac), executable("javadoc"))
+		if _, err := os.Stat(javadoc); err != nil {
+			continue
+		}
+		return Toolchain{Javac: javac, Java: java, Javadoc: javadoc, Major: major}, nil
 	}
 	detail := "none found"
 	if len(found) > 0 {
@@ -133,6 +147,18 @@ func Build(ctx context.Context, tool Toolchain, cfg Config, stdout, stderr io.Wr
 		return BuildResult{}, err
 	}
 	jarPath, err := inside(root, cfg.Jar)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	sourcesJar, err := inside(root, cfg.SourcesJar)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	javadocJar, err := inside(root, cfg.JavadocJar)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	buildManifest, err := inside(root, cfg.BuildManifest)
 	if err != nil {
 		return BuildResult{}, err
 	}
@@ -226,15 +252,109 @@ func Build(ctx context.Context, tool Toolchain, cfg Config, stdout, stderr io.Wr
 	if err := createJar(jarPath, cfg.ModuleName, cfg.MainClass, trees, nil); err != nil {
 		return BuildResult{}, err
 	}
+	sourceTrees := []jarTree{{Root: sourceDir}}
+	if cfg.Bundle {
+		sourceTrees = append(sourceTrees, jarTree{Root: runtimeSourceDir, Skip: map[string]bool{"module-info.java": true}})
+	}
+	if err := createJar(sourcesJar, "", "", sourceTrees, nil); err != nil {
+		return BuildResult{}, err
+	}
+	docDir := filepath.Join(filepath.Dir(classDir), "javadoc")
+	if err := ensureOwnedBuildDir(root, docDir); err != nil {
+		return BuildResult{}, err
+	}
+	if err := cleanDir(docDir); err != nil {
+		return BuildResult{}, err
+	}
+	docSources := projectSources
+	docClasspath := append([]string{}, compileClasspath...)
+	if cfg.Bundle {
+		docSources = append(append([]string{}, projectSources...), withoutModuleInfo(runtimeSources)...)
+	}
+	if err := runJavadoc(ctx, tool, cfg.Release, docDir, docClasspath, compileModulepath, docSources, stdout, stderr); err != nil {
+		return BuildResult{}, fmt.Errorf("documenting Go+ Java module: %w", err)
+	}
+	if err := createJar(javadocJar, "", "", []jarTree{{Root: docDir}}, nil); err != nil {
+		return BuildResult{}, err
+	}
+	if err := writeBuildManifest(root, buildManifest, tool, append(append([]string{}, projectSources...), runtimeSources...), []string{jarPath, sourcesJar, javadocJar}); err != nil {
+		return BuildResult{}, err
+	}
 	resultRuntimeJar := runtimeJar
 	if cfg.Bundle {
 		resultRuntimeJar = ""
 	}
 	return BuildResult{
-		Jar: jarPath, RuntimeJar: resultRuntimeJar, MainClass: cfg.MainClass,
+		Jar: jarPath, SourcesJar: sourcesJar, JavadocJar: javadocJar, BuildManifest: buildManifest,
+		RuntimeJar: resultRuntimeJar, MainClass: cfg.MainClass,
 		ModuleName: cfg.ModuleName, StrongModule: cfg.StrongModule,
 		Classpath: classpath, Modulepath: modulepath,
 	}, nil
+}
+
+func runJavadoc(ctx context.Context, tool Toolchain, release int, output string, classpath, modulepath, sources []string, stdout, stderr io.Writer) error {
+	args := []string{"--release", strconv.Itoa(release), "-encoding", "UTF-8", "-notimestamp", "-Xdoclint:all,-missing", "-d", output}
+	if len(classpath) > 0 {
+		args = append(args, "--class-path", strings.Join(classpath, string(os.PathListSeparator)))
+	}
+	if len(modulepath) > 0 {
+		args = append(args, "--module-path", strings.Join(modulepath, string(os.PathListSeparator)))
+	}
+	args = append(args, sources...)
+	cmd := exec.CommandContext(ctx, tool.Javadoc, args...)
+	cmd.Env, cmd.Stdout, cmd.Stderr = cleanJDKEnvironment(os.Environ()), stdout, stderr
+	return cmd.Run()
+}
+
+type publicationManifest struct {
+	Schema          string           `json:"schema"`
+	InputTreeSHA256 string           `json:"input_tree_sha256"`
+	JDK             string           `json:"jdk"`
+	Outputs         []manifestOutput `json:"outputs"`
+}
+type manifestOutput struct {
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+}
+
+func writeBuildManifest(root, path string, tool Toolchain, inputs, outputs []string) error {
+	sort.Strings(inputs)
+	h := sha256.New()
+	for _, input := range inputs {
+		rel, err := filepath.Rel(root, input)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(input)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(h, "%s\x00%d\x00", filepath.ToSlash(rel), len(data))
+		_, _ = h.Write(data)
+	}
+	m := publicationManifest{Schema: "goplus.java.build/v2", InputTreeSHA256: hex.EncodeToString(h.Sum(nil)), JDK: fmt.Sprintf("jdk-%d", tool.Major)}
+	for _, output := range outputs {
+		data, err := os.ReadFile(output)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, output)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(data)
+		m.Outputs = append(m.Outputs, manifestOutput{Path: filepath.ToSlash(rel), SHA256: hex.EncodeToString(sum[:])})
+	}
+	sort.Slice(m.Outputs, func(i, j int) bool { return m.Outputs[i].Path < m.Outputs[j].Path })
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
 }
 
 func withoutModuleInfo(paths []string) []string {
