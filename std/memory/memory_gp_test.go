@@ -4,44 +4,101 @@
 package memory
 
 import (
+	"math"
 	"testing"
 	"testing/quick"
 
 	"goforge.dev/goplus/std/result"
 )
 
+func TestOmittedPoliciesUseSecurePlatformDefaults(t *testing.T) {
+	var arena *Arena
+	switch __gp_m0 := any(New(Config{Capacity: 32})).(type) {
+	case result.Err[*Arena, Failure]:
+		failure := __gp_m0.Err
+		t.Fatal(failure)
+	case result.Ok[*Arena, Failure]:
+		created := __gp_m0.Value
+		arena = created
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+	handle := requireAllocation(t, arena, 8, 8)
+	switch __gp_m1 := any(arena.Delete(handle)).(type) {
+	case result.Err[Mutation, Failure]:
+		failure := __gp_m1.Err
+		t.Fatal(failure)
+	case result.Ok[Mutation, Failure]:
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+	switch __gp_m2 := any(arena.Close()).(type) {
+	case result.Err[Mutation, Failure]:
+		failure := __gp_m2.Err
+		t.Fatal(failure)
+	case result.Ok[Mutation, Failure]:
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+}
+
+func TestAllocationAlignmentNeverOverflowsProperty(t *testing.T) {
+	law := func(raw uint8) bool {
+		arena := requireArena(t)
+		defer arena.Close()
+		requireAllocation(t, arena, int(raw%16)+1, 1)
+		switch __gp_m3 := any(arena.Allocate(1, math.MaxInt/2+1)).(type) {
+		case result.Err[Handle, Failure]:
+			failure := __gp_m3.Err
+			switch any(failure).(type) {
+			case CapacityExhausted:
+				return true
+			default:
+				return false
+			}
+		case result.Ok[Handle, Failure]:
+			return false
+		default:
+			panic("goplus: impossible enum value in match")
+		}
+	}
+	if err := quick.Check(law, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGenerationInvalidatesHandles(t *testing.T) {
 	arena := requireArena(t)
 	defer arena.Close()
 	var handle Handle
-	switch __gp_m0 := any(arena.Allocate(16, 8)).(type) {
+	switch __gp_m5 := any(arena.Allocate(16, 8)).(type) {
 	case result.Ok[Handle, Failure]:
-		allocated := __gp_m0.Value
+		allocated := __gp_m5.Value
 
 		handle = allocated
 	case result.Err[Handle, Failure]:
-		failure := __gp_m0.Err
+		failure := __gp_m5.Err
 
 		t.Fatal(failure)
 	default:
 		panic("goplus: impossible enum value in match")
 	}
-	switch __gp_m1 := any(arena.Reset()).(type) {
+	switch __gp_m6 := any(arena.Reset()).(type) {
 	case result.Ok[Mutation, Failure]:
 
 	case result.Err[Mutation, Failure]:
-		failure := __gp_m1.Err
+		failure := __gp_m6.Err
 
 		t.Fatal(failure)
 	default:
 		panic("goplus: impossible enum value in match")
 	}
-	switch __gp_m2 := any(arena.Bytes(handle)).(type) {
+	switch __gp_m7 := any(arena.Bytes(handle)).(type) {
 	case result.Ok[[]byte, Failure]:
 
 		t.Fatal("expired handle was accepted")
 	case result.Err[[]byte, Failure]:
-		failure := __gp_m2.Err
+		failure := __gp_m7.Err
 
 		switch any(failure).(type) {
 		case InvalidHandle:
@@ -60,45 +117,45 @@ func TestRollbackPreservesEarlierAllocations(t *testing.T) {
 	defer arena.Close()
 	first := requireAllocation(t, arena, 8, 8)
 	var point Checkpoint
-	switch __gp_m4 := any(arena.Checkpoint()).(type) {
+	switch __gp_m9 := any(arena.Checkpoint()).(type) {
 	case result.Ok[Checkpoint, Failure]:
-		checkpoint := __gp_m4.Value
+		checkpoint := __gp_m9.Value
 
 		point = checkpoint
 	case result.Err[Checkpoint, Failure]:
-		failure := __gp_m4.Err
+		failure := __gp_m9.Err
 
 		t.Fatal(failure)
 	default:
 		panic("goplus: impossible enum value in match")
 	}
 	later := requireAllocation(t, arena, 8, 8)
-	switch __gp_m5 := any(arena.Rollback(point)).(type) {
+	switch __gp_m10 := any(arena.Rollback(point)).(type) {
 	case result.Ok[Mutation, Failure]:
 
 	case result.Err[Mutation, Failure]:
-		failure := __gp_m5.Err
+		failure := __gp_m10.Err
 
 		t.Fatal(failure)
 	default:
 		panic("goplus: impossible enum value in match")
 	}
-	switch __gp_m6 := any(arena.Bytes(first)).(type) {
+	switch __gp_m11 := any(arena.Bytes(first)).(type) {
 	case result.Ok[[]byte, Failure]:
 
 	case result.Err[[]byte, Failure]:
-		failure := __gp_m6.Err
+		failure := __gp_m11.Err
 
 		t.Fatalf("earlier allocation expired: %v", failure)
 	default:
 		panic("goplus: impossible enum value in match")
 	}
-	switch __gp_m7 := any(arena.Bytes(later)).(type) {
+	switch __gp_m12 := any(arena.Bytes(later)).(type) {
 	case result.Ok[[]byte, Failure]:
 
 		t.Fatal("rolled-back handle survived")
 	case result.Err[[]byte, Failure]:
-		failure := __gp_m7.Err
+		failure := __gp_m12.Err
 
 		switch any(failure).(type) {
 		case InvalidHandle:
@@ -116,11 +173,11 @@ func TestDeleteReuseNeverRevivesHandle(t *testing.T) {
 	arena := requireArena(t)
 	defer arena.Close()
 	old := requireAllocation(t, arena, 64, 16)
-	switch __gp_m9 := any(arena.Delete(old)).(type) {
+	switch __gp_m14 := any(arena.Delete(old)).(type) {
 	case result.Ok[Mutation, Failure]:
 
 	case result.Err[Mutation, Failure]:
-		failure := __gp_m9.Err
+		failure := __gp_m14.Err
 
 		t.Fatal(failure)
 	default:
@@ -130,12 +187,12 @@ func TestDeleteReuseNeverRevivesHandle(t *testing.T) {
 	if old.offset != fresh.offset {
 		t.Fatalf("allocation was not reused: old=%d fresh=%d", old.offset, fresh.offset)
 	}
-	switch __gp_m10 := any(arena.Bytes(old)).(type) {
+	switch __gp_m15 := any(arena.Bytes(old)).(type) {
 	case result.Ok[[]byte, Failure]:
 
 		t.Fatal("deleted handle revived")
 	case result.Err[[]byte, Failure]:
-		failure := __gp_m10.Err
+		failure := __gp_m15.Err
 
 		switch any(failure).(type) {
 		case InvalidHandle:
@@ -149,24 +206,109 @@ func TestDeleteReuseNeverRevivesHandle(t *testing.T) {
 	}
 }
 
+func TestStatsTrackLiveAllocationsAcrossLifecycle(t *testing.T) {
+	arena := requireArena(t)
+	assertStats := func(used int, live int) {
+		stats := arena.Stats()
+		if stats.Used != used || stats.Allocations != live {
+			t.Fatalf("stats mismatch: used=%d allocations=%d; want used=%d allocations=%d", stats.Used, stats.Allocations, used, live)
+		}
+	}
+	assertStats(0, 0)
+	first := requireAllocation(t, arena, 8, 8)
+	assertStats(8, 1)
+	var point Checkpoint
+	switch __gp_m17 := any(arena.Checkpoint()).(type) {
+	case result.Ok[Checkpoint, Failure]:
+		checkpoint := __gp_m17.Value
+
+		point = checkpoint
+	case result.Err[Checkpoint, Failure]:
+		failure := __gp_m17.Err
+
+		t.Fatal(failure)
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+	second := requireAllocation(t, arena, 13, 1)
+	third := requireAllocation(t, arena, 21, 1)
+	assertStats(42, 3)
+	switch __gp_m18 := any(arena.Delete(second)).(type) {
+	case result.Ok[Mutation, Failure]:
+
+	case result.Err[Mutation, Failure]:
+		failure := __gp_m18.Err
+
+		t.Fatal(failure)
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+	assertStats(29, 2)
+	switch __gp_m19 := any(arena.Rollback(point)).(type) {
+	case result.Ok[Mutation, Failure]:
+
+	case result.Err[Mutation, Failure]:
+		failure := __gp_m19.Err
+
+		t.Fatal(failure)
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+	assertStats(8, 1)
+	switch __gp_m20 := any(arena.Delete(first)).(type) {
+	case result.Ok[Mutation, Failure]:
+
+	case result.Err[Mutation, Failure]:
+		failure := __gp_m20.Err
+
+		t.Fatal(failure)
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+	assertStats(0, 0)
+	switch __gp_m21 := any(arena.Reset()).(type) {
+	case result.Ok[Mutation, Failure]:
+
+	case result.Err[Mutation, Failure]:
+		failure := __gp_m21.Err
+
+		t.Fatal(failure)
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+	assertStats(0, 0)
+	switch __gp_m22 := any(arena.Close()).(type) {
+	case result.Ok[Mutation, Failure]:
+
+	case result.Err[Mutation, Failure]:
+		failure := __gp_m22.Err
+
+		t.Fatal(failure)
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+	assertStats(0, 0)
+	_ = third
+}
+
 func TestAlignedAllocationsProperty(t *testing.T) {
 	property := func(rawSize uint16, exponent uint8) bool {
 		size := int(rawSize%128) + 1
 		alignment := 1 << (exponent % 6)
-		switch __gp_m12 := any(New(Config{Capacity: 4096, Zero: ZeroOnRelease{}})).(type) {
+		switch __gp_m23 := any(New(Config{Capacity: 4096, Zero: ZeroOnRelease{}})).(type) {
 		case result.Err[*Arena, Failure]:
 
 			return false
 		case result.Ok[*Arena, Failure]:
-			arena := __gp_m12.Value
+			arena := __gp_m23.Value
 
 			defer arena.Close()
-			switch __gp_m13 := any(arena.Allocate(size, alignment)).(type) {
+			switch __gp_m24 := any(arena.Allocate(size, alignment)).(type) {
 			case result.Err[Handle, Failure]:
 
 				return false
 			case result.Ok[Handle, Failure]:
-				handle := __gp_m13.Value
+				handle := __gp_m24.Value
 
 				return handle.offset%alignment == 0
 			default:
@@ -176,9 +318,9 @@ func TestAlignedAllocationsProperty(t *testing.T) {
 			panic("goplus: impossible enum value in match")
 		}
 	}
-	switch __gp_m14 := any(result.Of(true, quick.Check(property, nil))).(type) {
+	switch __gp_m25 := any(result.Of(true, quick.Check(property, nil))).(type) {
 	case result.Err[bool, error]:
-		cause := __gp_m14.Err
+		cause := __gp_m25.Err
 		t.Fatal(cause)
 	case result.Ok[bool, error]:
 
@@ -187,14 +329,50 @@ func TestAlignedAllocationsProperty(t *testing.T) {
 	}
 }
 
-func requireArena(t *testing.T) *Arena {
-	switch __gp_m15 := any(New(Config{Capacity: 4096, Zero: ZeroOnRelease{}})).(type) {
+func TestManagedStoragePreservesArenaSemantics(t *testing.T) {
+	switch __gp_m26 := any(New(Config{Capacity: 64, Zero: ZeroOnRelease{}, Storage: ManagedStorage{}})).(type) {
+	case result.Err[*Arena, Failure]:
+		failure := __gp_m26.Err
+		t.Fatal(failure)
 	case result.Ok[*Arena, Failure]:
-		arena := __gp_m15.Value
+		arena := __gp_m26.Value
+
+		switch __gp_m27 := any(arena.Allocate(16, 8)).(type) {
+		case result.Err[Handle, Failure]:
+			failure := __gp_m27.Err
+			t.Fatal(failure)
+		case result.Ok[Handle, Failure]:
+			handle := __gp_m27.Value
+			if handle.Len() != 16 {
+				t.Fatalf("length = %d", handle.Len())
+			}
+		default:
+			panic("goplus: impossible enum value in match")
+		}
+		switch __gp_m28 := any(arena.Close()).(type) {
+		case result.Err[Mutation, Failure]:
+			failure := __gp_m28.Err
+			t.Fatal(failure)
+		case result.Ok[Mutation, Failure]:
+		default:
+			panic("goplus: impossible enum value in match")
+		}
+		if !arena.Stats().Closed {
+			t.Fatal("managed arena remained open")
+		}
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+}
+
+func requireArena(t *testing.T) *Arena {
+	switch __gp_m29 := any(New(Config{Capacity: 4096, Zero: ZeroOnRelease{}})).(type) {
+	case result.Ok[*Arena, Failure]:
+		arena := __gp_m29.Value
 
 		return arena
 	case result.Err[*Arena, Failure]:
-		failure := __gp_m15.Err
+		failure := __gp_m29.Err
 
 		t.Fatal(failure)
 		return nil
@@ -204,13 +382,13 @@ func requireArena(t *testing.T) *Arena {
 }
 
 func requireAllocation(t *testing.T, arena *Arena, size int, alignment int) Handle {
-	switch __gp_m16 := any(arena.Allocate(size, alignment)).(type) {
+	switch __gp_m30 := any(arena.Allocate(size, alignment)).(type) {
 	case result.Ok[Handle, Failure]:
-		handle := __gp_m16.Value
+		handle := __gp_m30.Value
 
 		return handle
 	case result.Err[Handle, Failure]:
-		failure := __gp_m16.Err
+		failure := __gp_m30.Err
 
 		t.Fatal(failure)
 		return Handle{}

@@ -98,6 +98,83 @@ func ZeroPolicyEqual(a, b ZeroPolicy) bool {
 	return ZeroPolicyEqualWith(a, b, ZeroPolicyEqOverrides{})
 }
 
+//goplus:enum StoragePolicy
+type StoragePolicy interface{ isStoragePolicy() }
+
+//goplus:variant (StoragePolicy) PlatformStorage()
+type PlatformStorage struct{}
+
+func (PlatformStorage) isStoragePolicy() {}
+
+//goplus:variant (StoragePolicy) ManagedStorage()
+type ManagedStorage struct{}
+
+func (ManagedStorage) isStoragePolicy() {}
+
+// StoragePolicyCases selects one handler per StoragePolicy variant for StoragePolicyFold.
+type StoragePolicyCases[R any] struct {
+	PlatformStorage func() R
+	ManagedStorage  func() R
+}
+
+// StoragePolicyFold reduces StoragePolicy by one-level case analysis.
+func StoragePolicyFold[R any](s StoragePolicy, cs StoragePolicyCases[R]) R {
+	switch any(s).(type) {
+	case PlatformStorage:
+		return cs.PlatformStorage()
+	case ManagedStorage:
+		return cs.ManagedStorage()
+	default:
+		panic("goplus: impossible enum value in StoragePolicyFold")
+	}
+}
+
+// StoragePolicyEqOverrides carries optional per-variant hooks for StoragePolicyEqualWith.
+// A hook returning handled=false falls through to the derived comparison.
+type StoragePolicyEqOverrides struct {
+	PlatformStorage func(x, y PlatformStorage) (eq, handled bool)
+	ManagedStorage  func(x, y ManagedStorage) (eq, handled bool)
+}
+
+// StoragePolicyEqualWith reports structural equality of a and b under ov.
+func StoragePolicyEqualWith(a, b StoragePolicy, ov StoragePolicyEqOverrides) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	switch x := any(a).(type) {
+	case PlatformStorage:
+		y, ok := any(b).(PlatformStorage)
+		if !ok {
+			return false
+		}
+		if ov.PlatformStorage != nil {
+			if eq, handled := ov.PlatformStorage(x, y); handled {
+				return eq
+			}
+		}
+		_ = y
+		return true
+	case ManagedStorage:
+		y, ok := any(b).(ManagedStorage)
+		if !ok {
+			return false
+		}
+		if ov.ManagedStorage != nil {
+			if eq, handled := ov.ManagedStorage(x, y); handled {
+				return eq
+			}
+		}
+		_ = y
+		return true
+	}
+	return false
+}
+
+// StoragePolicyEqual reports structural equality of a and b.
+func StoragePolicyEqual(a, b StoragePolicy) bool {
+	return StoragePolicyEqualWith(a, b, StoragePolicyEqOverrides{})
+}
+
 //goplus:enum Failure
 type Failure interface{ isFailure() }
 
@@ -318,6 +395,10 @@ func FailureEqual(a, b Failure) bool {
 
 //goplus:method (Failure) Error
 func Error(failure Failure) string {
+	return failureMessage(failure)
+}
+
+func failureMessage(failure Failure) string {
 	switch __gp_m0 := any(failure).(type) {
 	case ArenaClosed:
 
@@ -353,6 +434,10 @@ func Error(failure Failure) string {
 
 //goplus:method (Failure) Unwrap
 func Unwrap(failure Failure) error {
+	return failureCause(failure)
+}
+
+func failureCause(failure Failure) error {
 	switch __gp_m1 := any(failure).(type) {
 	case PlatformFailure:
 		cause := __gp_m1.Cause
@@ -423,6 +508,7 @@ func MutationEqual(a, b Mutation) bool {
 type Config struct {
 	Capacity int
 	Zero     ZeroPolicy
+	Storage  StoragePolicy
 }
 
 type Handle struct {
@@ -472,8 +558,10 @@ type Arena struct {
 	nextID      uint64
 	generation  uint64
 	used        int
+	live        int
 	peak        int
 	zero        ZeroPolicy
+	managed     bool
 	closed      bool
 }
 
@@ -483,25 +571,42 @@ func New(config Config) result.Result[*Arena, Failure] {
 	if config.Capacity <= 0 {
 		return result.Err[*Arena, Failure]{Err: InvalidConfiguration{Message: "capacity must be positive"}}
 	}
-	switch __gp_m2 := any(result.Of(platformAllocate(config.Capacity))).(type) {
-	case result.Ok[[]byte, error]:
-		storage := __gp_m2.Value
+	if config.Zero == nil {
+		config.Zero = ZeroOnRelease{}
+	}
+	if config.Storage == nil {
+		config.Storage = PlatformStorage{}
+	}
+	if config.Storage != nil {
+		switch any(config.Storage).(type) {
+		case ManagedStorage:
 
-		return result.Ok[*Arena, Failure]{Value: &Arena{
-			id:          nextArenaID.Add(1),
-			storage:     storage,
-			allocations: map[uint64]allocation{},
-			nextID:      1,
-			generation:  1,
-			zero:        config.Zero,
-		}}
+			return newArena(config, make([]byte, config.Capacity), true)
+		case PlatformStorage:
+
+		default:
+			panic("goplus: impossible enum value in match")
+		}
+	}
+	switch __gp_m3 := any(result.Of(platformAllocate(config.Capacity))).(type) {
+	case result.Ok[[]byte, error]:
+		storage := __gp_m3.Value
+
+		return newArena(config, storage, false)
 	case result.Err[[]byte, error]:
-		cause := __gp_m2.Err
+		cause := __gp_m3.Err
 
 		return result.Err[*Arena, Failure]{Err: PlatformFailure{Cause: cause}}
 	default:
 		panic("goplus: impossible enum value in match")
 	}
+}
+
+func newArena(config Config, storage []byte, managed bool) result.Result[*Arena, Failure] {
+	return result.Ok[*Arena, Failure]{Value: &Arena{
+		id: nextArenaID.Add(1), storage: storage, allocations: map[uint64]allocation{},
+		nextID: 1, generation: 1, zero: config.Zero, managed: managed,
+	}}
 }
 
 func (arena *Arena) Allocate(size int, alignment int) result.Result[Handle, Failure] {
@@ -520,15 +625,25 @@ func (arena *Arena) Allocate(size int, alignment int) result.Result[Handle, Fail
 		size = 1
 	}
 	offset := 0
-	switch __gp_m3 := any(arena.takeFree(size, alignment)).(type) {
+	switch __gp_m4 := any(arena.takeFree(size, alignment)).(type) {
 	case option.Some[int]:
-		found := __gp_m3.Value
+		found := __gp_m4.Value
 
 		offset = found
 	case option.None[int]:
 
-		offset = alignUp(arena.cursor, alignment)
-		if offset > len(arena.storage) || size > len(arena.storage)-offset {
+		switch __gp_m5 := any(alignWithin(arena.cursor, alignment, len(arena.storage))).(type) {
+		case option.None[int]:
+
+			return result.Err[Handle, Failure]{Err: CapacityExhausted{}}
+		case option.Some[int]:
+			aligned := __gp_m5.Value
+
+			offset = aligned
+		default:
+			panic("goplus: impossible enum value in match")
+		}
+		if size > len(arena.storage)-offset {
 			return result.Err[Handle, Failure]{Err: CapacityExhausted{}}
 		}
 		arena.cursor = offset + size
@@ -540,6 +655,7 @@ func (arena *Arena) Allocate(size int, alignment int) result.Result[Handle, Fail
 	arena.allocations[id] = allocation{offset: offset, length: size, alive: true}
 	arena.order = append(arena.order, id)
 	arena.used += size
+	arena.live++
 	if arena.used > arena.peak {
 		arena.peak = arena.used
 	}
@@ -554,13 +670,13 @@ func (arena *Arena) Allocate(size int, alignment int) result.Result[Handle, Fail
 func (arena *Arena) Write(handle Handle, at int, source []byte) result.Result[Mutation, Failure] {
 	arena.mu.Lock()
 	defer arena.mu.Unlock()
-	switch __gp_m4 := any(arena.resolve(handle)).(type) {
+	switch __gp_m6 := any(arena.resolve(handle)).(type) {
 	case result.Err[allocation, Failure]:
-		failure := __gp_m4.Err
+		failure := __gp_m6.Err
 
 		return result.Err[Mutation, Failure]{Err: failure}
 	case result.Ok[allocation, Failure]:
-		current := __gp_m4.Value
+		current := __gp_m6.Value
 
 		if at < 0 || at > current.length || len(source) > current.length-at {
 			return result.Err[Mutation, Failure]{Err: BoundsViolation{Operation: "write"}}
@@ -575,13 +691,13 @@ func (arena *Arena) Write(handle Handle, at int, source []byte) result.Result[Mu
 func (arena *Arena) Read(handle Handle, at int, destination []byte) result.Result[Mutation, Failure] {
 	arena.mu.Lock()
 	defer arena.mu.Unlock()
-	switch __gp_m5 := any(arena.resolve(handle)).(type) {
+	switch __gp_m7 := any(arena.resolve(handle)).(type) {
 	case result.Err[allocation, Failure]:
-		failure := __gp_m5.Err
+		failure := __gp_m7.Err
 
 		return result.Err[Mutation, Failure]{Err: failure}
 	case result.Ok[allocation, Failure]:
-		current := __gp_m5.Value
+		current := __gp_m7.Value
 
 		if at < 0 || at > current.length || len(destination) > current.length-at {
 			return result.Err[Mutation, Failure]{Err: BoundsViolation{Operation: "read"}}
@@ -596,13 +712,13 @@ func (arena *Arena) Read(handle Handle, at int, destination []byte) result.Resul
 func (arena *Arena) Bytes(handle Handle) result.Result[[]byte, Failure] {
 	arena.mu.Lock()
 	defer arena.mu.Unlock()
-	switch __gp_m6 := any(arena.resolve(handle)).(type) {
+	switch __gp_m8 := any(arena.resolve(handle)).(type) {
 	case result.Err[allocation, Failure]:
-		failure := __gp_m6.Err
+		failure := __gp_m8.Err
 
 		return result.Err[[]byte, Failure]{Err: failure}
 	case result.Ok[allocation, Failure]:
-		current := __gp_m6.Value
+		current := __gp_m8.Value
 
 		out := make([]byte, current.length)
 		copy(out, arena.storage[current.offset:current.offset+current.length])
@@ -615,13 +731,13 @@ func (arena *Arena) Bytes(handle Handle) result.Result[[]byte, Failure] {
 func (arena *Arena) Zero(handle Handle) result.Result[Mutation, Failure] {
 	arena.mu.Lock()
 	defer arena.mu.Unlock()
-	switch __gp_m7 := any(arena.resolve(handle)).(type) {
+	switch __gp_m9 := any(arena.resolve(handle)).(type) {
 	case result.Err[allocation, Failure]:
-		failure := __gp_m7.Err
+		failure := __gp_m9.Err
 
 		return result.Err[Mutation, Failure]{Err: failure}
 	case result.Ok[allocation, Failure]:
-		current := __gp_m7.Value
+		current := __gp_m9.Value
 
 		clear(arena.storage[current.offset : current.offset+current.length])
 		return result.Ok[Mutation, Failure]{Value: Applied{}}
@@ -633,13 +749,13 @@ func (arena *Arena) Zero(handle Handle) result.Result[Mutation, Failure] {
 func (arena *Arena) Delete(handle Handle) result.Result[Mutation, Failure] {
 	arena.mu.Lock()
 	defer arena.mu.Unlock()
-	switch __gp_m8 := any(arena.resolve(handle)).(type) {
+	switch __gp_m10 := any(arena.resolve(handle)).(type) {
 	case result.Err[allocation, Failure]:
-		failure := __gp_m8.Err
+		failure := __gp_m10.Err
 
 		return result.Err[Mutation, Failure]{Err: failure}
 	case result.Ok[allocation, Failure]:
-		current := __gp_m8.Value
+		current := __gp_m10.Value
 
 		arena.release(handle.id, current)
 		arena.coalesce()
@@ -677,9 +793,9 @@ func (arena *Arena) Rollback(checkpoint Checkpoint) result.Result[Mutation, Fail
 	for _, id := range arena.order[checkpoint.order:] {
 		current, present := arena.allocations[id]
 		currentOption := option.Of(current, present)
-		switch __gp_m9 := any(currentOption).(type) {
+		switch __gp_m11 := any(currentOption).(type) {
 		case option.Some[allocation]:
-			current := __gp_m9.Value
+			current := __gp_m11.Value
 
 			if current.alive {
 				arena.release(id, current)
@@ -709,6 +825,7 @@ func (arena *Arena) Reset() result.Result[Mutation, Failure] {
 	arena.allocations = map[uint64]allocation{}
 	arena.order = nil
 	arena.used = 0
+	arena.live = 0
 	arena.generation++
 	return result.Ok[Mutation, Failure]{Value: Applied{}}
 }
@@ -720,7 +837,7 @@ func (arena *Arena) Stats() Stats {
 		Capacity:    len(arena.storage),
 		Used:        arena.used,
 		Peak:        arena.peak,
-		Allocations: arena.liveAllocations(),
+		Allocations: arena.live,
 		Generation:  arena.generation,
 		Closed:      arena.closed,
 	}
@@ -735,20 +852,24 @@ func (arena *Arena) Close() result.Result[Mutation, Failure] {
 	if zeroesReleased(arena.zero) {
 		clear(arena.storage)
 	}
-	release := result.Of(struct{}{}, platformRelease(arena.storage))
+	var release result.Result[struct{}, error] = result.Ok[struct{}, error]{Value: struct{}{}}
+	if !arena.managed {
+		release = result.Of(struct{}{}, platformRelease(arena.storage))
+	}
 	arena.storage = nil
 	arena.free = nil
 	arena.allocations = nil
 	arena.order = nil
 	arena.used = 0
+	arena.live = 0
 	arena.closed = true
 	arena.generation++
-	switch __gp_m10 := any(release).(type) {
+	switch __gp_m12 := any(release).(type) {
 	case result.Ok[struct{}, error]:
 
 		return result.Ok[Mutation, Failure]{Value: Applied{}}
 	case result.Err[struct{}, error]:
-		cause := __gp_m10.Err
+		cause := __gp_m12.Err
 
 		return result.Err[Mutation, Failure]{Err: PlatformFailure{Cause: cause}}
 	default:
@@ -765,12 +886,12 @@ func (arena *Arena) resolve(handle Handle) result.Result[allocation, Failure] {
 	}
 	current, present := arena.allocations[handle.id]
 	currentOption := option.Of(current, present)
-	switch __gp_m11 := any(currentOption).(type) {
+	switch __gp_m13 := any(currentOption).(type) {
 	case option.None[allocation]:
 
 		return result.Err[allocation, Failure]{Err: InvalidHandle{}}
 	case option.Some[allocation]:
-		current := __gp_m11.Value
+		current := __gp_m13.Value
 
 		if !current.alive ||
 			current.offset != handle.offset ||
@@ -791,16 +912,28 @@ func (arena *Arena) release(id uint64, current allocation) {
 	arena.allocations[id] = current
 	arena.free = append(arena.free, span{offset: current.offset, length: current.length})
 	arena.used -= current.length
+	arena.live--
 }
 
 func (arena *Arena) takeFree(size int, alignment int) option.Option[int] {
 	for index, candidate := range arena.free {
-		offset := alignUp(candidate.offset, alignment)
-		end := offset + size
 		candidateEnd := candidate.offset + candidate.length
-		if end > candidateEnd {
+		offset := 0
+		switch __gp_m14 := any(alignWithin(candidate.offset, alignment, candidateEnd)).(type) {
+		case option.None[int]:
+
+			continue
+		case option.Some[int]:
+			aligned := __gp_m14.Value
+
+			offset = aligned
+		default:
+			panic("goplus: impossible enum value in match")
+		}
+		if size > candidateEnd-offset {
 			continue
 		}
+		end := offset + size
 		arena.free = append(arena.free[:index], arena.free[index+1:]...)
 		if offset > candidate.offset {
 			arena.free = append(arena.free, span{
@@ -836,16 +969,6 @@ func (arena *Arena) coalesce() {
 	}
 }
 
-func (arena *Arena) liveAllocations() int {
-	count := 0
-	for _, current := range arena.allocations {
-		if current.alive {
-			count++
-		}
-	}
-	return count
-}
-
 func zeroesReleased(policy ZeroPolicy) bool {
 	switch any(policy).(type) {
 	case ZeroOnRelease:
@@ -859,6 +982,17 @@ func zeroesReleased(policy ZeroPolicy) bool {
 	}
 }
 
-func alignUp(value int, alignment int) int {
-	return (value + alignment - 1) & ^(alignment - 1)
+func alignWithin(value int, alignment int, limit int) option.Option[int] {
+	if value < 0 || value > limit || alignment <= 0 || alignment&(alignment-1) != 0 {
+		return option.None[int]{}
+	}
+	remainder := value & (alignment - 1)
+	if remainder == 0 {
+		return option.Some[int]{Value: value}
+	}
+	padding := alignment - remainder
+	if padding > limit-value {
+		return option.None[int]{}
+	}
+	return option.Some[int]{Value: value + padding}
 }

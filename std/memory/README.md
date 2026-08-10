@@ -9,6 +9,10 @@ than pointers. A retained byte slice cannot outlive an arena because reads and
 writes copy through the handle. `Delete`, `Rollback`, and `Reset` invalidate
 handles immediately. Secure zeroing is the default.
 
+An omitted `Config.Zero` selects `ZeroOnRelease`; an omitted `Config.Storage`
+selects `PlatformStorage`. Alignment arithmetic is capacity-bounded, so even
+host-sized alignments fail with `CapacityExhausted` rather than wrapping.
+
 Future Go+ compiler releases will layer lexical lifetime indices, linear owned
 values, borrowed references, stack-placement proofs, and
 `//goplus:layout soa` over this representation.

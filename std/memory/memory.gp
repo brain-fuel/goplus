@@ -21,6 +21,11 @@ type ZeroPolicy enum {
 	PreserveOnRelease()
 }
 
+type StoragePolicy enum {
+	PlatformStorage()
+	ManagedStorage()
+}
+
 type Failure enum {
 	ArenaClosed()
 	CapacityExhausted()
@@ -33,6 +38,10 @@ type Failure enum {
 }
 
 func (failure Failure) Error() string {
+	return failureMessage(failure)
+}
+
+func failureMessage(failure Failure) string {
 	match failure {
 	case ArenaClosed():
 		return "memory: arena is closed"
@@ -54,6 +63,10 @@ func (failure Failure) Error() string {
 }
 
 func (failure Failure) Unwrap() error {
+	return failureCause(failure)
+}
+
+func failureCause(failure Failure) error {
 	match failure {
 	case PlatformFailure(cause):
 		return cause
@@ -69,6 +82,7 @@ type Mutation enum {
 type Config struct {
 	Capacity int
 	Zero     ZeroPolicy
+	Storage  StoragePolicy
 }
 
 type Handle struct {
@@ -118,8 +132,10 @@ type Arena struct {
 	nextID      uint64
 	generation  uint64
 	used        int
+	live        int
 	peak        int
 	zero        ZeroPolicy
+	managed     bool
 	closed      bool
 }
 
@@ -129,19 +145,28 @@ func New(config Config) result.Result[*Arena, Failure] {
 	if config.Capacity <= 0 {
 		return result.Err[*Arena, Failure](InvalidConfiguration("capacity must be positive"))
 	}
+	if config.Zero == nil { config.Zero = ZeroOnRelease() }
+	if config.Storage == nil { config.Storage = PlatformStorage() }
+	if config.Storage != nil {
+		match config.Storage {
+		case ManagedStorage:
+			return newArena(config, make([]byte, config.Capacity), true)
+		case PlatformStorage:
+		}
+	}
 	match result.Of(platformAllocate(config.Capacity)) {
 	case result.Ok(storage):
-		return result.Ok[*Arena, Failure](&Arena{
-			id:          nextArenaID.Add(1),
-			storage:     storage,
-			allocations: map[uint64]allocation{},
-			nextID:      1,
-			generation:  1,
-			zero:        config.Zero,
-		})
+		return newArena(config, storage, false)
 	case result.Err(cause):
 		return result.Err[*Arena, Failure](PlatformFailure(cause))
 	}
+}
+
+func newArena(config Config, storage []byte, managed bool) result.Result[*Arena, Failure] {
+	return result.Ok[*Arena, Failure](&Arena{
+		id: nextArenaID.Add(1), storage: storage, allocations: map[uint64]allocation{},
+		nextID: 1, generation: 1, zero: config.Zero, managed: managed,
+	})
 }
 
 func (arena *Arena) Allocate(size int, alignment int) result.Result[Handle, Failure] {
@@ -164,8 +189,13 @@ func (arena *Arena) Allocate(size int, alignment int) result.Result[Handle, Fail
 	case option.Some(found):
 		offset = found
 	case option.None:
-		offset = alignUp(arena.cursor, alignment)
-		if offset > len(arena.storage) || size > len(arena.storage)-offset {
+		match alignWithin(arena.cursor, alignment, len(arena.storage)) {
+		case option.None:
+			return result.Err[Handle, Failure](CapacityExhausted())
+		case option.Some(aligned):
+			offset = aligned
+		}
+		if size > len(arena.storage)-offset {
 			return result.Err[Handle, Failure](CapacityExhausted())
 		}
 		arena.cursor = offset + size
@@ -175,6 +205,7 @@ func (arena *Arena) Allocate(size int, alignment int) result.Result[Handle, Fail
 	arena.allocations[id] = allocation{offset: offset, length: size, alive: true}
 	arena.order = append(arena.order, id)
 	arena.used += size
+	arena.live++
 	if arena.used > arena.peak {
 		arena.peak = arena.used
 	}
@@ -309,6 +340,7 @@ func (arena *Arena) Reset() result.Result[Mutation, Failure] {
 	arena.allocations = map[uint64]allocation{}
 	arena.order = nil
 	arena.used = 0
+	arena.live = 0
 	arena.generation++
 	return result.Ok[Mutation, Failure](Applied())
 }
@@ -320,7 +352,7 @@ func (arena *Arena) Stats() Stats {
 		Capacity:    len(arena.storage),
 		Used:        arena.used,
 		Peak:        arena.peak,
-		Allocations: arena.liveAllocations(),
+		Allocations: arena.live,
 		Generation:  arena.generation,
 		Closed:      arena.closed,
 	}
@@ -335,12 +367,14 @@ func (arena *Arena) Close() result.Result[Mutation, Failure] {
 	if zeroesReleased(arena.zero) {
 		clear(arena.storage)
 	}
-	release := result.Of(struct{}{}, platformRelease(arena.storage))
+	var release result.Result[struct{}, error] = result.Ok[struct{}, error](struct{}{})
+	if !arena.managed { release = result.Of(struct{}{}, platformRelease(arena.storage)) }
 	arena.storage = nil
 	arena.free = nil
 	arena.allocations = nil
 	arena.order = nil
 	arena.used = 0
+	arena.live = 0
 	arena.closed = true
 	arena.generation++
 	match release {
@@ -381,16 +415,23 @@ func (arena *Arena) release(id uint64, current allocation) {
 	arena.allocations[id] = current
 	arena.free = append(arena.free, span{offset: current.offset, length: current.length})
 	arena.used -= current.length
+	arena.live--
 }
 
 func (arena *Arena) takeFree(size int, alignment int) option.Option[int] {
 	for index, candidate := range arena.free {
-		offset := alignUp(candidate.offset, alignment)
-		end := offset + size
 		candidateEnd := candidate.offset + candidate.length
-		if end > candidateEnd {
+		offset := 0
+		match alignWithin(candidate.offset, alignment, candidateEnd) {
+		case option.None:
+			continue
+		case option.Some(aligned):
+			offset = aligned
+		}
+		if size > candidateEnd-offset {
 			continue
 		}
+		end := offset + size
 		arena.free = append(arena.free[:index], arena.free[index+1:]...)
 		if offset > candidate.offset {
 			arena.free = append(arena.free, span{
@@ -426,16 +467,6 @@ func (arena *Arena) coalesce() {
 	}
 }
 
-func (arena *Arena) liveAllocations() int {
-	count := 0
-	for _, current := range arena.allocations {
-		if current.alive {
-			count++
-		}
-	}
-	return count
-}
-
 func zeroesReleased(policy ZeroPolicy) bool {
 	match policy {
 	case ZeroOnRelease():
@@ -445,6 +476,13 @@ func zeroesReleased(policy ZeroPolicy) bool {
 	}
 }
 
-func alignUp(value int, alignment int) int {
-	return (value + alignment - 1) & ^(alignment - 1)
+func alignWithin(value int, alignment int, limit int) option.Option[int] {
+	if value < 0 || value > limit || alignment <= 0 || alignment&(alignment-1) != 0 {
+		return option.None[int]()
+	}
+	remainder := value & (alignment - 1)
+	if remainder == 0 { return option.Some(value) }
+	padding := alignment - remainder
+	if padding > limit-value { return option.None[int]() }
+	return option.Some(value + padding)
 }
