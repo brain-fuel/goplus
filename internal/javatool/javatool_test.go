@@ -152,3 +152,13 @@ func TestWriteBuildManifestIsDeterministicAndRelative(t *testing.T) {
 		t.Fatalf("manifest contains an absolute path or lacks schema: %s", a)
 	}
 }
+
+func TestCanonicalJavaDocumentationAndSymbol(t *testing.T) {
+	source := []byte("package dev.example;\n/** A   documented\n * type. */\npublic class Widget {}\n")
+	if got := string(canonicalJavaDocumentation(source)); got != "A documented type." {
+		t.Fatalf("canonical documentation = %q", got)
+	}
+	if got := javaSourceSymbol(source, "Widget.java"); got != "dev.example.Widget" {
+		t.Fatalf("Java symbol = %q", got)
+	}
+}

@@ -61,6 +61,18 @@ func expandPatterns(root string, patterns []string) ([]string, error) {
 				strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")) {
 				return fs.SkipDir
 			}
+			// Match `go list ./...`: a recursive pattern belongs to one
+			// module and must not descend into a nested module. Generating a
+			// nested module with the parent's package load leaves its overlays
+			// unresolved and can silently emit invalid Go. The nested module
+			// remains addressable explicitly by running from that module root.
+			if path != start {
+				if _, statErr := os.Stat(filepath.Join(path, "go.mod")); statErr == nil {
+					return fs.SkipDir
+				} else if !os.IsNotExist(statErr) {
+					return statErr
+				}
+			}
 			add(path)
 			return nil
 		})

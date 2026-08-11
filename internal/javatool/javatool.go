@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -310,7 +311,15 @@ type publicationManifest struct {
 	Schema          string           `json:"schema"`
 	InputTreeSHA256 string           `json:"input_tree_sha256"`
 	JDK             string           `json:"jdk"`
+	Sources         []manifestSource `json:"sources"`
 	Outputs         []manifestOutput `json:"outputs"`
+}
+type manifestSource struct {
+	Path                   string `json:"path"`
+	SHA256                 string `json:"sha256"`
+	CanonicalDocumentation string `json:"canonical_documentation_sha256"`
+	LogicalSymbol          string `json:"logical_symbol,omitempty"`
+	JavaSymbol             string `json:"java_symbol,omitempty"`
 }
 type manifestOutput struct {
 	Path   string `json:"path"`
@@ -320,6 +329,7 @@ type manifestOutput struct {
 func writeBuildManifest(root, path string, tool Toolchain, inputs, outputs []string) error {
 	sort.Strings(inputs)
 	h := sha256.New()
+	m := publicationManifest{Schema: "goplus.java.build/v2", JDK: fmt.Sprintf("jdk-%d", tool.Major)}
 	for _, input := range inputs {
 		rel, err := filepath.Rel(root, input)
 		if err != nil {
@@ -331,8 +341,12 @@ func writeBuildManifest(root, path string, tool Toolchain, inputs, outputs []str
 		}
 		fmt.Fprintf(h, "%s\x00%d\x00", filepath.ToSlash(rel), len(data))
 		_, _ = h.Write(data)
+		sum := sha256.Sum256(data)
+		docSum := sha256.Sum256(canonicalJavaDocumentation(data))
+		javaSymbol := javaSourceSymbol(data, input)
+		m.Sources = append(m.Sources, manifestSource{Path: filepath.ToSlash(rel), SHA256: hex.EncodeToString(sum[:]), CanonicalDocumentation: hex.EncodeToString(docSum[:]), LogicalSymbol: javaSymbol, JavaSymbol: javaSymbol})
 	}
-	m := publicationManifest{Schema: "goplus.java.build/v2", InputTreeSHA256: hex.EncodeToString(h.Sum(nil)), JDK: fmt.Sprintf("jdk-%d", tool.Major)}
+	m.InputTreeSHA256 = hex.EncodeToString(h.Sum(nil))
 	for _, output := range outputs {
 		data, err := os.ReadFile(output)
 		if err != nil {
@@ -355,6 +369,35 @@ func writeBuildManifest(root, path string, tool Toolchain, inputs, outputs []str
 		return err
 	}
 	return os.WriteFile(path, data, 0o644)
+}
+
+var javaDocBlock = regexp.MustCompile(`(?s)/\*\*(.*?)\*/`)
+var javaPackageDecl = regexp.MustCompile(`(?m)^package\s+([A-Za-z_][A-Za-z0-9_.]*)\s*;`)
+
+func canonicalJavaDocumentation(source []byte) []byte {
+	var units []string
+	for _, match := range javaDocBlock.FindAllSubmatch(source, -1) {
+		text := strings.ReplaceAll(string(match[1]), "\r\n", "\n")
+		var words []string
+		for _, line := range strings.Split(text, "\n") {
+			line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "*"))
+			words = append(words, strings.Fields(line)...)
+		}
+		units = append(units, strings.Join(words, " "))
+	}
+	return []byte(strings.Join(units, "\n"))
+}
+
+func javaSourceSymbol(source []byte, path string) string {
+	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	if name == "package-info" || name == "module-info" {
+		return ""
+	}
+	match := javaPackageDecl.FindSubmatch(source)
+	if len(match) != 2 {
+		return name
+	}
+	return string(match[1]) + "." + name
 }
 
 func withoutModuleInfo(paths []string) []string {

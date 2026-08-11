@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"html"
 	"sort"
 	"strings"
 
@@ -19,7 +20,9 @@ type emitter struct {
 	temp        int
 	initNames   map[*ast.FuncDecl]string
 	typeDecls   map[string]*ast.TypeSpec
+	typeDocs    map[string]*ast.CommentGroup
 	methodDecls map[string][]*ast.FuncDecl
+	packageDoc  *ast.CommentGroup
 	currentSig  *types.Signature
 	lambdaVoid  bool
 	renames     map[types.Object]string
@@ -31,6 +34,7 @@ func newEmitter(pkg *packages.Package, mapper packageMapper) *emitter {
 		pkg: pkg, mapper: mapper,
 		initNames:   make(map[*ast.FuncDecl]string),
 		typeDecls:   make(map[string]*ast.TypeSpec),
+		typeDocs:    make(map[string]*ast.CommentGroup),
 		methodDecls: make(map[string][]*ast.FuncDecl),
 		renames:     make(map[types.Object]string),
 		javaTypes:   javaTypeMarkers(pkg),
@@ -42,6 +46,9 @@ func (e *emitter) emitPackage(app, includeTests bool) (map[string][]byte, []stri
 	var tests []string
 	initIndex := 0
 	for _, file := range e.pkg.Syntax {
+		if e.packageDoc == nil && file.Doc != nil {
+			e.packageDoc = file.Doc
+		}
 		for _, decl := range file.Decls {
 			decls = append(decls, decl)
 			switch value := decl.(type) {
@@ -50,6 +57,10 @@ func (e *emitter) emitPackage(app, includeTests bool) (map[string][]byte, []stri
 					for _, spec := range value.Specs {
 						if ts, ok := spec.(*ast.TypeSpec); ok {
 							e.typeDecls[ts.Name.Name] = ts
+							e.typeDocs[ts.Name.Name] = ts.Doc
+							if e.typeDocs[ts.Name.Name] == nil {
+								e.typeDocs[ts.Name.Name] = value.Doc
+							}
 						}
 					}
 				}
@@ -72,6 +83,9 @@ func (e *emitter) emitPackage(app, includeTests bool) (map[string][]byte, []stri
 	sort.SliceStable(decls, func(i, j int) bool { return decls[i].Pos() < decls[j].Pos() })
 
 	files := map[string][]byte{}
+	if e.packageDoc != nil {
+		files["package-info.java"] = e.emitPackageInfo()
+	}
 	var names []string
 	for name := range e.typeDecls {
 		names = append(names, name)
@@ -272,6 +286,7 @@ func (e *emitter) emitStruct(ts *ast.TypeSpec, named *types.Named) []byte {
 	tparams := e.typeParams(named.TypeParams())
 	implements := []string{"GpCopy<" + name + typeArgs(named.TypeParams()) + ">"}
 	implements = append(implements, e.implementedInterfaces(named)...)
+	e.writeJavaDoc(w, e.typeDocs[ts.Name.Name], "Generated Go+ type "+ts.Name.Name+".", nil, false)
 	w.line("%sfinal class %s%s implements %s {", visibility, name, tparams, strings.Join(implements, ", "))
 	w.indent++
 	strct := named.Underlying().(*types.Struct)
@@ -399,6 +414,7 @@ func (e *emitter) emitInterface(ts *ast.TypeSpec, named *types.Named) []byte {
 		visibility = "public "
 	}
 	iface := named.Underlying().(*types.Interface).Complete()
+	e.writeJavaDoc(w, e.typeDocs[ts.Name.Name], "Generated Go+ interface "+ts.Name.Name+".", nil, false)
 	w.line("%sinterface %s%s {", visibility, name, e.typeParams(named.TypeParams()))
 	w.indent++
 	for i := 0; i < iface.NumMethods(); i++ {
@@ -510,6 +526,17 @@ func (e *emitter) emitFunction(w *javaWriter, decl *ast.FuncDecl, static bool, n
 	defer func() { e.currentSig = previousSig }()
 	visibility := ast.IsExported(decl.Name.Name) || !static
 	header := e.signature(name, sig, static, visibility)
+	if visibility {
+		var params []string
+		for i := 0; i < sig.Params().Len(); i++ {
+			param := sig.Params().At(i).Name()
+			if param == "" || param == "_" {
+				param = fmt.Sprintf("arg%d", i)
+			}
+			params = append(params, javaIdent(param, false))
+		}
+		e.writeJavaDoc(w, decl.Doc, "Generated Go+ operation "+decl.Name.Name+".", params, sig.Results().Len() > 0)
+	}
 	w.line("%s {", header)
 	w.indent++
 	if !static && decl.Recv != nil && len(decl.Recv.List) > 0 && len(decl.Recv.List[0].Names) > 0 {
@@ -618,6 +645,46 @@ func (e *emitter) fileHeader(w *javaWriter) {
 	w.line("")
 	w.line("import dev.goforge.goplus.runtime.*;")
 	w.line("")
+}
+
+func (e *emitter) emitPackageInfo() []byte {
+	w := newJavaWriter()
+	e.writeJavaDoc(w, e.packageDoc, "Generated Go+ package "+e.pkg.PkgPath+".", nil, false)
+	w.line("package %s;", e.mapper.javaPackage(e.pkg.PkgPath))
+	return w.bytes()
+}
+
+func (e *emitter) writeJavaDoc(w *javaWriter, group *ast.CommentGroup, fallback string, params []string, returns bool) {
+	text := fallback
+	if group != nil {
+		var kept []string
+		for _, line := range strings.Split(strings.TrimSpace(group.Text()), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "goplus:") || strings.HasPrefix(trimmed, "go:") {
+				continue
+			}
+			kept = append(kept, line)
+		}
+		if candidate := strings.TrimSpace(strings.Join(kept, "\n")); candidate != "" {
+			text = candidate
+		}
+	}
+	w.line("/**")
+	for _, line := range strings.Split(text, "\n") {
+		escaped := strings.ReplaceAll(html.EscapeString(strings.TrimSpace(line)), "*/", "*&#47;")
+		if escaped == "" {
+			w.line(" *")
+		} else {
+			w.line(" * %s", escaped)
+		}
+	}
+	for _, param := range params {
+		w.line(" * @param %s Go+ parameter %s.", param, param)
+	}
+	if returns {
+		w.line(" * @return the Go+ result.")
+	}
+	w.line(" */")
 }
 
 func (e *emitter) functionName(decl *ast.FuncDecl) string {
