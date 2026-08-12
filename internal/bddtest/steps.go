@@ -38,6 +38,7 @@ func InitializeScenario(t *testing.T, sc *godog.ScenarioContext) {
 	initGenSteps(sc, func() *World { return w }, gs)
 	initGitSteps(sc, func() *World { return w })
 	initPropertySteps(sc, func() *World { return w })
+	initGomlSteps(sc, func() *World { return w })
 	sc.After(func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
 		if w != nil {
 			w.cleanup()

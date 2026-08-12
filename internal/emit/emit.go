@@ -16,12 +16,22 @@ import (
 // foo_gp.go in the same directory.
 const GeneratedSuffix = "_gp.go"
 
-// OutputPath returns the emitted filename for a .gp source path.
+// GomlGeneratedSuffix is the filename suffix of files emitted from goml
+// sources: foo.goml emits foo_gml.go in the same directory.
+const GomlGeneratedSuffix = "_gml.go"
+
+// OutputPath returns the emitted filename for a .gp or .goml source path.
 func OutputPath(goplusPath string) string {
 	// Test sources stay test sources: foo_test.gp emits foo_gp_test.go
 	// so the go tool still sees a _test.go file (v0.10.0).
 	if base, ok := strings.CutSuffix(goplusPath, "_test.gp"); ok {
 		return base + "_gp_test.go"
+	}
+	if base, ok := strings.CutSuffix(goplusPath, "_test.goml"); ok {
+		return base + "_gml_test.go"
+	}
+	if base, ok := strings.CutSuffix(goplusPath, ".goml"); ok {
+		return base + GomlGeneratedSuffix
 	}
 	return strings.TrimSuffix(goplusPath, ".gp") + GeneratedSuffix
 }

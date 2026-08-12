@@ -352,6 +352,13 @@ func loadDir(dir string, overlay map[string][]byte) (*pkgIndex, []diag.Diagnosti
 		switch {
 		case strings.HasSuffix(e.Name(), ".gp"):
 			goplusNames = append(goplusNames, e.Name())
+		case strings.HasSuffix(e.Name(), ".goml"):
+			// A .goml source participates only when a front end supplies
+			// its transpiled .gp text through the overlay (the goml
+			// facade); a bare `goplus gen` run leaves it untouched.
+			if _, ok := overlayEntry(filepath.Join(dir, e.Name()), overlay); ok {
+				goplusNames = append(goplusNames, e.Name())
+			}
 		case strings.HasSuffix(e.Name(), ".go") && !strings.HasSuffix(e.Name(), "_test.go"):
 			goNames = append(goNames, e.Name())
 		}
@@ -734,8 +741,12 @@ func findOrphans(dir string) []string {
 		goplusName := ""
 		if base, ok := strings.CutSuffix(name, "_gp_test.go"); ok {
 			goplusName = base + "_test.gp"
+		} else if base, ok := strings.CutSuffix(name, "_gml_test.go"); ok {
+			goplusName = base + "_test.goml"
 		} else if strings.HasSuffix(name, emit.GeneratedSuffix) {
 			goplusName = strings.TrimSuffix(name, emit.GeneratedSuffix) + ".gp"
+		} else if strings.HasSuffix(name, emit.GomlGeneratedSuffix) {
+			goplusName = strings.TrimSuffix(name, emit.GomlGeneratedSuffix) + ".goml"
 		}
 		if e.IsDir() || goplusName == "" {
 			continue
@@ -795,17 +806,24 @@ func sortedKeys(m map[string][]byte) []string {
 	return keys
 }
 
+// overlayEntry looks up a path's overlay contents (absolute path first).
+func overlayEntry(path string, overlay map[string][]byte) ([]byte, bool) {
+	if overlay == nil {
+		return nil, false
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		if src, ok := overlay[abs]; ok {
+			return src, true
+		}
+	}
+	src, ok := overlay[path]
+	return src, ok
+}
+
 // readWithOverlay reads a file, preferring in-memory overlay contents.
 func readWithOverlay(path string, overlay map[string][]byte) ([]byte, error) {
-	if overlay != nil {
-		if abs, err := filepath.Abs(path); err == nil {
-			if src, ok := overlay[abs]; ok {
-				return src, nil
-			}
-		}
-		if src, ok := overlay[path]; ok {
-			return src, nil
-		}
+	if src, ok := overlayEntry(path, overlay); ok {
+		return src, nil
 	}
 	return os.ReadFile(path)
 }

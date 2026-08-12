@@ -16,6 +16,12 @@ func tagBuildFlags(tags []string) []string {
 	return []string{"-tags=" + strings.Join(tags, ",")}
 }
 
+// ExpandPatterns resolves go-style package patterns to directories under
+// root; the goml front end shares the go tool's matching convention.
+func ExpandPatterns(root string, patterns []string) ([]string, error) {
+	return expandPatterns(root, patterns)
+}
+
 // expandPatterns resolves go-style package patterns ("./...", ".", "./pkg",
 // "pkg/...") to directories under root, following the go tool's convention
 // of skipping vendor, testdata, and dot/underscore-prefixed directories.

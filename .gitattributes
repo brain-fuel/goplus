@@ -1,4 +1,5 @@
 *_gp.go linguist-generated=true
+*_gml.go linguist-generated=true
 * text=auto eol=lf
 
 # Go+ (.gp) is a strict superset of Go. GitHub Linguist registers `.gp` to

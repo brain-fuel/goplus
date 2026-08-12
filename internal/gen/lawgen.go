@@ -66,7 +66,12 @@ func planLawTests(reg *registry.Registry, pkgPath, dir, outRel string, instances
 	out := map[string][]byte{}
 	sort.Strings(files)
 	for _, srcPath := range files {
-		base := strings.TrimSuffix(filepath.Base(srcPath), ".gp")
+		srcBase := filepath.Base(srcPath)
+		ext := ".gp"
+		if strings.HasSuffix(srcBase, ".goml") {
+			ext = ".goml"
+		}
+		base := strings.TrimSuffix(srcBase, ext)
 		var path, pkgName, qual string
 		var extraImport string
 		declPkgName := byFile[srcPath][0].inst.PkgName
@@ -81,7 +86,7 @@ func planLawTests(reg *registry.Registry, pkgPath, dir, outRel string, instances
 		}
 
 		var b strings.Builder
-		b.WriteString(emit.Header(base + ".gp"))
+		b.WriteString(emit.Header(base + ext))
 		fmt.Fprintf(&b, "package %s\n\n", pkgName)
 		fmt.Fprintf(&b, "import (\n\t\"testing\"\n%s\n\t// goplus:law-imports\n\t\"pgregory.net/rapid\"\n)\n", extraImport)
 
@@ -335,9 +340,19 @@ func findLawOrphans(dirs []string, lawsOutByDir map[string]string, outputs map[s
 			if err != nil {
 				continue
 			}
-			if _, generated := emit.GeneratedFrom(src); generated {
-				orphans = append(orphans, path)
+			from, generated := emit.GeneratedFrom(src)
+			if !generated {
+				continue
 			}
+			// A law file from a .goml source is produced only by goml
+			// runs (which supply the transpiled overlay); a plain goplus
+			// run keeps it as long as its source is still present.
+			if strings.HasSuffix(from, ".goml") {
+				if _, err := os.Stat(filepath.Join(dir, from)); err == nil {
+					continue
+				}
+			}
+			orphans = append(orphans, path)
 		}
 	}
 	for _, dir := range dirs {

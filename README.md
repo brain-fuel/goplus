@@ -19,6 +19,44 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.144.0 — goml: an ML-family surface
+
+Go+ gains a second front end. goml (`.goml`) is an SML/OCaml/Idris2/
+Lean4-flavored surface for the same semantic core: sources transpile to
+`.gp` and generate through the unchanged pipeline, emitting committed,
+ordinary Go (`<file>_gml.go` beside the source, same `//goplus:`
+markers). One core, two surfaces, one output — packages may mix `.gp`
+and `.goml`, and consumers cannot tell which surface authored them.
+
+```
+type Vec (a : Type) : Nat -> Type where
+  | Nil : Vec a 0
+  | Cons (head : a) (tail : Vec a n) : Vec a (n + 1)
+
+let First : Vec a (n + 1) -> a       -- {0 n : Nat} auto-quantified
+  | Cons h _ => h                    -- Nil impossible at n+1
+
+let Load (path : String) : Result Config Error := do {
+  let raw := os.ReadFile path ?;     -- postfix ? at the Go boundary
+  parse raw
+}
+```
+
+The v1 surface covers sums, GADT `where`-form, records (tag
+attributes), refinement comprehensions, classes/instances/laws
+(instance members may omit types when the class is local), the
+dependent core (implicit binders, QTT quantities including multiplicity
+variables, `n = m` propositional equality, constructor and total-call
+index terms), `total` and `@[tail]` lowering, `let*` monadic bind,
+multi-column clausal definitions, hoisted match expressions, `do`
+blocks (`let mut`, field assignment, `while`/`for … in`, `defer`,
+`go`), and `select with` lowered to native Go select. Pipeline
+diagnostics map back to `.goml` source lines. `goml gen` drives
+generation (`-check`/`-stage` as in goplus); `goml convert` prints the
+`.gp` lowering. The design, decisions, and parity map live in
+[spec/goml-design.md](spec/goml-design.md); the executable spec twins
+live under `features/goml/`.
+
 ## v0.143.0 — Java artifact production
 
 `go tool goplus build --target java ./...` produces the primary JAR, sources
@@ -724,12 +762,19 @@ goplus gen -check ./...     # exit 1 if any generated file is stale (CI)
 goplus gen -stage ./...     # regenerate and git-add results (pre-commit)
 goplus build|test|run|vet   # generate, then delegate to the go tool
 goplus version
+
+# The ML-family surface: .goml sources emit <file>_gml.go via the same pipeline.
+goml gen ./...              # transpile *.goml and generate *_gml.go
+goml gen -check ./...       # exit 1 if any generated file is stale (CI)
+goml convert file.goml      # print the .gp lowering
+goml version
 ```
 
 ## Install
 
 ```
 go install goforge.dev/goplus/cmd/goplus@latest
+go install goforge.dev/goplus/cmd/goml@latest    # the ML-family surface
 ```
 
 The standard library is a separate, dependency-free module:
