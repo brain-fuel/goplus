@@ -85,10 +85,12 @@ func InitializeScenario(t *testing.T, sc *godog.ScenarioContext) {
 		return w.writeFile(name, doc.Content)
 	})
 	// A go.mod that requires goforge.dev/goplus/std, replaced by this repo's
-	// std directory — the scenario-side equivalent of a released std.
+	// std directory — the scenario-side equivalent of a released std. The go
+	// directive must be >= the one in std/go.mod, or every load fails with
+	// "updates to go.mod needed" under the default -mod=readonly.
 	sc.Step(`^a module "([^"]+)" using the goplus standard library$`, func(mod string) error {
 		content := fmt.Sprintf(
-			"module %s\n\ngo 1.24.0\n\nrequire goforge.dev/goplus/std v0.0.0\n\nreplace goforge.dev/goplus/std => %s\n",
+			"module %s\n\ngo 1.26.0\n\nrequire goforge.dev/goplus/std v0.0.0\n\nreplace goforge.dev/goplus/std => %s\n",
 			mod, filepath.Join(w.origWD, "std"))
 		return w.writeFile("go.mod", content)
 	})
