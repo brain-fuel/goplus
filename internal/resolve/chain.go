@@ -87,7 +87,7 @@ func (r *fileResolver) chainEmit(sw *ast.TypeSwitchStmt, varName string, subjTex
 		}
 		b.WriteString("}\n")
 	}
-	if !hasWildcard {
+	if !hasWildcard && !(r.matchHasFollowingStatement(sw) && matchArmsTerminate(sw)) {
 		b.WriteString("panic(\"goplus: impossible enum value in match\")\n")
 	}
 	if needLabel {

@@ -339,7 +339,7 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 		}
 		r.edits = append(r.edits, lower.Edit{Start: p.arm.carrier[0], End: p.arm.carrier[1], New: repl})
 	}
-	if !sawWildcard {
+	if !sawWildcard && !(r.matchHasFollowingStatement(sw) && matchArmsTerminate(sw)) {
 		rbrace := r.off(sw.Body.Rbrace)
 		r.edits = append(r.edits, lower.Edit{
 			Start: rbrace,
@@ -357,6 +357,48 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 			New:   "",
 		})
 	}
+}
+
+func matchArmsTerminate(match *ast.TypeSwitchStmt) bool {
+	if len(match.Body.List) == 0 {
+		return false
+	}
+	for _, statement := range match.Body.List {
+		clause, ok := statement.(*ast.CaseClause)
+		if !ok || !stmtsTerminate(clause.Body) {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *fileResolver) matchHasFollowingStatement(match *ast.TypeSwitchStmt) bool {
+	found := false
+	hasFollowing := false
+	inspect := func(statements []ast.Stmt) {
+		for index, statement := range statements {
+			if statement == match {
+				found = true
+				hasFollowing = index+1 < len(statements)
+				return
+			}
+		}
+	}
+	ast.Inspect(r.file, func(node ast.Node) bool {
+		if found {
+			return false
+		}
+		switch parent := node.(type) {
+		case *ast.BlockStmt:
+			inspect(parent.List)
+		case *ast.CaseClause:
+			inspect(parent.Body)
+		case *ast.CommClause:
+			inspect(parent.Body)
+		}
+		return !found
+	})
+	return hasFollowing
 }
 
 // flatWildOnly reports whether a pattern is a constructor whose arguments
