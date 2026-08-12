@@ -175,9 +175,10 @@ func (c *converter) indexEnums() {
 			}
 		}
 		for i, k := range td.Kind {
-			name := c.kindSlotName(td, len(td.Binders), i)
+			sort := c.sortOf(k)
+			name := c.kindSlotName(td, len(td.Binders), i, sort)
 			info.params = append(info.params, name)
-			info.sorts = append(info.sorts, c.sortOf(k))
+			info.sorts = append(info.sorts, sort)
 		}
 		for _, ct := range td.Sum {
 			info.ctors[ct.Name] = &ctorInfo{arity: len(ct.Fields), parens: ct.Result != nil}
@@ -209,7 +210,7 @@ func (c *converter) sortOf(t Type) string {
 
 // kindSlotName finds the variable name constructors use for kind slot i
 // (the i-th index parameter after the declared binders).
-func (c *converter) kindSlotName(td *TypeDecl, declared, slot int) string {
+func (c *converter) kindSlotName(td *TypeDecl, declared, slot int, sort string) string {
 	pos := declared + slot
 	name := ""
 	for _, ct := range td.Sum {
@@ -225,12 +226,17 @@ func (c *converter) kindSlotName(td *TypeDecl, declared, slot int) string {
 			}
 		}
 	}
-	// Field uses may name the variable even when results only use
-	// literals in this slot; fall back to a synthesized name.
+	// Constructor results may pin every position concretely (Expr Int,
+	// Expr Bool), naming no variable; synthesize one in the slot's sort
+	// so the generated parameter reads correctly.
 	if name == "" {
-		name = fmt.Sprintf("n%d", slot)
-		if slot == 0 {
-			name = "n"
+		stem := "n"
+		if sort == "any" {
+			stem = "a"
+		}
+		name = stem
+		if slot > 0 {
+			name = fmt.Sprintf("%s%d", stem, slot)
 		}
 	}
 	return name

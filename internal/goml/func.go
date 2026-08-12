@@ -697,7 +697,7 @@ func (c *converter) exprString(e Expr, prec int) string {
 	case *Try:
 		return c.exprString(e.X, atomPrec) + "?"
 	case *Unary:
-		return "-" + c.exprString(e.X, atomPrec)
+		return e.Op + c.exprString(e.X, atomPrec)
 	case *Binop:
 		p := precOf(e.Op)
 		s := c.exprString(e.L, p) + " " + e.Op + " " + c.exprString(e.R, p+1)
@@ -709,6 +709,12 @@ func (c *converter) exprString(e Expr, prec int) string {
 		return "if " + c.exprString(e.Cond, 0) + " { " + c.exprString(e.Then, 0) + " } else { " + c.exprString(e.Else, 0) + " }"
 	case *Fun:
 		return c.funString(e)
+	case *RecordLit:
+		parts := make([]string, len(e.Fields))
+		for i, f := range e.Fields {
+			parts[i] = f.Name + ": " + c.exprString(f.Val, 0)
+		}
+		return c.exprString(e.Type, atomPrec) + "{" + strings.Join(parts, ", ") + "}"
 	case *Match:
 		// Hoist to a temporary assigned before the enclosing statement.
 		if c.fw == nil || c.fw.curIndent == "" {

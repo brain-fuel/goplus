@@ -494,3 +494,19 @@ type SelectArm struct {
 	Body DoStmt
 	Pos  Pos
 }
+
+// RecordLit is a record (Go struct) literal: Config { Port = 8080 }.
+type RecordLit struct {
+	Type   Expr // Ident or pkg-qualified Selector naming the type
+	Fields []*FieldVal
+	Pos    Pos
+}
+
+func (e *RecordLit) exprPos() Pos { return e.Pos }
+
+// FieldVal is one `Name = expr` element of a record literal.
+type FieldVal struct {
+	Name string
+	Val  Expr
+	Pos  Pos
+}

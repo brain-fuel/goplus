@@ -1,7 +1,6 @@
 # goml — an ML-family surface for the Go+ core (design proposal)
 
-Status: **v1 front end implemented and released** (2026-08-11, goplus
-v0.144.0): the `goml` facade package, the `cmd/goml` binary, and
+Status: **v1 front end implemented and released** (goplus v0.144.1): the `goml` facade package, the `cmd/goml` binary, and
 pipeline support for `.goml` sources — see §10 for the surface v1
 covers and the deliberate deferrals.
 
@@ -644,6 +643,12 @@ pipeline. There is no second elaborator.
   total calls** (`Region (Circle n) n` → `Region[Circle(n), n]`);
   `total let`; `@[tail] let rec` with tail-position self-calls lowered
   to `recur`.
+- Data construction: **record literals** (`Settings { Port = p, Host = h }`,
+  including the empty and package-qualified forms) lower to Go composite
+  literals; `!` is logical negation. GADT headers accept type-sorted
+  slots (`type Expr : Type -> Type where`) as well as nat-indexed ones,
+  and a slot whose constructors pin every position concretely gets a
+  synthesized name in its own sort (`Expr[a any]`).
 - Expressions and clauses: `match with` (or-patterns, `as`-binding,
   unused binders print `_`), **multi-column clausal definitions**
   (comma rows, one constructor column), `if/then/else`, `let … ;`
@@ -679,6 +684,9 @@ literals require types), Lean-style layout (two blunt rules instead:
 application arguments start on the same line as the token before them,
 and sums need a leading `|`), namespaces admit method lets only, LSP
 awareness of `.goml` buffers, `goml fmt`, and reverse conversion
-(`.gp → .goml`). `total`, `law`, and the other goml keywords are
+(`.gp → .goml`), and **interface declarations** (goml has no interface
+form; declare them in a `.gp` or `.go` file of the same package — a
+mixed package is the intended route, and `@[delegate]` consumes such an
+interface normally). `total`, `law`, and the other goml keywords are
 reserved words (unlike `.gp`'s contextual claims) — `total` is not a
 variable name.

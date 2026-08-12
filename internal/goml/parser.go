@@ -426,10 +426,12 @@ func (p *parser) parseTypeDecl(doc []string, attrs []Attr) *TypeDecl {
 		d.Binders = append(d.Binders, p.parseBinder())
 	}
 	if _, ok := p.accept(Colon); ok {
-		// Kind: S1 -> S2 -> ... -> Type
+		// Kind: S1 -> S2 -> ... -> Type. A `Type` followed by `->` is a
+		// type-sorted parameter (`Expr : Type -> Type`); the final
+		// `Type` terminates.
 		for {
 			s := p.parseTypeApp()
-			if n, ok := s.(*TypeName); ok && n.Pkg == "" && n.Name == "Type" {
+			if n, ok := s.(*TypeName); ok && n.Pkg == "" && n.Name == "Type" && !p.at(Arrow) {
 				break
 			}
 			d.Kind = append(d.Kind, s)
@@ -890,6 +892,9 @@ func (p *parser) parseUnary() Expr {
 	if t, ok := p.accept(Minus); ok {
 		return &Unary{Op: "-", X: p.parseUnary(), Pos: t.Pos}
 	}
+	if t, ok := p.accept(Bang); ok {
+		return &Unary{Op: "!", X: p.parseUnary(), Pos: t.Pos}
+	}
 	return p.parseApp()
 }
 
@@ -925,8 +930,44 @@ func (p *parser) parsePostfix() Expr {
 			e = &Selector{X: e, Name: name.Text, Pos: e.exprPos()}
 			continue
 		}
+		// A record literal: Config { Port = 8080, Name = "x" }. Claimed
+		// only after a Capitalized name, the one place `{` can follow an
+		// expression (do blocks are introduced by `do`).
+		if p.at(LBrace) && isRecordHead(e) {
+			e = p.parseRecordLit(e)
+			continue
+		}
 		return e
 	}
+}
+
+// isRecordHead reports whether e can head a record literal: a
+// Capitalized name, optionally qualified (pkg.Name).
+func isRecordHead(e Expr) bool {
+	switch e := e.(type) {
+	case *Ident:
+		return isUpperName(e.Name)
+	case *Selector:
+		if id, ok := e.X.(*Ident); ok {
+			return !isUpperName(id.Name) && isUpperName(e.Name)
+		}
+	}
+	return false
+}
+
+func (p *parser) parseRecordLit(head Expr) *RecordLit {
+	lb := p.expect(LBrace, "`{`")
+	lit := &RecordLit{Type: head, Pos: lb.Pos}
+	for !p.at(RBrace) {
+		name := p.expect(IDENT, "field name")
+		p.expect(Eq, "`=` in record literal")
+		lit.Fields = append(lit.Fields, &FieldVal{Name: name.Text, Val: p.parseExpr(), Pos: name.Pos})
+		if _, ok := p.accept(Comma); !ok {
+			break
+		}
+	}
+	p.expect(RBrace, "`}` closing record literal")
+	return lit
 }
 
 func (p *parser) parseAtom() Expr {

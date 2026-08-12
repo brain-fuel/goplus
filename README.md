@@ -19,6 +19,16 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.144.1 — goml surface completion
+
+Writing a full worked tutorial against v0.144.0 surfaced three holes,
+each now closed: a type-indexed GADT header (`type Expr : Type -> Type
+where`) parses (previously only nat-indexed kinds did), records can be
+**constructed** as well as declared (`Settings { Port = p, Host = h }`
+lowers to a Go composite literal), and logical negation `!` exists.
+Synthesized index-parameter names now follow their slot's sort, so a
+fully-pinned GADT reads `Expr[a any]` rather than `Expr[n any]`.
+
 ## v0.144.0 — goml: an ML-family surface
 
 Go+ gains a second front end. goml (`.goml`) is an SML/OCaml/Idris2/
@@ -50,8 +60,8 @@ variables, `n = m` propositional equality, constructor and total-call
 index terms), `total` and `@[tail]` lowering, `let*` monadic bind,
 multi-column clausal definitions, hoisted match expressions, `do`
 blocks (`let mut`, field assignment, `while`/`for … in`, `defer`,
-`go`), and `select with` lowered to native Go select. Pipeline
-diagnostics map back to `.goml` source lines. `goml gen` drives
+`go`), and `select with` lowered to native Go select, record literals, and `!`.
+Pipeline diagnostics map back to `.goml` source lines. `goml gen` drives
 generation (`-check`/`-stage` as in goplus); `goml convert` prints the
 `.gp` lowering. The design, decisions, and parity map live in
 [spec/goml-design.md](spec/goml-design.md); the executable spec twins

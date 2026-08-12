@@ -477,3 +477,81 @@ func Double(s Shape) int {
 		t.Fatalf("tail expression not returned:\n%s", got)
 	}
 }
+
+func TestConvertTypeIndexedGADT(t *testing.T) {
+	src := `module expr
+
+type Expr : Type -> Type where
+  | Lit (v : Int) : Expr Int
+  | Truth (b : Bool) : Expr Bool
+  | If (c : Expr Bool) (t : Expr a) (e : Expr a) : Expr a
+
+let Eval (e : Expr a) : a :=
+  match e with
+  | Lit v => v
+  | Truth b => b
+  | If c t e => if Eval c then Eval t else Eval e
+`
+	got := convertOK(t, src)
+	want := `package expr
+
+type Expr[a any] enum {
+	Lit(v int) Expr[int]
+	Truth(b bool) Expr[bool]
+	If(c Expr[bool], t Expr[a], e Expr[a]) Expr[a]
+}
+
+func Eval[a any](e Expr[a]) a {
+	match e {
+	case Lit(v):
+		return v
+	case Truth(b):
+		return b
+	case If(c, t, e):
+		if Eval(c) {
+			return Eval(t)
+		}
+		return Eval(e)
+	}
+}
+`
+	if got != want {
+		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+func TestConvertRecordLiteralAndNot(t *testing.T) {
+	src := `module conf
+
+type Settings := { Port : Int; Host : String }
+
+let Make (p : Int) (h : String) : Settings := Settings { Port = p, Host = h }
+
+let Empty : Settings := Settings { }
+
+let Toggle (b : Bool) : Bool := !b
+`
+	got := convertOK(t, src)
+	want := `package conf
+
+type Settings struct {
+	Port int
+	Host string
+}
+
+func Make(p int, h string) Settings {
+	return Settings{Port: p, Host: h}
+}
+
+func Empty() Settings {
+	return Settings{}
+}
+
+func Toggle(b bool) bool {
+	return !b
+}
+`
+	if got != want {
+		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}

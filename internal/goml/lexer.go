@@ -98,7 +98,8 @@ const (
 	GtEq
 	AndAnd
 	OrOr
-	At // @
+	Bang // !
+	At   // @
 )
 
 var keywords = map[string]Kind{
@@ -300,7 +301,7 @@ func (l *lexer) tokens() ([]Token, *Error) {
 			{":=", Assign}, {"==", EqEq}, {"!=", NotEq}, {"<=", LtEq},
 			{">=", GtEq}, {"&&", AndAnd}, {"||", OrOr}, {"|>", Pipe},
 			{"->", Arrow}, {"=>", FatArrow}, {"<-", LArrow},
-			{"=", Eq}, {":", Colon}, {"?", Question}, {"|", Bar},
+			{"=", Eq}, {":", Colon}, {"?", Question}, {"|", Bar}, {"!", Bang},
 			{"(", LParen}, {")", RParen}, {"[", LBrack}, {"]", RBrack},
 			{"{", LBrace}, {"}", RBrace}, {",", Comma}, {";", Semi},
 			{".", Dot}, {"+", Plus}, {"-", Minus}, {"*", Star},
