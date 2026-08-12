@@ -23,7 +23,7 @@ func TestGrammarIndexAcrossPackageBoundary(t *testing.T) {
 	compile := func(t *testing.T, source string) (string, error) {
 		t.Helper()
 		dir := t.TempDir()
-		module := "module fixture\n\ngo 1.25.0\n\nrequire goforge.dev/goplus/std v0.0.0\nreplace goforge.dev/goplus/std => " + stdDir + "\n"
+		module := "module fixture\n\ngo 1.26.0\n\nrequire goforge.dev/goplus/std v0.0.0\nreplace goforge.dev/goplus/std => " + stdDir + "\n"
 		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(module), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -32,6 +32,7 @@ func TestGrammarIndexAcrossPackageBoundary(t *testing.T) {
 		}
 		cmd := exec.Command(tool, "gen", ".")
 		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod")
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}

@@ -16,7 +16,7 @@ func TestGoPlusConsumesCBORSerdeAndDAGProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeRefinementTestFile(t, dir, "go.mod", "module example.com/serdeaccess\n\ngo 1.24.0\n\nrequire goforge.dev/goplus/std v0.0.0\nreplace goforge.dev/goplus/std => "+std+"\n")
+	writeRefinementTestFile(t, dir, "go.mod", "module example.com/serdeaccess\n\ngo 1.26.0\n\nrequire goforge.dev/goplus/std v0.0.0\nreplace goforge.dev/goplus/std => "+std+"\n")
 	writeRefinementTestFile(t, dir, "main.gp", `package main
 
 import (

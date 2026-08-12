@@ -1,6 +1,6 @@
 module goforge.dev/goplus/std
 
-go 1.24.0
+go 1.26.0
 
 require (
 	github.com/cucumber/godog v0.15.1
@@ -11,11 +11,13 @@ require (
 	github.com/quic-go/quic-go v0.59.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/shopspring/decimal v1.4.0
-	golang.org/x/crypto v0.48.0
-	golang.org/x/net v0.50.0
-	golang.org/x/sys v0.41.0
-	golang.org/x/text v0.34.0
+	golang.org/x/crypto v0.54.0
+	golang.org/x/net v0.57.0
+	golang.org/x/sys v0.47.0
+	golang.org/x/text v0.40.0
 )
+
+tool goforge.dev/goplus/cmd/goplus
 
 require (
 	github.com/cucumber/gherkin/go/v26 v26.2.0 // indirect
@@ -28,4 +30,8 @@ require (
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/spf13/pflag v1.0.7 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
+	goforge.dev/goplus v0.143.0 // indirect
+	golang.org/x/mod v0.38.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/tools v0.48.0 // indirect
 )

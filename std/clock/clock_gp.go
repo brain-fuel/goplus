@@ -15,7 +15,7 @@
 //   - AfterFunc — the CALLBACK shape, returning a Stop handle mirroring
 //     time.Timer.Stop.
 //
-// Fake fires both shapes at Advance time in deadline-ascending order, ties
+// Fake fires both shapes during Advance in deadline-ascending order, ties
 // broken by insertion order, deterministically. Both Real and Fake are safe
 // for concurrent use; Fake's Advance is intended to be driven from a single
 // test goroutine.
@@ -25,7 +25,6 @@
 package clock
 
 import (
-	"sort"
 	"sync"
 	"time"
 )
@@ -146,6 +145,20 @@ func (c *Fake) PendingLen() int {
 	return len(c.pending)
 }
 
+// TimerLen reports the number of live AfterFunc registrations. Stopped and
+// fired timers are removed lazily by Advance and are not counted.
+func (c *Fake) TimerLen() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	live := 0
+	for _, timer := range c.timers {
+		if !timer.stopped && !timer.fired {
+			live++
+		}
+	}
+	return live
+}
+
 // After returns a buffered (cap 1) channel that fires at the first Advance
 // whose new now covers c.now + d. A d <= 0 fires synchronously before
 // returning (the buffer absorbs the send), matching stdlib semantics.
@@ -176,78 +189,71 @@ func (c *Fake) AfterFunc(d time.Duration, fn func()) Stop {
 	return t
 }
 
-// Advance moves time forward by d and fires everything whose deadline falls
-// within the step, in two blocks:
-//
-//  1. CHANNEL block — pending After channels, (deadline, seq)-ordered,
-//     non-blocking sends on the cap-1 buffers. Snapshot-once: an After
-//     registered during this Advance does not fire in the same call.
-//
-//  2. CALLBACK block — AfterFunc timers, same ordering, via a DRAIN LOOP:
-//     each fn runs with the mutex RELEASED (re-entrant registrations are
-//     legal), fired is marked under the mutex BEFORE fn runs (a racing Stop
-//     reports false), and a re-arm at deadline <= the new now fires in the
-//     SAME Advance pass. Termination relies on callbacks not unconditionally
-//     re-arming at d = 0 on every fire — a usage contract, not a Fake defect.
+// Advance moves time forward by d and fires every due registration in
+// (deadline, insertion-seq) order. Time advances chronologically: a callback
+// observes its own deadline from Now, and Now reaches the step target after
+// the final event. Callbacks run without the mutex, so they may register more
+// work; registrations due by the target participate in the same drain.
 func (c *Fake) Advance(d time.Duration) {
+	if d < 0 {
+		panic("clock: negative advance")
+	}
 	c.mu.Lock()
-	c.now = c.now.Add(d)
-	deadline := c.now
-	var fires []*fakeAfter
-	var keep []*fakeAfter
-	for _, p := range c.pending {
-		if !p.deadline.After(deadline) {
-			fires = append(fires, p)
-		} else {
-			keep = append(keep, p)
-		}
-	}
-	c.pending = keep
+	target := c.now.Add(d)
 	c.mu.Unlock()
-
-	sort.SliceStable(fires, func(i, j int) bool {
-		if fires[i].deadline.Equal(fires[j].deadline) {
-			return fires[i].seq < fires[j].seq
-		}
-		return fires[i].deadline.Before(fires[j].deadline)
-	})
-	for _, p := range fires {
-		p.ch <- p.deadline
-	}
-
 	for {
 		c.mu.Lock()
-		var ready []*fakeTimer
-		var remaining []*fakeTimer
-		for _, t := range c.timers {
-			if t.stopped || t.fired {
-				continue
-			}
-			if !t.deadline.After(deadline) {
-				ready = append(ready, t)
-			} else {
-				remaining = append(remaining, t)
-			}
-		}
-		c.timers = remaining
-		if len(ready) == 0 {
+		afterIndex, timerIndex := c.nextDue(target)
+		if afterIndex < 0 && timerIndex < 0 {
+			c.now = target
 			c.mu.Unlock()
 			return
 		}
-		sort.SliceStable(ready, func(i, j int) bool {
-			if ready[i].deadline.Equal(ready[j].deadline) {
-				return ready[i].seq < ready[j].seq
-			}
-			return ready[i].deadline.Before(ready[j].deadline)
-		})
-		for _, t := range ready {
-			t.fired = true
+		if timerIndex < 0 || (afterIndex >= 0 && beforeAfter(c.pending[afterIndex], c.timers[timerIndex])) {
+			fire := c.pending[afterIndex]
+			c.pending = append(c.pending[:afterIndex], c.pending[afterIndex+1:]...)
+			c.now = fire.deadline
+			c.mu.Unlock()
+			fire.ch <- fire.deadline
+			continue
 		}
+		timer := c.timers[timerIndex]
+		c.timers = append(c.timers[:timerIndex], c.timers[timerIndex+1:]...)
+		c.now = timer.deadline
+		timer.fired = true
 		c.mu.Unlock()
-		for _, t := range ready {
-			if t.fn != nil {
-				t.fn()
-			}
+		if timer.fn != nil {
+			timer.fn()
 		}
 	}
+}
+
+func beforeAfter(after *fakeAfter, timer *fakeTimer) bool {
+	if after.deadline.Equal(timer.deadline) {
+		return after.seq < timer.seq
+	}
+	return after.deadline.Before(timer.deadline)
+}
+
+func (c *Fake) nextDue(target time.Time) (int, int) {
+	afterIndex, timerIndex := -1, -1
+	for index, candidate := range c.pending {
+		if candidate.deadline.After(target) {
+			continue
+		}
+		if afterIndex < 0 || candidate.deadline.Before(c.pending[afterIndex].deadline) ||
+			(candidate.deadline.Equal(c.pending[afterIndex].deadline) && candidate.seq < c.pending[afterIndex].seq) {
+			afterIndex = index
+		}
+	}
+	for index, candidate := range c.timers {
+		if candidate.stopped || candidate.fired || candidate.deadline.After(target) {
+			continue
+		}
+		if timerIndex < 0 || candidate.deadline.Before(c.timers[timerIndex].deadline) ||
+			(candidate.deadline.Equal(c.timers[timerIndex].deadline) && candidate.seq < c.timers[timerIndex].seq) {
+			timerIndex = index
+		}
+	}
+	return afterIndex, timerIndex
 }
