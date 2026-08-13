@@ -702,6 +702,7 @@ page have all been verified.
 | Lo | v1.0.0 | v0.137.0 | std/v0.200.0 | v1.53.0 | brain-fuel/gplodash (`goforge.dev/gplodash`) | `/lo/` published | 651/651 parity; released 2026-07-24 |
 | Chi | v1.0.0 | v0.137.0 | std/v0.201.0 | v5.3.1 | brain-fuel/gpchi (`goforge.dev/gpchi`) | `/chi/` published | 127/127; released 2026-07-24 |
 | goml (surface) | — | v0.144.1 | std/v0.212.0 | — | brain-fuel/goplus (`goforge.dev/goplus`, `cmd/goml`) | `/goplus/` published | ML-family second surface; 418 Godog scenarios, differential parity vs .gp, race + gen -check clean; released 2026-08-12 |
+| goml REPL + value bindings | — | v0.145.0 | std/v0.212.0 | — | brain-fuel/goplus (`goforge.dev/goplus`, `cmd/goml`) | `/goplus/` published | `goml repl` compiles and runs (no interpreter); nullary `let` binds a value, `()` is the unit binder; 425 Godog scenarios, race + gen -check clean; released 2026-08-12 |
 
 ## Verification commands
 
