@@ -14,7 +14,29 @@ import (
 // while pipes and tests take a plain buffered path.
 type lineReader interface {
 	ReadLine(prompt string) (string, error)
+	// Raw reports whether the terminal is in raw mode, where the driver
+	// no longer turns "\n" into "\r\n" and output must do it instead.
+	Raw() bool
 	Close()
+}
+
+// crlf translates bare newlines to CRLF for a raw-mode terminal. Without
+// it every printed line leaves the cursor in the column it ended on, and
+// output walks diagonally down the screen.
+type crlf struct{ w io.Writer }
+
+func (c crlf) Write(p []byte) (int, error) {
+	var b []byte
+	for i, ch := range p {
+		if ch == '\n' && (i == 0 || p[i-1] != '\r') {
+			b = append(b, '\r')
+		}
+		b = append(b, ch)
+	}
+	if _, err := c.w.Write(b); err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }
 
 func newLineReader(in io.Reader, out io.Writer, interactive bool) lineReader {
@@ -46,6 +68,8 @@ func (b *bufReader) ReadLine(prompt string) (string, error) {
 	}
 	return b.sc.Text(), nil
 }
+
+func (b *bufReader) Raw() bool { return false }
 
 func (b *bufReader) Close() {}
 
@@ -80,6 +104,8 @@ func (t *termReader) ReadLine(prompt string) (string, error) {
 	}
 	return strings.TrimRight(line, "\r"), nil
 }
+
+func (t *termReader) Raw() bool { return true }
 
 func (t *termReader) Close() {
 	if t.state != nil {

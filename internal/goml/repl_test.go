@@ -300,3 +300,37 @@ func requireGo(t *testing.T) {
 		t.Skip("compiling REPL test: no go tool")
 	}
 }
+
+// In raw mode the terminal driver no longer turns "\n" into "\r\n", so
+// every write of ours must carry the carriage return itself. Without
+// this the prompt and each result start in the column the previous line
+// ended on, and output walks diagonally down the screen.
+func TestREPLRawModeWritesCRLF(t *testing.T) {
+	var buf bytes.Buffer
+	w := crlf{&buf}
+	n, err := w.Write([]byte("4\ngoml> "))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != len("4\ngoml> ") {
+		t.Fatalf("Write reported %d bytes, want the length it was given", n)
+	}
+	if got := buf.String(); got != "4\r\ngoml> " {
+		t.Fatalf("got %q, want %q", got, "4\r\ngoml> ")
+	}
+
+	// An existing CRLF must not gain a second carriage return.
+	buf.Reset()
+	if _, err := (crlf{&buf}).Write([]byte("a\r\nb\n")); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != "a\r\nb\r\n" {
+		t.Fatalf("got %q, want %q", got, "a\r\nb\r\n")
+	}
+
+	// The buffered reader used for pipes and tests must not translate.
+	var plain lineReader = &bufReader{}
+	if plain.Raw() {
+		t.Error("bufReader must not claim raw mode")
+	}
+}

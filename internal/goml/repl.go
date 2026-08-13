@@ -68,6 +68,12 @@ func REPL(in io.Reader, out, errOut io.Writer, opts REPLOptions) int {
 	}
 	lines := newLineReader(in, r.out, r.interactive)
 	defer lines.Close()
+	if lines.Raw() {
+		// Raw mode disables the driver's newline translation, so every
+		// write of ours has to carry the carriage return itself.
+		r.out = crlf{r.out}
+		r.errOut = crlf{r.errOut}
+	}
 
 	// Interrupts kill the compiled program, not the session: a runaway
 	// evaluation is recoverable without losing what has been defined.

@@ -19,6 +19,14 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.145.1 — the REPL prints correctly on a terminal
+
+`goml repl` enters raw mode for history and cursor editing, which turns
+off the terminal driver's newline translation. Its own writes did not
+compensate, so every printed line left the cursor in the column it ended
+on and output walked diagonally down the screen. Writes now carry the
+carriage return themselves.
+
 ## v0.145.0 — the goml REPL, and a nullary `let` binds a value
 
 `goml repl` evaluates goml interactively. There is no interpreter and
