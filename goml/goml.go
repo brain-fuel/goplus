@@ -7,6 +7,9 @@
 package goml
 
 import (
+	"io"
+	"time"
+
 	"goforge.dev/goplus/internal/goml"
 	"goforge.dev/goplus/internal/version"
 )
@@ -69,6 +72,26 @@ func Run(opts Options) (*Result, error) {
 // Convert transpiles one .goml source to .gp text without generating.
 func Convert(path string, src []byte) ([]byte, error) {
 	return goml.Convert(path, src)
+}
+
+// REPLOptions configures an interactive session.
+type REPLOptions struct {
+	Dir     string        // session directory; "" creates (and removes) a temp one
+	Keep    bool          // keep the session directory and report its path
+	Std     string        // goforge.dev/goplus/std checkout to make importable
+	Timeout time.Duration // per-evaluation timeout for the compiled program
+	Offline bool          // forbid module downloads
+	Env     []string      // extra environment for the go tool
+}
+
+// REPL runs an interactive goml session, returning a process exit code.
+//
+// goml has no interpreter, so every evaluation transpiles the session,
+// generates Go through the ordinary pipeline, and runs it. Declarations
+// are retained and therefore re-execute on each evaluation; expression
+// results are not retained, so an effectful expression runs once.
+func REPL(in io.Reader, out, errOut io.Writer, opts REPLOptions) int {
+	return goml.REPL(in, out, errOut, goml.REPLOptions(opts))
 }
 
 // Version reports the goplus toolchain version goml ships with.

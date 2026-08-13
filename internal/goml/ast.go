@@ -25,10 +25,12 @@ type Attr struct {
 // Decl is a top-level declaration.
 type Decl interface{ declPos() Pos }
 
-// Binder is one binder group: (x y : T), {0 n : Nat}, or [Monoid t].
+// Binder is one binder group: (x y : T), {0 n : Nat}, [Monoid t], or the
+// unit binder () that makes a declaration a nullary function.
 type Binder struct {
 	Implicit bool   // { ... }
 	Instance bool   // [ ... ] — class constraint; Type holds the class app
+	Unit     bool   // () — takes no parameters; marks a function, not a value
 	Quantity string // "", "0", "1", or a multiplicity variable name
 	Names    []string
 	Type     Type

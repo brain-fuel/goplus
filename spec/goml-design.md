@@ -1,6 +1,6 @@
 # goml — an ML-family surface for the Go+ core (design proposal)
 
-Status: **v1 front end implemented and released** (goplus v0.144.1): the `goml` facade package, the `cmd/goml` binary, and
+Status: **v1 front end implemented and released** (goplus v0.145.0): the `goml` facade package, the `cmd/goml` binary, and
 pipeline support for `.goml` sources — see §10 for the surface v1
 covers and the deliberate deferrals.
 
@@ -643,6 +643,11 @@ pipeline. There is no second elaborator.
   total calls** (`Region (Circle n) n` → `Region[Circle(n), n]`);
   `total let`; `@[tail] let rec` with tail-position self-calls lowered
   to `recur`.
+- Bindings: a `let` with **no binders binds a package-level value**
+  (`var Name [Type] = expr`), and `()` is the unit binder that keeps a
+  nullary *function* spellable (`let main () := do { ... }`) — ML's rule,
+  with no sniffing of result types or body shapes. Values cannot host
+  hoisting forms or be generic; each case is a guided error.
 - Data construction: **record literals** (`Settings { Port = p, Host = h }`,
   including the empty and package-qualified forms) lower to Go composite
   literals; `!` is logical negation. GADT headers accept type-sorted
@@ -690,3 +695,46 @@ mixed package is the intended route, and `@[delegate]` consumes such an
 interface normally). `total`, `law`, and the other goml keywords are
 reserved words (unlike `.gp`'s contextual claims) — `total` is not a
 variable name.
+
+## 11. The REPL (v0.145.0)
+
+`goml repl` evaluates goml interactively. The decision that shapes
+everything else: **there is no interpreter**. Writing one would be a
+second implementation of the semantic core, which §1 exists to prevent.
+Every input therefore transpiles the accumulated session, generates Go
+through the ordinary pipeline, and runs it, so the REPL agrees with the
+compiler by construction rather than by diligence.
+
+**Decided consequences, each a real trade:**
+
+- **Bindings re-execute on every evaluation.** Each evaluation is a
+  fresh process, so a retained binding's initializer runs again. This is
+  inherent to compile-and-replay and cannot be fixed without an
+  interpreter. Mitigations: expression results are never retained (a
+  bare effectful call runs exactly once), a binding whose body looks
+  effectful is flagged when defined and marked `!` in `:list`, and the
+  rule is stated in `:help`. Output capture was considered and declined:
+  it would hide console writes while leaving the effects themselves —
+  files, requests, clocks — untouched, which is worse than being honest.
+- **Declarations never run the go tool.** `resolve.Backstop` is a full
+  `go/types` check of the final texts, so a declaration that generates
+  cleanly compiles. Measured, declarations land in ~100ms against
+  ~450ms for expressions.
+- **`:type` reports the erased Go type.** Indices, quantities, and
+  refinements are gone from generated Go by design, so `Vec a (n+1)`
+  reads as `Vec[a]`. The REPL says so once per session and points at
+  `:gp`, which keeps the annotations. Recovering the source-level
+  dependent type would mean surfacing the elaborated core signature —
+  a separate feature, not a REPL feature.
+- **`it` expands inline.** A binding that referenced its own previous
+  definition would be an initialization cycle, since the new definition
+  replaces the old under the same name. So `it + 1` after `21 * 2`
+  retains `let it := (21 * 2) + 1`. It is dropped when the expression is
+  effectful, or when the accumulated text grows past 4KB.
+- **Multi-line submits on a blank line.** Incompleteness is detected
+  positionally (a parse error at end-of-input), but a clausal definition
+  parses after its first clause, so a continuation needs an explicit
+  end. `:{` … `:}` forces a block.
+- **Instances are rendered with `@[laws off]`.** Law generation emits a
+  test importing `pgregory.net/rapid`, which a session module does not
+  require, and the directive is read per instance rather than per file.

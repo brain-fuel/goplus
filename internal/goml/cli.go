@@ -17,6 +17,7 @@ const usageText = `goml is the ML-family surface for the Go+ core.
 Usage:
 
   goml gen [-check] [-stage] [patterns]   transpile .goml and generate *_gml.go
+  goml repl [-keep] [-dir d] [-std d]     evaluate goml interactively
   goml convert [-o dir] file.goml...      print (or write) the .gp lowering
   goml version                            print the toolchain version
 
@@ -25,8 +26,14 @@ package-wide: packages mixing .gp and .goml regenerate both surfaces.
 Exit codes: 0 ok, 1 stale outputs under -check, 2 usage or diagnostics.
 `
 
-// CLIRun is the goml command-line entry point.
+// CLIRun is the goml command-line entry point, reading os.Stdin.
 func CLIRun(args []string, stdout, stderr io.Writer) int {
+	return CLIRunWith(os.Stdin, args, stdout, stderr)
+}
+
+// CLIRunWith is CLIRun with an injectable input stream, so the REPL is
+// drivable from tests and scripted scenarios.
+func CLIRunWith(in io.Reader, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usageText)
 		return 2
@@ -34,6 +41,8 @@ func CLIRun(args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "gen":
 		return runGen(args[1:], stdout, stderr)
+	case "repl":
+		return runREPL(in, args[1:], stdout, stderr)
 	case "convert":
 		return runConvert(args[1:], stdout, stderr)
 	case "version":
@@ -46,6 +55,27 @@ func CLIRun(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stderr, "goml: unknown command %q\n\n", args[0])
 	fmt.Fprint(stderr, usageText)
 	return 2
+}
+
+// runREPL parses the repl subcommand's flags and starts the session.
+func runREPL(in io.Reader, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("repl", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	keep := fs.Bool("keep", false, "keep the session directory and print its path on exit")
+	dir := fs.String("dir", "", "use this session directory instead of a temporary one")
+	std := fs.String("std", "", "path to a goforge.dev/goplus/std checkout to make importable")
+	offline := fs.Bool("offline", false, "forbid module downloads (GOPROXY=off)")
+	timeout := fs.Duration("timeout", 0, "per-evaluation timeout for the compiled program (0 = none)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "goml repl: unexpected argument %q\n", fs.Arg(0))
+		return 2
+	}
+	return REPL(in, stdout, stderr, REPLOptions{
+		Dir: *dir, Keep: *keep, Std: *std, Offline: *offline, Timeout: *timeout,
+	})
 }
 
 func runGen(args []string, stdout, stderr io.Writer) int {

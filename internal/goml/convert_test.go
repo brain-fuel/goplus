@@ -223,6 +223,13 @@ func TestConvertErrors(t *testing.T) {
 		{"literalPat", "module m\nlet F (x : Int) : Int := match x with | 0 => 1", "expected a pattern"},
 		{"guard", "module m\nlet F (x : Int) : Int := match x with | y if y => y", "expected `|` or `=>`"},
 		{"noModule", "let X := 1\n", "expected `module`"},
+		{"valueMatch", "module m\ntype T := | A | B\nlet S : T := A\nlet V : Int := match S with | A => 1 | B => 2", "cannot hoist at package level"},
+		{"valueIf", "module m\nlet V : Int := if C then 1 else 2", "cannot hoist at package level"},
+		{"valueGeneric", "module m\ntype Option (a : Type) := | Some (value : a) | None\nlet Nothing : Option a := None", "cannot be generic"},
+		{"valueRec", "module m\nlet rec X : Int := X", "`let rec` needs binders"},
+		{"valueTotal", "module m\ntotal let X : Int := 1", "`total` describes a function"},
+		{"valueAttr", "module m\n@[laws \"out=lawtest\"]\nlet X : Int := 1", "binds a value"},
+		{"valueLambda", "module m\nlet F := fun (x : Int) => x", "needs a result type"},
 		{"whileMatch", "module m\ntype T := | A | B\nlet F (t : T) : Int := do { while (match t with | A => true | B => false) do { }; 1 }", "while condition cannot contain a match"},
 	}
 	for _, tc := range cases {
@@ -527,7 +534,7 @@ type Settings := { Port : Int; Host : String }
 
 let Make (p : Int) (h : String) : Settings := Settings { Port = p, Host = h }
 
-let Empty : Settings := Settings { }
+let Empty () : Settings := Settings { }
 
 let Toggle (b : Bool) : Bool := !b
 `
@@ -549,6 +556,75 @@ func Empty() Settings {
 
 func Toggle(b bool) bool {
 	return !b
+}
+`
+	if got != want {
+		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+func TestConvertNullaryValues(t *testing.T) {
+	src := `module conf
+
+type Settings := { Port : Int; Host : String }
+
+let Answer := 42
+
+let Greeting : String := "hi"
+
+let Defaults : Settings := Settings { Port = 80, Host = "localhost" }
+
+let Doubled : Int := Answer * 2
+
+let Inc : Int -> Int := fun (x : Int) => x + 1
+`
+	got := convertOK(t, src)
+	want := `package conf
+
+type Settings struct {
+	Port int
+	Host string
+}
+
+var Answer = 42
+
+var Greeting string = "hi"
+
+var Defaults Settings = Settings{Port: 80, Host: "localhost"}
+
+var Doubled int = Answer * 2
+
+var Inc func(int) int = func(x int) int { return x + 1 }
+`
+	if got != want {
+		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+func TestConvertUnitBinderProcedures(t *testing.T) {
+	src := `module app
+
+let Boot () : Unit := start ()
+
+let Compute () : Int := 1 + 1
+
+let main () := do {
+  println "hi"
+}
+`
+	got := convertOK(t, src)
+	want := `package app
+
+func Boot() {
+	start()
+}
+
+func Compute() int {
+	return 1 + 1
+}
+
+func main() {
+	println("hi")
 }
 `
 	if got != want {

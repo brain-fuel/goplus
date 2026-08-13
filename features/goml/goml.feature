@@ -187,3 +187,54 @@ Feature: goml, the ML-family surface
     And the file "typed_gml.go" contains "goplus:variant (Expr[a]) Lit(v int) Expr[int]"
     And the file "typed_gml.go" contains "return Settings{Port: p, Host: h}"
     And the file "typed_gml.go" contains "return !b"
+
+  Scenario: A nullary goml let binds a package-level value
+    Given a module "example.com/values" using the goplus standard library
+    And a file "conf.goml":
+      """
+      module conf
+
+      type Color :=
+        | Red
+        | Green
+
+      let Port := 8080
+
+      let NextPort : Int := Port + 1
+
+      let Current : Color := Red
+
+      let Describe (c : Color) : String :=
+        match c with
+        | Red => "red"
+        | Green => "green"
+
+      let CurrentName : String := Describe Current
+
+      let Start () : Unit := println CurrentName
+      """
+    When I run goml with arguments "gen ."
+    Then the exit code is 0
+    And the file "conf_gml.go" is valid Go
+    And the file "conf_gml.go" contains "var Port = 8080"
+    And the file "conf_gml.go" contains "var NextPort int = Port + 1"
+    And the file "conf_gml.go" does not contain "func Port()"
+    And the file "conf_gml.go" contains "func Start()"
+
+  Scenario: A package-level value cannot hold a match body
+    Given a file "bad.goml":
+      """
+      module bad
+
+      type T :=
+        | A
+        | B
+
+      let S : T := A
+
+      let V : Int := match S with | A => 1 | B => 2
+      """
+    When I run goml with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "bad.goml:9"
+    And stderr contains "cannot hoist at package level"

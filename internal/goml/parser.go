@@ -215,6 +215,13 @@ func (p *parser) parseBinder() *Binder {
 	var closer Kind
 	switch t.Kind {
 	case LParen:
+		// The unit binder: `let main () := ...` is a nullary function,
+		// distinguishing it from `let X := ...`, which binds a value.
+		if p.toks[p.i+1].Kind == RParen {
+			p.i += 2
+			b.Unit = true
+			return b
+		}
 		closer = RParen
 	case LBrace:
 		closer = RBrace

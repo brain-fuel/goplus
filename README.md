@@ -19,6 +19,59 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.145.0 — the goml REPL, and a nullary `let` binds a value
+
+`goml repl` evaluates goml interactively. There is no interpreter and
+there will not be one: every input transpiles the accumulated session,
+generates Go through the ordinary pipeline, and runs it, so the REPL
+agrees with the compiler by construction.
+
+```
+goml> let Double (n : Int) : Int := n * 2
+goml> Double 21
+42
+goml> let Port := 8080
+goml> let Next : Int := Port + 1
+goml> Next
+8081
+goml> :type Double
+func(n int) int
+```
+
+Declarations accumulate; `:list`, `:undo`, `:drop`, `:load`, and `:save`
+manage them, `:type` reports the (erased) Go type, and `:gp`/`:go` show
+the lowering and the generated Go. Multi-line input continues while it is
+incomplete and submits on a blank line; imports of common standard
+packages are added on first use; `it` is the last result.
+
+The honest caveat, stated in `:help`: because each evaluation compiles
+and runs the whole session, **retained bindings re-execute every time**.
+Expression results are never retained, so a bare effectful call runs
+exactly once, and a binding that looks effectful is flagged when you
+define it. Declarations skip the run entirely — the pipeline's type
+check is the same one the compiler performs — which is why they land in
+about a tenth of the time an expression takes.
+
+
+
+goml follows ML's rule: **binders present means a function, none means a
+value**. `let Port : Int := 8080` now lowers to `var Port int = 8080`, so
+bindings compose (`let Next : Int := Port + 1`); previously every `let`
+became a function, making `Port + 1` a type error and leaving
+`let Port := 8080` generating invalid Go. A nullary *function* takes the
+unit binder, exactly as OCaml spells it:
+
+```
+let Answer := 42                 -- var Answer = 42
+let main () := do { ... }        -- func main() { ... }
+let Boot () : Unit := start ()   -- func Boot() { start() }
+```
+
+A package-level value cannot host statements or be generic, so a `match`,
+expression-`if`, `?`, `let*`, `select`, or free type variable in a value
+body is a guided error naming both fixes (`()` or a parameter list) rather
+than a silent fallback. Values initialize in Go's dependency order.
+
 ## v0.144.1 — goml surface completion
 
 Writing a full worked tutorial against v0.144.0 surfaced three holes,
@@ -776,6 +829,7 @@ goplus version
 # The ML-family surface: .goml sources emit <file>_gml.go via the same pipeline.
 goml gen ./...              # transpile *.goml and generate *_gml.go
 goml gen -check ./...       # exit 1 if any generated file is stale (CI)
+goml repl                   # evaluate goml interactively
 goml convert file.goml      # print the .gp lowering
 goml version
 ```

@@ -113,6 +113,12 @@ func (c *converter) printLet(d *LetDecl, ns *NamespaceDecl) {
 	}
 
 	sig := c.buildSig(d, ns)
+	// ML's rule: binders present means a function, none means a value.
+	// `()` is the unit binder, so a nullary function stays spellable.
+	if isValueLet(d, ns) {
+		c.printValueLet(d, sig, tailRec)
+		return
+	}
 	kw := "func"
 	if d.Total {
 		kw = "total func"
@@ -158,13 +164,141 @@ func (c *converter) printLet(d *LetDecl, ns *NamespaceDecl) {
 	c.b.WriteString("}\n")
 }
 
+// isValueLet reports whether a declaration binds a package-level value:
+// no binders at all (not even `()`), file scope, expression body.
+func isValueLet(d *LetDecl, ns *NamespaceDecl) bool {
+	return ns == nil && d.Sig == nil && len(d.Binders) == 0 && d.Body != nil
+}
+
+// printValueLet emits `var Name [Type] = expr`. A package-level value
+// cannot host statements or be generic, so each impossible case is a
+// guided error naming the fix rather than a silent fallback.
+func (c *converter) printValueLet(d *LetDecl, sig fnSig, tailRec bool) {
+	switch {
+	case tailRec:
+		c.failf(d.Pos, "@[tail] describes a recursive function; %s binds a value — add `()` to make it a function", d.Name)
+	case d.Rec:
+		c.failf(d.Pos, "`let rec` needs binders: %s binds a value, and a value cannot be defined in terms of itself", d.Name)
+	case d.Total:
+		c.failf(d.Pos, "`total` describes a function; %s binds a value — add `()` to make it a function", d.Name)
+	}
+	for _, a := range d.Attrs {
+		if a.Name != "tail" {
+			c.failf(a.Pos, "@[%s] applies to type, class, or instance declarations; %s binds a value", a.Name, d.Name)
+		}
+	}
+	if free := valueFreeVar(sig); free != "" {
+		c.failf(d.Pos, "a package-level value cannot be generic; %s leaves %s free — add `()` or a parameter list to make %s a function", d.Name, free, d.Name)
+	}
+	c.checkValueBody(d, d.Body)
+
+	body := ""
+	if fn, ok := d.Body.(*Fun); ok {
+		body = c.funStringTyped(fn, d.Result)
+	} else {
+		body = c.exprString(d.Body, 0)
+	}
+	if d.Result == nil {
+		fmt.Fprintf(c.b, "var %s = %s\n", d.Name, body)
+		return
+	}
+	fmt.Fprintf(c.b, "var %s %s = %s\n", d.Name, c.fullTypeString(d.Result), body)
+}
+
+// valueFreeVar names the first type or index variable a value's type
+// leaves free ("" when it is ground).
+func valueFreeVar(sig fnSig) string {
+	if len(sig.tparams) > 0 {
+		return strings.Fields(sig.tparams[0])[0]
+	}
+	if len(sig.params) > 0 {
+		return strings.Fields(sig.params[0])[1] // "0 n nat"
+	}
+	return ""
+}
+
+// checkValueBody rejects bodies whose Go+ lowering hoists statements
+// before the declaration — impossible at package level. Lambda bodies
+// are skipped: they render as function literals with their own rules.
+func (c *converter) checkValueBody(d *LetDecl, e Expr) {
+	form := ""
+	switch e := e.(type) {
+	case *Match:
+		form = "a match expression"
+	case *If:
+		form = "an if/then/else expression"
+	case *Try:
+		form = "postfix `?`"
+	case *LetIn:
+		form = "a `let ... ;` binding"
+	case *LetStar:
+		form = "`let*`"
+	case *SelectExpr:
+		form = "`select`"
+	case *DoBlock:
+		form = "a `do` block"
+	case *App:
+		c.checkValueBody(d, e.Fn)
+		for _, a := range e.Args {
+			c.checkValueBody(d, a)
+		}
+		return
+	case *Binop:
+		c.checkValueBody(d, e.L)
+		c.checkValueBody(d, e.R)
+		return
+	case *Unary:
+		c.checkValueBody(d, e.X)
+		return
+	case *Selector:
+		c.checkValueBody(d, e.X)
+		return
+	case *RecordLit:
+		for _, f := range e.Fields {
+			c.checkValueBody(d, f.Val)
+		}
+		return
+	default:
+		return
+	}
+	c.failf(e.exprPos(),
+		"a nullary let binds a value, and %s needs statements that cannot hoist at package level; add `()` to keep %s a function (called as `%s ()`), or give it a parameter list",
+		form, d.Name, d.Name)
+}
+
+// funStringTyped renders a lambda, taking its result type from the
+// declaration's annotation when the lambda omits one.
+func (c *converter) funStringTyped(e *Fun, want Type) string {
+	if e.Result != nil {
+		return c.funString(e)
+	}
+	if want == nil {
+		c.failf(e.Pos, "this lambda needs a result type: `fun (x : Int) : Int => ...`, or annotate the binding")
+	}
+	n := 0
+	for _, b := range e.Binders {
+		n += len(b.Names)
+	}
+	t := want
+	for i := 0; i < n; i++ {
+		arrow, ok := t.(*TypeArrow)
+		if !ok {
+			c.failf(e.Pos, "this lambda needs a result type: `fun (x : Int) : Int => ...`")
+		}
+		t = arrow.To
+	}
+	typed := *e
+	typed.Result = t
+	return c.funString(&typed)
+}
+
 func (c *converter) buildSig(d *LetDecl, ns *NamespaceDecl) fnSig {
 	var sig fnSig
 
 	// Bound names: every value binder name.
 	bound := map[string]bool{}
 	for _, b := range d.Binders {
-		if b.Instance {
+		if b.Instance || b.Unit {
 			continue
 		}
 		for _, n := range b.Names {
@@ -178,6 +312,9 @@ func (c *converter) buildSig(d *LetDecl, ns *NamespaceDecl) fnSig {
 	type tparam struct{ name, constraint string }
 	var tparams []tparam
 	for _, b := range d.Binders {
+		if b.Unit {
+			continue
+		}
 		if b.Instance {
 			app, ok := b.Type.(*TypeApp)
 			if !ok || len(app.Args) != 1 {
@@ -218,8 +355,8 @@ func (c *converter) buildSig(d *LetDecl, ns *NamespaceDecl) fnSig {
 	recvVars := map[string]bool{}
 	binders := d.Binders
 	if ns != nil {
-		if len(binders) == 0 || binders[0].Implicit || binders[0].Instance || len(binders[0].Names) != 1 {
-			c.failf(d.Pos, "a namespace let starts with one explicit receiver binder")
+		if len(binders) == 0 || binders[0].Implicit || binders[0].Instance || binders[0].Unit || len(binders[0].Names) != 1 {
+			c.failf(d.Pos, "a namespace let starts with one explicit receiver binder (a value binding belongs at file scope)")
 		}
 		recv := binders[0]
 		headName := ""
@@ -245,7 +382,7 @@ func (c *converter) buildSig(d *LetDecl, ns *NamespaceDecl) fnSig {
 	// Inference: free signature variables not declared anywhere.
 	vs := newVarSet()
 	for _, b := range binders {
-		if !b.Instance && !b.Implicit {
+		if !b.Instance && !b.Implicit && !b.Unit {
 			c.collectVars(b.Type, bound, vs)
 		}
 	}
@@ -290,6 +427,9 @@ func (c *converter) buildSig(d *LetDecl, ns *NamespaceDecl) fnSig {
 				}
 			}
 			continue
+		}
+		if b.Unit {
+			continue // `()` declares a nullary function, no parameter
 		}
 		names := b.Names
 		quantity := b.Quantity
