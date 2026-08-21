@@ -703,6 +703,7 @@ page have all been verified.
 | Chi | v1.0.0 | v0.137.0 | std/v0.201.0 | v5.3.1 | brain-fuel/gpchi (`goforge.dev/gpchi`) | `/chi/` published | 127/127; released 2026-07-24 |
 | goml (surface) | — | v0.144.1 | std/v0.212.0 | — | brain-fuel/goplus (`goforge.dev/goplus`, `cmd/goml`) | `/goplus/` published | ML-family second surface; 418 Godog scenarios, differential parity vs .gp, race + gen -check clean; released 2026-08-12 |
 | goml REPL + value bindings | — | v0.145.0 | std/v0.212.0 | — | brain-fuel/goplus (`goforge.dev/goplus`, `cmd/goml`) | `/goplus/` published | `goml repl` compiles and runs (no interpreter); nullary `let` binds a value, `()` is the unit binder; 425 Godog scenarios, race + gen -check clean; released 2026-08-12 |
+| goml Go-interop | — | v0.146.0 | std/v0.212.0 | — | brain-fuel/goplus (`goforge.dev/goplus`, `cmd/goml`) | `/goplus/` published | `&x`, `xs[i]`, channel send/recv, imported ctor patterns, if-as-statement; two wrong lowerings fixed (void if/else ran both arms; binders blanked inside record literals); forced by the knockknock C2C example; 434 scenarios, race + gen -check clean; released 2026-08-20 |
 
 ## Verification commands
 
