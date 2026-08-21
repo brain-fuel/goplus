@@ -738,3 +738,24 @@ compiler by construction rather than by diligence.
 - **Instances are rendered with `@[laws off]`.** Law generation emits a
   test importing `pgregory.net/rapid`, which a session module does not
   require, and the directive is read per instance rather than per file.
+
+## 12. Go interop (v0.146.0)
+
+The `knockknock` example — two services authenticating machine-to-machine
+over HTTP — was the forcing case for the operators real Go code needs.
+Added: `&x` and `*p`; indexing `xs[i]`; channel send and receive outside
+`select`; imported constructors in patterns (`result.Ok v`, where the
+qualifier is lowercase and so cannot be told from a binder by case
+alone); and `if` as a statement inside a loop body, where an empty
+`else do { }` elides rather than emitting a dead block.
+
+It also exposed two lowerings that produced wrong code instead of
+refusing, both now fixed and regression-tested: a void function's
+`if/else` fell through and ran both arms, and a match binder used only
+inside a record literal or `do` block was blanked to `_`.
+
+Deliberately still absent, because each wants syntax rather than a
+guess: type conversions (`[]byte(s)`), `make`, and slice literals. Mixed
+packages cover them — a `.go` file beside the `.goml` ones — which is the
+documented escape hatch, and the example uses exactly three such
+helpers. Reserved words now include `send`, `recv`, and `in`.

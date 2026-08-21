@@ -276,6 +276,15 @@ type DotSegment struct {
 
 func (e *DotSegment) exprPos() Pos { return e.Pos }
 
+// IndexExpr is a slice, array, or map index: xs[i].
+type IndexExpr struct {
+	X     Expr
+	Index Expr
+	Pos   Pos
+}
+
+func (e *IndexExpr) exprPos() Pos { return e.Pos }
+
 // Witness is an explicit instance witness argument: @IntAdd.
 type Witness struct {
 	Name string
@@ -446,6 +455,15 @@ type DoFor struct {
 }
 
 func (s *DoFor) stmtPos() Pos { return s.Pos }
+
+// DoSend is a channel send: ch <- v.
+type DoSend struct {
+	Chan Expr
+	Val  Expr
+	Pos  Pos
+}
+
+func (s *DoSend) stmtPos() Pos { return s.Pos }
 
 // DoDefer and DoGo wrap a call.
 type DoDefer struct {

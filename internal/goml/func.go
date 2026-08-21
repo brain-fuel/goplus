@@ -253,6 +253,10 @@ func (c *converter) checkValueBody(d *LetDecl, e Expr) {
 	case *Selector:
 		c.checkValueBody(d, e.X)
 		return
+	case *IndexExpr:
+		c.checkValueBody(d, e.X)
+		c.checkValueBody(d, e.Index)
+		return
 	case *RecordLit:
 		for _, f := range e.Fields {
 			c.checkValueBody(d, f.Val)
@@ -602,6 +606,15 @@ func (w *fnWriter) writeTail(e Expr, ind string) {
 		w.flush()
 		fmt.Fprintf(c.b, "%sif %s {\n", ind, cond)
 		w.writeTail(e.Then, ind+"\t")
+		// Falling through to the else arm is only sound when the then
+		// arm returns. A function with no result does not, so its else
+		// must be a real else — otherwise both arms would run.
+		if !w.returns {
+			fmt.Fprintf(c.b, "%s} else {\n", ind)
+			w.writeTail(e.Else, ind+"\t")
+			fmt.Fprintf(c.b, "%s}\n", ind)
+			return
+		}
 		fmt.Fprintf(c.b, "%s}\n", ind)
 		w.writeTail(e.Else, ind)
 	case *LetIn:
@@ -772,13 +785,21 @@ func (c *converter) ctorOf(name string) *ctorInfo {
 	return nil
 }
 
-// usedNames collects identifier uses in an expression.
+// usedNames collects identifier uses in an expression, so a match arm
+// can print a binder it never reads as `_`. It must visit every form an
+// arm body can contain: missing one silently blanks a live binder.
 func usedNames(e Expr, out map[string]bool) {
 	switch e := e.(type) {
+	case nil:
 	case *Ident:
+		out[e.Name] = true
+	case *Witness:
 		out[e.Name] = true
 	case *Selector:
 		usedNames(e.X, out)
+	case *IndexExpr:
+		usedNames(e.X, out)
+		usedNames(e.Index, out)
 	case *App:
 		usedNames(e.Fn, out)
 		for _, a := range e.Args {
@@ -803,10 +824,55 @@ func usedNames(e Expr, out map[string]bool) {
 	case *LetIn:
 		usedNames(e.Val, out)
 		usedNames(e.Body, out)
+	case *LetStar:
+		usedNames(e.Val, out)
+		usedNames(e.Body, out)
 	case *Fun:
 		usedNames(e.Body, out)
-	case *Witness:
-		out[e.Name] = true
+	case *RecordLit:
+		usedNames(e.Type, out)
+		for _, f := range e.Fields {
+			usedNames(f.Val, out)
+		}
+	case *DoBlock:
+		for _, st := range e.Stmts {
+			usedInStmt(st, out)
+		}
+	case *SelectExpr:
+		for _, arm := range e.Arms {
+			usedNames(arm.Chan, out)
+			usedNames(arm.Val, out)
+			usedInStmt(arm.Body, out)
+		}
+	}
+}
+
+// usedInStmt is usedNames over a do-block statement.
+func usedInStmt(st DoStmt, out map[string]bool) {
+	switch st := st.(type) {
+	case nil:
+	case *DoLet:
+		usedNames(st.Val, out)
+	case *DoAssign:
+		usedNames(st.Target, out)
+		usedNames(st.Val, out)
+	case *DoWhile:
+		usedNames(st.Cond, out)
+		usedNames(st.Body, out)
+	case *DoFor:
+		usedNames(st.Seq, out)
+		usedNames(st.Body, out)
+	case *DoSend:
+		usedNames(st.Chan, out)
+		usedNames(st.Val, out)
+	case *DoDefer:
+		usedNames(st.Call, out)
+	case *DoGo:
+		usedNames(st.Call, out)
+	case *DoReturn:
+		usedNames(st.Val, out)
+	case *DoExprStmt:
+		usedNames(st.X, out)
 	}
 }
 
@@ -830,6 +896,8 @@ func (c *converter) exprString(e Expr, prec int) string {
 		return e.Name
 	case *Selector:
 		return c.exprString(e.X, atomPrec) + "." + e.Name
+	case *IndexExpr:
+		return c.exprString(e.X, atomPrec) + "[" + c.exprString(e.Index, 0) + "]"
 	case *DotSegment:
 		return "." + e.Name
 	case *App:

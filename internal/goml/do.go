@@ -71,6 +71,12 @@ func (w *fnWriter) writeDoStmt(st DoStmt, ind string) {
 		fmt.Fprintf(c.b, "%sfor %s := range %s {\n", ind, strings.Join(st.Names, ", "), seq)
 		w.writeDoStmts(st.Body, ind+"\t")
 		fmt.Fprintf(c.b, "%s}\n", ind)
+	case *DoSend:
+		w.prep(ind)
+		ch := c.exprString(st.Chan, atomPrec)
+		val := c.exprString(st.Val, 0)
+		w.flush()
+		fmt.Fprintf(c.b, "%s%s <- %s\n", ind, ch, val)
 	case *DoDefer:
 		w.prep(ind)
 		call := c.exprString(st.Call, 0)
@@ -100,6 +106,8 @@ func (w *fnWriter) writeDoStmt(st DoStmt, ind string) {
 			w.writeStmtMatch(x, ind)
 		case *DoBlock:
 			w.writeDoStmts(x, ind)
+		case *If:
+			w.writeStmtExpr(x, ind)
 		default:
 			w.prep(ind)
 			s := c.exprString(st.X, 0)
@@ -150,6 +158,12 @@ func (w *fnWriter) writeStmtExpr(e Expr, ind string) {
 		w.flush()
 		fmt.Fprintf(c.b, "%sif %s {\n", ind, cond)
 		w.writeStmtExpr(e.Then, ind+"\t")
+		// An empty else is how goml spells "no else", since `if` is an
+		// expression and always has both arms.
+		if isEmptyBranch(e.Else) {
+			fmt.Fprintf(c.b, "%s}\n", ind)
+			return
+		}
 		fmt.Fprintf(c.b, "%s} else {\n", ind)
 		w.writeStmtExpr(e.Else, ind+"\t")
 		fmt.Fprintf(c.b, "%s}\n", ind)
@@ -195,6 +209,17 @@ func (w *fnWriter) noHoist(pos Pos) {
 	if len(w.hoist) > 0 {
 		w.c.failf(pos, "select arms cannot contain match expressions; bind before the select")
 	}
+}
+
+// isEmptyBranch reports whether a branch does nothing: `do { }` or `()`.
+func isEmptyBranch(e Expr) bool {
+	switch e := e.(type) {
+	case *Unit:
+		return true
+	case *DoBlock:
+		return len(e.Stmts) == 0
+	}
+	return false
 }
 
 func allWild(names []string) bool {

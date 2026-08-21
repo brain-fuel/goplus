@@ -305,13 +305,29 @@ func (p *parser) parsePattern() Pattern {
 			return &PWild{Pos: t.Pos}
 		}
 		if !isUpperName(t.Text) {
-			return &PBind{Name: t.Text, Pos: t.Pos}
+			// A lowercase name followed by `.Ctor` is an imported
+			// constructor (result.Ok v); alone it binds.
+			if !p.at(Dot) || !isUpperName(p.toks[p.i+1].Text) {
+				return &PBind{Name: t.Text, Pos: t.Pos}
+			}
+			p.i++
+			return p.parseCtorPattern(&PCtor{Pkg: t.Text, Name: p.expect(IDENT, "constructor name").Text, Pos: t.Pos})
 		}
 		ctor := &PCtor{Name: t.Text, Pos: t.Pos}
 		if _, ok := p.accept(Dot); ok {
 			ctor.Pkg = ctor.Name
 			ctor.Name = p.expect(IDENT, "constructor name").Text
 		}
+		return p.parseCtorPattern(ctor)
+	}
+	p.fail(t.Pos, "expected a pattern, found %q", t.Text)
+	return nil
+}
+
+// parseCtorPattern reads a constructor pattern's arguments and optional
+// `as` binder, having already consumed its name.
+func (p *parser) parseCtorPattern(ctor *PCtor) Pattern {
+	{
 		for {
 			a := p.tok()
 			if a.Kind == IDENT && a.Text == "_" {
@@ -342,8 +358,6 @@ func (p *parser) parsePattern() Pattern {
 		}
 		return ctor
 	}
-	p.fail(t.Pos, "expected a pattern, found %q", t.Text)
-	return nil
 }
 
 // ----------------------------------------------------------------- types
@@ -808,6 +822,10 @@ func (p *parser) parseDoStmt() DoStmt {
 		return &DoReturn{Val: p.parseExpr(), Pos: t.Pos}
 	}
 	e := p.parseExpr()
+	if arrow, ok := p.accept(LArrow); ok {
+		// A channel send: ch <- v.
+		return &DoSend{Chan: e, Val: p.parseExpr(), Pos: arrow.Pos}
+	}
 	if _, ok := p.accept(Assign); ok {
 		switch e.(type) {
 		case *Ident, *Selector:
@@ -902,7 +920,29 @@ func (p *parser) parseUnary() Expr {
 	if t, ok := p.accept(Bang); ok {
 		return &Unary{Op: "!", X: p.parseUnary(), Pos: t.Pos}
 	}
+	if t, ok := p.accept(Amp); ok {
+		return &Unary{Op: "&", X: p.parseUnary(), Pos: t.Pos}
+	}
+	if t, ok := p.accept(LArrow); ok {
+		// A channel receive: <-ch.
+		return &Unary{Op: "<-", X: p.parseUnary(), Pos: t.Pos}
+	}
+	if t, ok := p.accept(Star); ok {
+		// Prefix `*` dereferences; binary multiplication is only ever
+		// parsed after an operand, so the two cannot collide.
+		return &Unary{Op: "*", X: p.parseUnary(), Pos: t.Pos}
+	}
 	return p.parseApp()
+}
+
+// parseArg parses one juxtaposition argument, admitting the prefix
+// operators that Go APIs need (`f &x`). Multiplication is excluded:
+// `f * x` must keep reading as a product.
+func (p *parser) parseArg() Expr {
+	if t, ok := p.accept(Amp); ok {
+		return &Unary{Op: "&", X: p.parseArg(), Pos: t.Pos}
+	}
+	return p.parsePostfix()
 }
 
 func (p *parser) parseApp() Expr {
@@ -912,7 +952,7 @@ func (p *parser) parseApp() Expr {
 	// before them; parenthesize an application to span lines. Without
 	// this rule juxtaposition would swallow the next declaration's name.
 	for p.atOperandStart() && p.tok().Pos.Line == p.toks[p.i-1].Pos.Line {
-		args = append(args, p.parsePostfix())
+		args = append(args, p.parseArg())
 	}
 	if len(args) == 0 {
 		return head
@@ -922,7 +962,7 @@ func (p *parser) parseApp() Expr {
 
 func (p *parser) atOperandStart() bool {
 	switch p.tok().Kind {
-	case IDENT, INT, FLOAT, STRING, LParen, At:
+	case IDENT, INT, FLOAT, STRING, LParen, At, Amp:
 		return true
 	}
 	return false
@@ -942,6 +982,16 @@ func (p *parser) parsePostfix() Expr {
 		// expression (do blocks are introduced by `do`).
 		if p.at(LBrace) && isRecordHead(e) {
 			e = p.parseRecordLit(e)
+			continue
+		}
+		// An index: xs[i]. In expression position `[` can only mean
+		// this — instance binders and attributes live in declarations.
+		if p.at(LBrack) {
+			lb := p.tok()
+			p.i++
+			idx := p.parseExpr()
+			p.expect(RBrack, "`]` closing an index")
+			e = &IndexExpr{X: e, Index: idx, Pos: lb.Pos}
 			continue
 		}
 		return e

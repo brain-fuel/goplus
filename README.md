@@ -19,6 +19,30 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.146.0 — goml grows the Go-interop surface
+
+Writing two networked applications in goml (the
+[knockknock](https://github.com/brain-fuel/knockknock) example: two
+services that authenticate machine-to-machine and then tell each other a
+joke) forced out most of what real Go interop needs, plus two bugs that
+generated wrong code rather than refusing.
+
+**Two correctness fixes.** In a function with no result, an
+`if … then … else …` dropped the `else` and ran *both* arms — the
+then-arm does not return, so falling through was never sound. And a
+match binder used only inside a record literal or a `do` block was
+printed as `_`, so live code failed to compile with "undefined".
+
+**New surface:** `&x` and `*p`; indexing `xs[i]`; channel send `ch <- v`
+and receive `<- ch` outside `select`; `result.Ok v` and other imported
+constructors in patterns; `if` as a statement inside loop bodies, where
+an empty `else do { }` elides.
+
+Still absent, and now documented: type conversions (`[]byte(s)`), `make`,
+and slice literals. A mixed package — a `.go` file beside the `.goml`
+ones — is the intended route until they land. `send`, `recv`, and `in`
+are reserved words.
+
 ## v0.145.1 — the REPL prints correctly on a terminal
 
 `goml repl` enters raw mode for history and cursor editing, which turns

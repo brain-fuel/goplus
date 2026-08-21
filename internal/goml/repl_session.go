@@ -246,6 +246,9 @@ func looksEffectful(e Expr) bool {
 				return
 			}
 			walk(e.X)
+		case *IndexExpr:
+			walk(e.X)
+			walk(e.Index)
 		case *App:
 			walk(e.Fn)
 			for _, a := range e.Args {

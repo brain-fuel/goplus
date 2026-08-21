@@ -631,3 +631,150 @@ func main() {
 		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}
 }
+
+// A function with no result does not return from its then-arm, so its
+// else must be a real else. Falling through would run both arms.
+func TestConvertVoidIfKeepsElse(t *testing.T) {
+	src := `module m
+
+let Report (bad : Bool) : Unit :=
+  if bad then do {
+    warn ()
+  } else do {
+    proceed ()
+  }
+`
+	got := convertOK(t, src)
+	want := `package m
+
+func Report(bad bool) {
+	if bad {
+		warn()
+	} else {
+		proceed()
+	}
+}
+`
+	if got != want {
+		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+// A binder used only inside a record literal or a do block is still
+// used; blanking it would generate code that does not compile.
+func TestConvertBinderUsedInsideNestedForms(t *testing.T) {
+	src := `module m
+
+type Box := { Held : Int }
+
+type Maybe :=
+  | Full (value : Int)
+  | Empty
+
+let Wrap (m : Maybe) : Box :=
+  match m with
+  | Full v => Box { Held = v }
+  | Empty => Box { Held = 0 }
+
+let Shout (m : Maybe) : Unit :=
+  match m with
+  | Full v => do { println v }
+  | Empty => do { println "empty" }
+`
+	got := convertOK(t, src)
+	if !strings.Contains(got, "case Full(v):\n\t\treturn Box{Held: v}") {
+		t.Fatalf("binder used in a record literal was blanked:\n%s", got)
+	}
+	if !strings.Contains(got, "case Full(v):\n\t\tprintln(v)") {
+		t.Fatalf("binder used in a do block was blanked:\n%s", got)
+	}
+}
+
+func TestConvertGoInteropForms(t *testing.T) {
+	src := `module m
+
+import "encoding/json"
+import "strings"
+
+type Cfg := { Name : String }
+
+let Decode (data : Slice Byte) : Cfg := do {
+  let mut c := Cfg { Name = "" };
+  let _ := json.Unmarshal data &c;
+  c
+}
+
+let Tail (s : String) : String := do {
+  let parts := strings.SplitN s "." 2;
+  parts[1]
+}
+
+let Relay (src : Chan Int) (dst : Chan Int) : Unit := do {
+  let v := <- src;
+  dst <- v * 2
+}
+
+let Deref (p : Ptr Int) : Int := *p
+`
+	got := convertOK(t, src)
+	for _, want := range []string{
+		"json.Unmarshal(data, &c)",
+		"return parts[1]",
+		"v := <-src",
+		"dst <- v * 2",
+		"return *p",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+func TestConvertQualifiedConstructorPatterns(t *testing.T) {
+	src := `module m
+
+import "goforge.dev/goplus/std/result" as result
+
+let Describe (r : result.Result Int Error) : String :=
+  match r with
+  | result.Ok v => "got it"
+  | result.Err e => "failed"
+`
+	got := convertOK(t, src)
+	if !strings.Contains(got, "case result.Ok(_):") || !strings.Contains(got, "case result.Err(_):") {
+		t.Fatalf("imported constructors did not match:\n%s", got)
+	}
+}
+
+// An if used as a statement inside a loop must lower as a statement,
+// and an empty else is how goml spells "no else".
+func TestConvertIfInsideLoop(t *testing.T) {
+	src := `module m
+
+let Any (xs : Slice Int) : Bool := do {
+  let mut found := false;
+  for _, x in xs do {
+    if x > 10 then do {
+      found := true
+    } else do { }
+  };
+  found
+}
+`
+	got := convertOK(t, src)
+	want := `package m
+
+func Any(xs []int) bool {
+	found := false
+	for _, x := range xs {
+		if x > 10 {
+			found = true
+		}
+	}
+	return found
+}
+`
+	if got != want {
+		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}

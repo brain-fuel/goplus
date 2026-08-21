@@ -99,6 +99,7 @@ const (
 	AndAnd
 	OrOr
 	Bang // !
+	Amp  // & (address-of)
 	At   // @
 )
 
@@ -301,7 +302,7 @@ func (l *lexer) tokens() ([]Token, *Error) {
 			{":=", Assign}, {"==", EqEq}, {"!=", NotEq}, {"<=", LtEq},
 			{">=", GtEq}, {"&&", AndAnd}, {"||", OrOr}, {"|>", Pipe},
 			{"->", Arrow}, {"=>", FatArrow}, {"<-", LArrow},
-			{"=", Eq}, {":", Colon}, {"?", Question}, {"|", Bar}, {"!", Bang},
+			{"=", Eq}, {":", Colon}, {"?", Question}, {"|", Bar}, {"!", Bang}, {"&", Amp},
 			{"(", LParen}, {")", RParen}, {"[", LBrack}, {"]", RBrack},
 			{"{", LBrace}, {"}", RBrace}, {",", Comma}, {";", Semi},
 			{".", Dot}, {"+", Plus}, {"-", Minus}, {"*", Star},
