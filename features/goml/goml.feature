@@ -259,8 +259,8 @@ Feature: goml, the ML-family surface
       """
     When I run goml with arguments "gen ."
     Then the exit code is 2
-    And stderr contains "vec.goml:8:3: hole ?rest : Vec[a, n]"
-    And stderr contains "n : nat (erased, quantity 0)"
+    And stderr contains "vec.goml:8:3: hole ?rest : Vec a n"
+    And stderr contains "n : Nat (erased, quantity 0)"
     And the file "vec_gml.go" does not exist
 
   Scenario: Hole names must be unique within a file

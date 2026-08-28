@@ -103,6 +103,6 @@ Feature: the goml REPL
       :quit
       """
     Then the exit code is 0
-    And stderr contains "hole ?impl : int"
+    And stderr contains "hole ?impl : Int"
     And stderr contains "not retained"
-    And stdout contains "?impl : int"
+    And stdout contains "?impl : Int"

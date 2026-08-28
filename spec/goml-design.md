@@ -689,7 +689,7 @@ literals require types), Lean-style layout (two blunt rules instead:
 application arguments start on the same line as the token before them,
 and sums need a leading `|`), namespaces admit method lets only, LSP
 awareness of `.goml` buffers, `goml fmt`, and reverse conversion
-(`.gp → .goml`), and **interface declarations** (goml has no interface
+(`.gp → .goml`), `goml fmt`, and **interface declarations** (goml has no interface
 form; declare them in a `.gp` or `.go` file of the same package — a
 mixed package is the intended route, and `@[delegate]` consumes such an
 interface normally). `total`, `law`, and the other goml keywords are
@@ -776,11 +776,11 @@ quantity-0 indices that the generated Go no longer mentions.
 let Rest {0 n : Nat} (v : Vec a (n + 1)) : Vec a n :=
   ?rest
 
--- vec.goml:8:3: hole ?rest : Vec[a, n]
---   erased: Vec[a]
+-- vec.goml:8:3: hole ?rest : Vec a n
+--   erased: Vec a
 --   in scope:
---     n : nat (erased, quantity 0)
---     v : Vec[a, n+1]
+--     n : Nat (erased, quantity 0)
+--     v : Vec a (n + 1)
 ```
 
 The whole feature lives in the shared core — goml adds no inference. The
@@ -788,6 +788,16 @@ transpiler passes `?name` through to the `.gp` text verbatim, which is
 also what makes the diagnostic exact: holes are *named*, so their source
 positions are recorded by name and reported with a real column, where
 ordinary diagnostics arrive at decl granularity with none.
+
+The core necessarily computes the goal in the notation it works in
+(`Vec[a, n+1]`, `[]string`), so goml **re-spells the answer** before
+reporting it: `Vec a (n + 1)`, `Slice String`, `Map String Int`,
+`Int -> String`, `Nat`. A dependent instantiation cannot be parsed as Go
+— index lists take types and `n+1` is a term — so it is split textually
+and its arguments spelled one at a time. Anything with no goml spelling
+(a domain constructor such as `Region[Circle(n), n]`, a multi-result
+function type) keeps the core's text: an approximate goal in the other
+surface's notation still beats a mangled one.
 
 Decided consequences:
 

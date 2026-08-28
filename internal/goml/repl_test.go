@@ -296,13 +296,13 @@ func TestREPLHoleReportsGoalAndIsNotRetained(t *testing.T) {
 	requireGo(t)
 	script := "let Half (n : Int) : Int := ?impl\n:holes\n:list\n:quit\n"
 	out, errOut := runREPLScript(t, script)
-	if !strings.Contains(errOut, "hole ?impl : int") {
+	if !strings.Contains(errOut, "hole ?impl : Int") {
 		t.Fatalf("hole goal not reported:\n%s", errOut)
 	}
 	if !strings.Contains(errOut, "not retained") {
 		t.Fatalf("the REPL must say the declaration was dropped:\n%s", errOut)
 	}
-	if !strings.Contains(out, "?impl : int") {
+	if !strings.Contains(out, "?impl : Int") {
 		t.Fatalf(":holes did not recall the goal:\n%s", out)
 	}
 	if strings.Contains(out, "let Half") {

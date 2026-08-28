@@ -110,6 +110,7 @@ func Run(opts RunOptions) (*RunResult, error) {
 	// diagnostic to the `?` in the .goml source, and remember where the
 	// pipeline had put it so the diagnostic can be recognized.
 	holeFix := map[token.Position]token.Position{}
+	holeMsg := map[token.Position]string{}
 	for i, h := range genRes.Holes {
 		exact, found := holeMaps[h.Pos.Filename][h.Name]
 		if !found {
@@ -121,7 +122,11 @@ func Run(opts RunOptions) (*RunResult, error) {
 		fixed := h.Pos
 		fixed.Line, fixed.Column = exact.Line, exact.Col
 		holeFix[h.Pos] = fixed
-		genRes.Holes[i].Pos = fixed
+		// The core answers in its own notation; a goml author reads goml.
+		respelled := respellHole(h)
+		respelled.Pos = fixed
+		holeMsg[h.Pos] = respelled.String()
+		genRes.Holes[i] = respelled
 	}
 	// Other diagnostics attributed to a .goml file carry positions in its
 	// lowered .gp text; bring them back to the source line (the map is
@@ -129,6 +134,9 @@ func Run(opts RunOptions) (*RunResult, error) {
 	for i, d := range genRes.Diags {
 		if fixed, ok := holeFix[d.Pos]; ok && d.Kind == diag.KindHole {
 			genRes.Diags[i].Pos = fixed
+			if msg, has := holeMsg[d.Pos]; has {
+				genRes.Diags[i].Msg = msg
+			}
 			continue
 		}
 		m, ok := lineMaps[d.Pos.Filename]

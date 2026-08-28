@@ -19,6 +19,27 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.147.1 — goml goals read in goml
+
+The core necessarily computes a hole's goal in the notation it works in,
+so a goml author was reading `.gp` spelling in their own surface. goml
+now re-spells the answer before reporting it — `Vec a (n + 1)` for
+`Vec[a, n+1]`, `Slice String` for `[]string`, `Int -> String` for
+`func(int) string`, `Nat` for `nat`:
+
+```
+main.goml:8:3: hole ?rest : Vec a n
+  erased: Vec a
+  in scope:
+    n : Nat (erased, quantity 0)
+    v : Vec a (n + 1)
+```
+
+A dependent instantiation is split textually before parsing, because
+`Vec[a, n+1]` is not valid Go: index lists take types, and `n+1` is a
+term — precisely the Go+ extension. A shape with no goml spelling (a
+domain constructor, a multi-result function type) keeps the core's text.
+
 ## v0.147.0 — typed holes
 
 `?name` stands where code is not written yet, and generation answers with
@@ -1005,6 +1026,7 @@ The spec is executable: the Godog/Cucumber feature suite under
 | v0.25.0 | Goals 01–08 dependent rewrite foundations: indexed decimal, collections, config, HTTP routes, expressions, JSON paths, validation, and schedules — shipped |
 | v0.27.0 | Goal 10 foundations: consistent inferred indices across all imported runtime arguments — shipped |
 | v0.26.0 | Goal 09 foundations: inferred preserved indices across linear calls and shared overflow-safe retry primitives — shipped |
+| v0.147.1 | goml re-spells hole goals into goml notation — shipped |
 | v0.147.0 | Typed holes: `?name` goals with un-erased dependent types and in-scope bindings; goml `:holes` and declared-signature `:type` — shipped |
 
 ## License
