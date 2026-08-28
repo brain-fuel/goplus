@@ -1,7 +1,7 @@
 {
   "name": "goplus",
   "displayName": "Go+ (goplus)",
-  "description": "Go+ language support: syntax highlighting and the goplus language server (diagnostics, hover, definition, completion).",
+  "description": "Go+ language support for .gp and .goml: syntax highlighting and the goplus language server (diagnostics, typed-hole goals, hover, definition, completion).",
   "version": "0.9.0",
   "publisher": "goforge-dev",
   "license": "SEE LICENSE IN ../../LICENSE",
@@ -15,7 +15,7 @@
       {
         "id": "goplus",
         "aliases": ["Go+", "goplus"],
-        "extensions": [".gp"],
+        "extensions": [".gp", ".goml"],
         "configuration": "./language-configuration.json"
       }
     ],

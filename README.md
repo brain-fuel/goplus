@@ -19,6 +19,23 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.148.0 — the editor speaks goml
+
+`goplus lsp` now serves `.goml` buffers. The server runs the goml
+pipeline, so an unsaved buffer is transpiled in memory and its
+diagnostics — typed-hole goals included — come back positioned *and
+spelled* in goml. Hovering a `?name` in a `.goml` file shows its goal.
+
+Delegated hover, definition, and completion remain `.gp`-only: a `.goml`
+file's Go is generated from its transpiled `.gp` text, so a direct
+source-to-output line map would be meaningless. Hole goals need no map
+and work in both surfaces.
+
+This also fixes editor registration that never matched: the Neovim and
+Zed clients keyed on a `.goplus` suffix — the language's name rather than
+its file extension — so neither activated on a real `.gp` file. All three
+clients (VS Code, Neovim, Zed) now register `.gp` and `.goml`.
+
 ## v0.147.1 — goml goals read in goml
 
 The core necessarily computes a hole's goal in the notation it works in,
@@ -1026,6 +1043,7 @@ The spec is executable: the Godog/Cucumber feature suite under
 | v0.25.0 | Goals 01–08 dependent rewrite foundations: indexed decimal, collections, config, HTTP routes, expressions, JSON paths, validation, and schedules — shipped |
 | v0.27.0 | Goal 10 foundations: consistent inferred indices across all imported runtime arguments — shipped |
 | v0.26.0 | Goal 09 foundations: inferred preserved indices across linear calls and shared overflow-safe retry primitives — shipped |
+| v0.148.0 | `goplus lsp` serves `.goml` buffers; editor clients register both surfaces — shipped |
 | v0.147.1 | goml re-spells hole goals into goml notation — shipped |
 | v0.147.0 | Typed holes: `?name` goals with un-erased dependent types and in-scope bindings; goml `:holes` and declared-signature `:type` — shipped |
 

@@ -1,6 +1,6 @@
 name = "Go+"
 grammar = "go"
-path_suffixes = ["goplus"]
+path_suffixes = ["gp", "goml"]
 line_comments = ["// "]
 tab_size = 4
 hard_tabs = true

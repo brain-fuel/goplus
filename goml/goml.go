@@ -60,7 +60,12 @@ func (r *Result) Ok() bool { return len(r.Diagnostics) == 0 }
 // Packages mixing .gp and .goml regenerate both surfaces (generation is
 // package-wide).
 func Run(opts Options) (*Result, error) {
-	inner, err := goml.Run(goml.RunOptions(opts))
+	inner, err := goml.Run(goml.RunOptions{
+		Dir:      opts.Dir,
+		Patterns: opts.Patterns,
+		Check:    opts.Check,
+		Stage:    opts.Stage,
+	})
 	if err != nil {
 		return nil, err
 	}

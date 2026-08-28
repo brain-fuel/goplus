@@ -17,6 +17,14 @@ type RunOptions struct {
 	Patterns []string // go-style package patterns; default ["./..."]
 	Check    bool     // verify only: report stale outputs, write nothing
 	Stage    bool     // after writing, git-add changed/deleted outputs
+
+	// Overlay substitutes in-memory contents for on-disk sources
+	// (absolute path → bytes) — the LSP's unsaved buffers. A `.goml`
+	// entry is transpiled like any other source; everything else is
+	// handed to the pipeline unchanged.
+	Overlay map[string][]byte
+	// DryRun computes diagnostics and outputs without writing anything.
+	DryRun bool
 }
 
 // RunResult reports what a goml run did.
@@ -42,6 +50,20 @@ func Run(opts RunOptions) (*RunResult, error) {
 	lineMaps := map[string]map[int]int{}
 	holeMaps := map[string]map[string]Pos{}
 	baseSeen := map[string]struct{}{}
+	// An unsaved .goml buffer is transpiled from memory; anything else in
+	// the overlay is the caller's and travels to the pipeline untouched.
+	buffers := map[string][]byte{}
+	for path, src := range opts.Overlay {
+		abs, aerr := filepath.Abs(path)
+		if aerr != nil {
+			abs = path
+		}
+		if strings.HasSuffix(path, ".goml") {
+			buffers[abs] = src
+			continue
+		}
+		overlay[abs] = src
+	}
 	for _, dir := range dirs {
 		entries, rerr := os.ReadDir(dir)
 		if rerr != nil {
@@ -53,10 +75,20 @@ func Run(opts RunOptions) (*RunResult, error) {
 				continue
 			}
 			path := filepath.Join(dir, e.Name())
-			src, rerr := os.ReadFile(path)
-			if rerr != nil {
-				res.Gen.Diags = append(res.Gen.Diags, diag.Errorf("%s: %v", path, rerr))
-				continue
+			abs0, aerr0 := filepath.Abs(path)
+			if aerr0 != nil {
+				abs0 = path
+			}
+			src, ok := buffers[abs0]
+			if ok {
+				delete(buffers, abs0) // consumed; the rest are unsaved files
+			} else {
+				var rerr error
+				src, rerr = os.ReadFile(path)
+				if rerr != nil {
+					res.Gen.Diags = append(res.Gen.Diags, diag.Errorf("%s: %v", path, rerr))
+					continue
+				}
 			}
 			gp, info, cerr := ConvertWithInfo(path, src)
 			if cerr != nil {
@@ -102,6 +134,7 @@ func Run(opts RunOptions) (*RunResult, error) {
 		Check:    opts.Check,
 		Stage:    opts.Stage,
 		Overlay:  overlay,
+		DryRun:   opts.DryRun,
 	})
 	if err != nil {
 		return nil, err

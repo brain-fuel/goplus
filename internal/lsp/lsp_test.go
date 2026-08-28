@@ -275,3 +275,64 @@ func TestHoleDiagnosticAndHover(t *testing.T) {
 		t.Errorf("a hover away from the hole answered with its goal: %s", out)
 	}
 }
+
+const gomlHoleSrc = `module main
+
+type Vec (a : Type) : Nat -> Type where
+  | Nil : Vec a 0
+  | Cons (head : a) (tail : Vec a n) : Vec a (n + 1)
+
+let Rest {0 n : Nat} (v : Vec a (n + 1)) : Vec a n :=
+  ?rest
+`
+
+// goml is a first-class authoring surface, so its buffers get the same
+// editor treatment — and its goals arrive in goml's own spelling.
+func TestGomlBufferDiagnosticsAndHover(t *testing.T) {
+	dir := t.TempDir()
+	dir, _ = filepath.EvalSymlinks(dir)
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/gomlfix\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "vec.goml")
+	if err := os.WriteFile(path, []byte(gomlHoleSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tc := startTestServer(t)
+	tc.request("initialize", initializeParams{RootURI: pathToURI(dir)})
+	tc.notifyServer("initialized", struct{}{})
+	tc.notifyServer("textDocument/didOpen", didOpenParams{TextDocument: textDocumentItem{URI: pathToURI(path), Text: gomlHoleSrc}})
+
+	p := tc.awaitDiagnostics(path, 90*time.Second)
+	if len(p.Diagnostics) != 1 {
+		t.Fatalf("want one diagnostic on the .goml buffer, got %d: %+v", len(p.Diagnostics), p.Diagnostics)
+	}
+	d := p.Diagnostics[0]
+	if d.Severity != 3 {
+		t.Errorf("a hole's goal must read as information (3), got %d", d.Severity)
+	}
+	// The goal must be in goml spelling, not the core's.
+	if !strings.Contains(d.Message, "hole ?rest : Vec a n") {
+		t.Errorf("goal missing or not in goml spelling: %q", d.Message)
+	}
+	if strings.Contains(d.Message, "Vec[a") {
+		t.Errorf("goal leaked .gp spelling: %q", d.Message)
+	}
+	// `  ?rest` — 0-based line 7, character 2.
+	if d.Range.Start.Line != 7 || d.Range.Start.Character != 2 {
+		t.Errorf("diagnostic at %d:%d, want 7:2", d.Range.Start.Line, d.Range.Start.Character)
+	}
+
+	resp := tc.request("textDocument/hover", positionParams{
+		TextDocument: textDocumentIdentifier{URI: pathToURI(path)},
+		Position:     Position{Line: 7, Character: 3},
+	})
+	out, _ := json.Marshal(resp.Result)
+	if !strings.Contains(string(out), "hole ?rest : Vec a n") {
+		t.Fatalf("hover did not serve the goal: %s", out)
+	}
+	if !strings.Contains(string(out), "n : Nat (erased, quantity 0)") {
+		t.Errorf("hover omitted the erased index binding: %s", out)
+	}
+}

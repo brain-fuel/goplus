@@ -687,9 +687,10 @@ shared-core milestone), `open` (needs export knowledge), tuples and
 list literals (not in the `.gp` core), unannotated lambdas (Go func
 literals require types), Lean-style layout (two blunt rules instead:
 application arguments start on the same line as the token before them,
-and sums need a leading `|`), namespaces admit method lets only, LSP
-awareness of `.goml` buffers, `goml fmt`, and reverse conversion
-(`.gp → .goml`), `goml fmt`, and **interface declarations** (goml has no interface
+and sums need a leading `|`), namespaces admit method lets only,
+`goml fmt`, reverse conversion (`.gp → .goml`), a dedicated goml grammar
+for editors (the clients currently reuse the `.gp` one), and
+**interface declarations** (goml has no interface
 form; declare them in a `.gp` or `.go` file of the same package — a
 mixed package is the intended route, and `@[delegate]` consumes such an
 interface normally). `total`, `law`, and the other goml keywords are
@@ -821,4 +822,10 @@ Decided consequences:
   hovering a `?name` serves the goal directly. Hover is answered natively
   rather than forwarded, because a hole is precisely the reason there is
   no generated Go to forward to; `goplus lsp` therefore advertises
-  `hoverProvider` whether or not its gopls delegate started.
+  `hoverProvider` whether or not its gopls delegate started. `.goml`
+  buffers are served too: the server runs the goml pipeline, so an
+  unsaved buffer is transpiled in memory and its diagnostics come back
+  positioned — and spelled — in goml. Delegated hover, definition, and
+  completion remain `.gp`-only, because a `.goml` file's Go is generated
+  from its transpiled `.gp` text and a direct source-to-output line map
+  would be meaningless; that two-hop map is future work.

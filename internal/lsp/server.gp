@@ -12,7 +12,7 @@ import (
 	"go/token"
 
 	"goforge.dev/goplus/internal/diag"
-	"goforge.dev/goplus/internal/gen"
+	"goforge.dev/goplus/internal/goml"
 	"goforge.dev/goplus/internal/sourcemap"
 	"goforge.dev/goplus/internal/version"
 )
@@ -178,10 +178,14 @@ func (s *Server) runDiagnostics() {
 	}
 	s.mu.Unlock()
 
-	res, err := gen.Run(gen.Options{Dir: s.root, Patterns: []string{"./..."}, Overlay: overlay, DryRun: true})
+	// goml.Run transpiles any .goml buffers and brings their diagnostics
+	// back to .goml positions; with none open it delegates to the same
+	// gen.Run this used to call directly.
+	gomlRes, err := goml.Run(goml.RunOptions{Dir: s.root, Patterns: []string{"./..."}, Overlay: overlay, DryRun: true})
 	if err != nil {
 		return
 	}
+	res := gomlRes.Gen
 	byFile := map[string][]Diagnostic{}
 	for _, f := range openFiles {
 		byFile[f] = nil // clear stale diagnostics on every open file
@@ -237,9 +241,16 @@ func (s *Server) runDiagnostics() {
 		s.outputs = res.Outputs
 		s.maps = map[string]*sourcemap.Map{}
 		for genPath, content := range res.Outputs {
-			goplusPath := strings.TrimSuffix(genPath, "_gp.go") + ".gp"
+			goplusPath := sourceCounterpart(genPath)
 			goplusSrc, ok := overlay[goplusPath]
 			if !ok {
+				continue
+			}
+			// A .goml file's Go is generated from its transpiled .gp text,
+			// so a direct source-to-output line diff would be meaningless.
+			// Delegated hover stays .gp-only until that two-hop map exists;
+			// hole goals need no map and work in both surfaces.
+			if strings.HasSuffix(goplusPath, ".goml") {
 				continue
 			}
 			s.maps[genPath] = sourcemap.Build(goplusPath, goplusSrc, content)
@@ -408,9 +419,21 @@ func pathToURI(path string) string {
 	return "file://" + path
 }
 
-// generatedCounterpart names the emitted twin of a .gp file.
-func generatedCounterpart(goplusPath string) string {
-	return strings.TrimSuffix(goplusPath, ".gp") + "_gp.go"
+// generatedCounterpart names the emitted twin of a source file. Each
+// surface has its own suffix: foo.gp emits foo_gp.go, foo.goml foo_gml.go.
+func generatedCounterpart(sourcePath string) string {
+	if strings.HasSuffix(sourcePath, ".goml") {
+		return strings.TrimSuffix(sourcePath, ".goml") + "_gml.go"
+	}
+	return strings.TrimSuffix(sourcePath, ".gp") + "_gp.go"
+}
+
+// sourceCounterpart inverts generatedCounterpart.
+func sourceCounterpart(genPath string) string {
+	if strings.HasSuffix(genPath, "_gml.go") {
+		return strings.TrimSuffix(genPath, "_gml.go") + ".goml"
+	}
+	return strings.TrimSuffix(genPath, "_gp.go") + ".gp"
 }
 
 // tokenPosition builds a 1-based position for sourcemap calls.

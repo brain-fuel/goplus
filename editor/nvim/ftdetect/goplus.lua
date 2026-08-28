@@ -1,1 +1,1 @@
-vim.filetype.add({ extension = { goplus = "goplus" } })
+vim.filetype.add({ extension = { gp = "goplus", goml = "goplus" } })
