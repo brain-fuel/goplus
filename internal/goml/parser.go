@@ -964,8 +964,39 @@ func (p *parser) atOperandStart() bool {
 	switch p.tok().Kind {
 	case IDENT, INT, FLOAT, STRING, LParen, At, Amp:
 		return true
+	case Question:
+		return p.atHole()
 	}
 	return false
+}
+
+// atHole reports whether the current `?` opens a typed hole rather than a
+// postfix try. A hole's name is attached to its `?` and the `?` is detached
+// from whatever precedes it, so `f ?x` passes a hole while `x? f` tries.
+func (p *parser) atHole() bool {
+	q := p.tok()
+	if q.Kind != Question {
+		return false
+	}
+	name := p.toks[p.i+1]
+	if name.Kind != IDENT || name.Pos.Line != q.Pos.Line || name.Pos.Col != q.Pos.Col+1 {
+		return false
+	}
+	if p.i > 0 {
+		prev := p.toks[p.i-1]
+		if prev.Pos.Line == q.Pos.Line && prev.Pos.Col+utf8.RuneCountInString(prev.Text) == q.Pos.Col {
+			return false // glued to the operand before it: a postfix try
+		}
+	}
+	return true
+}
+
+// parseHole consumes `?name`.
+func (p *parser) parseHole() Expr {
+	q := p.tok()
+	p.i++
+	name := p.expect(IDENT, "a hole name")
+	return &Hole{Name: name.Text, Pos: q.Pos}
 }
 
 func (p *parser) parsePostfix() Expr {
@@ -1052,6 +1083,11 @@ func (p *parser) parseAtom() Expr {
 		p.i++
 		name := p.expect(IDENT, "member name after `.`")
 		return &DotSegment{Name: name.Text, Pos: t.Pos}
+	case Question:
+		if p.atHole() {
+			return p.parseHole()
+		}
+		p.fail(t.Pos, "a typed hole is spelled ?name, with the name attached to the `?`")
 	}
 	p.fail(t.Pos, "expected an expression, found %q", t.Text)
 	return nil

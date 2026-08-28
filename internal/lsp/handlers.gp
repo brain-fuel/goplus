@@ -46,7 +46,14 @@ type QueryReply enum {
 func Answer(s *Server, q Query) QueryReply {
 	match q {
 	case QHover(uri, line, ch):
-		return s.Forward("textDocument/hover", uri, line, ch)
+		// A hole has no generated counterpart to forward to; its goal is
+		// the answer, so it is tried first.
+		match s.HoverHole(uri, line, ch) {
+		case Raw(data):
+			return Raw(data)
+		case NoAnswer(_):
+			return s.Forward("textDocument/hover", uri, line, ch)
+		}
 	case QDefinition(uri, line, ch):
 		return s.Forward("textDocument/definition", uri, line, ch)
 	case QComplete(uri, line, ch):

@@ -588,10 +588,35 @@ func (p *parser) filterClaimedIllegals() {
 	p.errors = kept
 }
 
-// parseExprFormOperand claims expression-position if/switch/match. It
-// returns nil when the current token is not an expression-form claim.
+// holeClaims reports whether the current ILLEGAL '?' opens a typed hole:
+// the next non-comment token must be an identifier beginning at the very
+// next byte. A spaced '?', '?1', or a '?' at end of input is not a hole and
+// keeps the scanner's illegal-character error.
+func (p *parser) holeClaims() bool {
+	t := p.peekNonCommentTok()
+	return t.tok == token.IDENT && t.pos == p.pos+1
+}
+
+// parseHole claims `?name` in operand position. The caller verified
+// p.tok == token.ILLEGAL && p.lit == "?" && p.holeClaims().
+func (p *parser) parseHole() ast.Expr {
+	h := &HoleExpr{QPos: p.pos}
+	p.claimedQ = append(p.claimedQ, p.pos)
+	p.next() // consume the ILLEGAL '?'
+	h.Name = p.parseIdent()
+	h.Bad = &ast.BadExpr{From: h.QPos, To: h.Name.End()}
+	p.markExtBad(h.Bad)
+	p.ext.Holes = append(p.ext.Holes, h)
+	return h.Bad
+}
+
+// parseExprFormOperand claims expression-position if/switch/match and typed
+// holes. It returns nil when the current token is not an expression-form
+// claim.
 func (p *parser) parseExprFormOperand() ast.Expr {
 	switch {
+	case p.tok == token.ILLEGAL && p.lit == "?" && p.holeClaims():
+		return p.parseHole()
 	case p.tok == token.IF:
 		root := p.parseIfExpr()
 		root.Bad = &ast.BadExpr{From: root.If, To: ifExprEnd(root)}

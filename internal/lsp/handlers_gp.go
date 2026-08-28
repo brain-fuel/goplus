@@ -417,7 +417,19 @@ func Answer(s *Server, q Query) QueryReply {
 		line := __gp_m1.Line
 		ch := __gp_m1.Ch
 
-		return s.Forward("textDocument/hover", uri, line, ch)
+		// A hole has no generated counterpart to forward to; its goal is
+		// the answer, so it is tried first.
+		switch __gp_m2 := any(s.HoverHole(uri, line, ch)).(type) {
+		case Raw:
+			data := __gp_m2.Data
+
+			return Raw{Data: data}
+		case NoAnswer:
+
+			return s.Forward("textDocument/hover", uri, line, ch)
+		default:
+			panic("goplus: impossible enum value in match")
+		}
 	case QDefinition:
 		uri := __gp_m1.Uri
 		line := __gp_m1.Line

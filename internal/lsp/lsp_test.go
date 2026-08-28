@@ -220,3 +220,58 @@ func TestHoverThroughGopls(t *testing.T) {
 	tc.request("shutdown", nil)
 	tc.notifyServer("exit", nil)
 }
+
+const holeSrc = `package main
+
+func pick(xs []string) string {
+	return ?choice
+}
+`
+
+// A hole is reported as information, not an error, and hovering it serves
+// the goal natively — there is no generated Go to forward a hover to.
+func TestHoleDiagnosticAndHover(t *testing.T) {
+	dir, path := fixtureModule(t, holeSrc)
+	tc := startTestServer(t)
+	tc.request("initialize", initializeParams{RootURI: pathToURI(dir)})
+	tc.notifyServer("initialized", struct{}{})
+	tc.notifyServer("textDocument/didOpen", didOpenParams{TextDocument: textDocumentItem{URI: pathToURI(path), Text: holeSrc}})
+
+	p := tc.awaitDiagnostics(path, 90*time.Second)
+	if len(p.Diagnostics) != 1 {
+		t.Fatalf("want one diagnostic, got %d: %+v", len(p.Diagnostics), p.Diagnostics)
+	}
+	d := p.Diagnostics[0]
+	if d.Severity != 3 {
+		t.Errorf("a hole's goal must read as information (3), got severity %d", d.Severity)
+	}
+	if !strings.Contains(d.Message, "hole ?choice : string") {
+		t.Errorf("goal missing from diagnostic: %q", d.Message)
+	}
+	// `return ?choice` — the '?' is at 0-based line 3, character 8.
+	if d.Range.Start.Line != 3 || d.Range.Start.Character != 8 {
+		t.Errorf("diagnostic at %d:%d, want 3:8", d.Range.Start.Line, d.Range.Start.Character)
+	}
+
+	resp := tc.request("textDocument/hover", positionParams{
+		TextDocument: textDocumentIdentifier{URI: pathToURI(path)},
+		Position:     Position{Line: 3, Character: 9},
+	})
+	out, _ := json.Marshal(resp.Result)
+	if !strings.Contains(string(out), "hole ?choice : string") {
+		t.Fatalf("hover did not serve the goal: %s", out)
+	}
+	if !strings.Contains(string(out), "xs : []string") {
+		t.Errorf("hover omitted the in-scope bindings: %s", out)
+	}
+
+	// Off the hole, hover falls through to the delegate (absent here).
+	resp = tc.request("textDocument/hover", positionParams{
+		TextDocument: textDocumentIdentifier{URI: pathToURI(path)},
+		Position:     Position{Line: 2, Character: 6},
+	})
+	out, _ = json.Marshal(resp.Result)
+	if strings.Contains(string(out), "hole ?choice") {
+		t.Errorf("a hover away from the hole answered with its goal: %s", out)
+	}
+}

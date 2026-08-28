@@ -31,6 +31,17 @@ type Diagnostic struct {
 	Message      string
 }
 
+// Hole is one typed hole (`?name`) left in the source. Generation stops
+// while any hole remains, and each hole has a matching diagnostic.
+type Hole struct {
+	Filename     string
+	Line, Column int    // position of the `?` in the .goml source
+	Name         string // the hole's name, without the `?`
+	Goal         string // the erased Go type the context expects
+	DepGoal      string // the un-erased dependent spelling, when there is one
+	Bindings     []string
+}
+
 // Result reports what a run did (paths relative to Options.Dir when
 // under it).
 type Result struct {
@@ -38,6 +49,7 @@ type Result struct {
 	Written     []string // files written (or deleted orphans)
 	Stale       []string // check mode: outputs missing or out of date
 	Orphans     []string // generated files whose source is gone
+	Holes       []Hole   // typed holes awaiting an implementation
 	Diagnostics []Diagnostic
 }
 
@@ -57,6 +69,27 @@ func Run(opts Options) (*Result, error) {
 		res.Written = g.Written
 		res.Stale = g.Stale
 		res.Orphans = g.Orphans
+		for _, h := range g.Holes {
+			hole := Hole{
+				Filename: h.Pos.Filename,
+				Line:     h.Pos.Line,
+				Column:   h.Pos.Column,
+				Name:     h.Name,
+				Goal:     h.Type,
+				DepGoal:  h.DepType,
+			}
+			for _, b := range h.Bindings {
+				text := b.DepType
+				if text == "" {
+					text = b.Type
+				}
+				if b.Erased {
+					text += " (erased, quantity 0)"
+				}
+				hole.Bindings = append(hole.Bindings, b.Name+" : "+text)
+			}
+			res.Holes = append(res.Holes, hole)
+		}
 		for _, d := range g.Diags {
 			res.Diagnostics = append(res.Diagnostics, Diagnostic{
 				Filename: d.Pos.Filename,

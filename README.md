@@ -19,6 +19,52 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.147.0 — typed holes
+
+`?name` stands where code is not written yet, and generation answers with
+the goal: the type that belongs there, un-erased where the position is
+dependent, plus the bindings in scope — including the quantity-0 indices
+the generated Go no longer mentions.
+
+```go
+func Rest[T any](0 n nat, v Vec[T, n+1]) Vec[T, n] {
+	return ?rest
+}
+
+// main.gp:9:10: hole ?rest : Vec[T, n]
+//   erased: Vec[T]
+//   in scope:
+//     n : nat (erased, quantity 0)
+//     v : Vec[T, n+1]
+```
+
+Holes work in both surfaces and in every expression position, including a
+package-level initializer. `?` in operand position claims a hole; the
+v0.4.0 postfix `?` still claims the suffix, and the two never compete
+because a hole's name is attached to its `?` (`a?b` is `(a?) b`, `a ?b`
+applies a to a hole). **Generation refuses to write while any hole
+remains**, so a committed `*_gp.go` never contains one.
+
+In the editor, goals arrive as Information-severity diagnostics and
+hovering a `?name` shows the goal — answered natively, since a hole is
+exactly why there is no generated Go to forward a hover to.
+
+In `goml repl`, a declaration with a hole prints its goal and is not
+retained — each evaluation replays the whole session — and `:holes`
+recalls the goals while you work.
+
+**`:type` now reports the declared signature.** A named binding prints in
+the goml spelling you wrote, indices intact, with no pipeline run:
+
+```
+goml> :type First
+First : Vec a (n + 1) -> a
+  elaborated: First[a any](0 n nat, v Vec[a, n+1]) a
+```
+
+Expressions, unannotated values, and imported names still report the
+erased Go type, which is now the only place the erasure caveat appears.
+
 ## v0.146.0 — goml grows the Go-interop surface
 
 Writing two networked applications in goml (the
@@ -959,6 +1005,7 @@ The spec is executable: the Godog/Cucumber feature suite under
 | v0.25.0 | Goals 01–08 dependent rewrite foundations: indexed decimal, collections, config, HTTP routes, expressions, JSON paths, validation, and schedules — shipped |
 | v0.27.0 | Goal 10 foundations: consistent inferred indices across all imported runtime arguments — shipped |
 | v0.26.0 | Goal 09 foundations: inferred preserved indices across linear calls and shared overflow-safe retry primitives — shipped |
+| v0.147.0 | Typed holes: `?name` goals with un-erased dependent types and in-scope bindings; goml `:holes` and declared-signature `:type` — shipped |
 
 ## License
 

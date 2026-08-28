@@ -384,9 +384,12 @@ of type checking. Goals 03, 05, 06, 07, and 08 exercise these domains.
 ### Stage E - dependent functions and records
 
 Generalize indexed declarations to Pi types, dependent records, schema/key
-projection, implicit arguments, holes with actionable goals, and bidirectional
-elaboration. Add row-like finite maps only after singleton strings and
-existentials are stable. Goals 04, 05, 07, and 10 are the forcing consumers.
+projection, implicit arguments, and bidirectional elaboration. Holes with
+actionable goals shipped early, in v0.147.0: `?name` reports the expected
+type — un-erased in dependent positions — and the bindings in scope, and
+blocks generation until it is filled. Proof search and hole-filling code
+actions remain future work. Add row-like finite maps only after singleton
+strings and existentials are stable. Goals 04, 05, 07, and 10 are the forcing consumers.
 
 ### Stage F - total dependent core
 

@@ -14,7 +14,8 @@ import (
 const replHelp = `Commands:
   :help                 this list
   :quit, :q             leave (Ctrl-D also works)
-  :type <expr>, :t      the expression's Go type (indices are erased — see the note)
+  :type <expr>, :t      a named binding's declared signature; otherwise the Go type
+  :holes                goals of the typed holes in the last input
   :gp [name]            the lowered .gp for the session, or one declaration
   :go [name]            the generated Go
   :list [name], :l      retained declarations in order ("!" marks effectful ones)
@@ -46,6 +47,7 @@ func (r *repl) command(input string) bool {
 		fmt.Fprintln(r.out, r.dir)
 	case ":reset":
 		r.sess = session{}
+		r.lastHoles = nil
 		fmt.Fprintln(r.out, "session cleared")
 	case ":list", ":l":
 		r.list(rest)
@@ -55,6 +57,8 @@ func (r *repl) command(input string) bool {
 			return false
 		}
 		r.typeOf(rest)
+	case ":holes":
+		r.showHoles()
 	case ":gp":
 		r.showLowering(rest)
 	case ":go":

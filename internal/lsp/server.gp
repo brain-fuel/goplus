@@ -11,6 +11,7 @@ import (
 
 	"go/token"
 
+	"goforge.dev/goplus/internal/diag"
 	"goforge.dev/goplus/internal/gen"
 	"goforge.dev/goplus/internal/sourcemap"
 	"goforge.dev/goplus/internal/version"
@@ -27,6 +28,7 @@ type Server struct {
 	overlays map[string][]byte // abs .gp path → unsaved contents
 	outputs  map[string][]byte // abs generated path → latest dry-run output
 	maps     map[string]*sourcemap.Map // generated path → map (both directions)
+	holes    map[string][]diag.HoleInfo // abs source path → open typed holes
 
 	debounce *time.Timer
 	genMu    sync.Mutex
@@ -41,6 +43,7 @@ func Serve(r io.Reader, w io.Writer) error {
 		overlays: map[string][]byte{},
 		outputs:  map[string][]byte{},
 		maps:     map[string]*sourcemap.Map{},
+		holes:    map[string][]diag.HoleInfo{},
 	}
 	for {
 		m, err := s.conn.read()
@@ -65,9 +68,11 @@ func (s *Server) handle(m *message) (exit bool) {
 		s.gopls = startGopls(s.root)
 		caps := map[string]any{
 			"textDocumentSync": map[string]any{"openClose": true, "change": 1, "save": true},
+			// Hover is answered natively for typed holes, so it is offered
+			// whether or not the gopls delegate started.
+			"hoverProvider": true,
 		}
 		if s.gopls != nil {
-			caps["hoverProvider"] = true
 			caps["definitionProvider"] = true
 			caps["completionProvider"] = map[string]any{"triggerCharacters": []string{"."}}
 		}
@@ -181,6 +186,17 @@ func (s *Server) runDiagnostics() {
 	for _, f := range openFiles {
 		byFile[f] = nil // clear stale diagnostics on every open file
 	}
+	holes := map[string][]diag.HoleInfo{}
+	for _, h := range res.Holes {
+		path := h.Pos.Filename
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(s.root, path)
+		}
+		holes[path] = append(holes[path], h)
+	}
+	s.mu.Lock()
+	s.holes = holes
+	s.mu.Unlock()
 	for _, d := range res.Diags {
 		path := d.Pos.Filename
 		if !filepath.IsAbs(path) {
@@ -193,9 +209,15 @@ func (s *Server) runDiagnostics() {
 		if col < 0 {
 			col = 0
 		}
+		// A hole's goal is information, not a mistake — but it still
+		// stops generation, so it is still reported.
+		severity := 1
+		if d.Kind == diag.KindHole {
+			severity = 3
+		}
 		byFile[path] = append(byFile[path], Diagnostic{
 			Range:    Range{Start: Position{line, col}, End: Position{line, col + 1}},
-			Severity: 1,
+			Severity: severity,
 			Source:   "goplus",
 			Message:  d.Msg,
 		})
@@ -227,6 +249,42 @@ func (s *Server) runDiagnostics() {
 			s.gopls.syncOutputs(res.Outputs)
 		}
 	}
+}
+
+// HoverHole answers a hover that lands on a typed hole. A hole has no
+// counterpart in generated Go — it is why there is no generated Go — so
+// the goal is served from here rather than forwarded to the delegate.
+func (s *Server) HoverHole(uri string, line, ch int) QueryReply {
+	path := uriToPath(uri)
+	s.mu.Lock()
+	holes := s.holes[path]
+	s.mu.Unlock()
+	for _, h := range holes {
+		// Positions are 1-based in diagnostics, 0-based in LSP. The hole
+		// spans its `?` and name.
+		if h.Pos.Line-1 != line {
+			continue
+		}
+		start := h.Pos.Column - 1
+		if ch < start || ch > start+len(h.Name) {
+			continue
+		}
+		body, err := json.Marshal(map[string]any{
+			"contents": map[string]any{
+				"kind":  "markdown",
+				"value": "```\n" + h.String() + "\n```",
+			},
+			"range": Range{
+				Start: Position{line, start},
+				End:   Position{line, start + len(h.Name) + 1},
+			},
+		})
+		if err != nil {
+			return NoAnswer(err.Error())
+		}
+		return Raw(body)
+	}
+	return NoAnswer("not a hole")
 }
 
 // Forward maps a .gp position through the latest generation, asks

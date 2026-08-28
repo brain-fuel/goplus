@@ -810,6 +810,8 @@ func usedNames(e Expr, out map[string]bool) {
 		usedNames(e.R, out)
 	case *Unary:
 		usedNames(e.X, out)
+	case *Hole:
+		// A hole names nothing: its goal reports what is in scope.
 	case *Try:
 		usedNames(e.X, out)
 	case *If:
@@ -904,6 +906,15 @@ func (c *converter) exprString(e Expr, prec int) string {
 		return c.appString(e)
 	case *Try:
 		return c.exprString(e.X, atomPrec) + "?"
+	case *Hole:
+		// An or-pattern arm renders its body once per alternative, so the
+		// same hole can be printed twice; only a genuinely different
+		// position is a second hole of the same name.
+		if prev, seen := c.holes[e.Name]; seen && prev != e.Pos {
+			c.failf(e.Pos, "hole ?%s already appears at %s: hole names are unique within a file", e.Name, prev)
+		}
+		c.holes[e.Name] = e.Pos
+		return "?" + e.Name
 	case *Unary:
 		return e.Op + c.exprString(e.X, atomPrec)
 	case *Binop:

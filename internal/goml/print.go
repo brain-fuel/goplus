@@ -62,6 +62,7 @@ type converter struct {
 	nullaryOps map[string]bool // class operations with no parameters
 	fw         *fnWriter       // active function writer (for hoisting)
 	lines      map[int]int     // emitted .gp line → source .goml line
+	holes      map[string]Pos  // hole name → position of its `?`
 }
 
 // mark records that output emitted from here on originates at pos. The
@@ -90,15 +91,35 @@ func (c *converter) failf(pos Pos, format string, args ...any) {
 	panic(bailout{&Error{Path: c.path, Pos: pos, Msg: fmt.Sprintf(format, args...)}})
 }
 
+// ConvertInfo carries the source-mapping byproducts of a conversion.
+type ConvertInfo struct {
+	// Lines maps an emitted .gp line to the .goml line it came from.
+	Lines map[int]int
+	// Holes maps each typed hole's name to the position of its `?` in the
+	// .goml source. Holes are named, so their diagnostics can be placed
+	// exactly rather than through the line map.
+	Holes map[string]Pos
+}
+
 // Convert transpiles one .goml source file to .gp text.
 func Convert(path string, src []byte) ([]byte, error) {
-	out, _, err := ConvertWithMap(path, src)
+	out, _, err := ConvertWithInfo(path, src)
 	return out, err
 }
 
 // ConvertWithMap also returns the emitted-line → source-line map used to
 // bring pipeline diagnostics back to .goml positions.
-func ConvertWithMap(path string, src []byte) (out []byte, lines map[int]int, err error) {
+func ConvertWithMap(path string, src []byte) ([]byte, map[int]int, error) {
+	out, info, err := ConvertWithInfo(path, src)
+	if err != nil {
+		return nil, nil, err
+	}
+	return out, info.Lines, nil
+}
+
+// ConvertWithInfo transpiles one .goml source file, also reporting what is
+// needed to map the pipeline's diagnostics back onto it.
+func ConvertWithInfo(path string, src []byte) (out []byte, info *ConvertInfo, err error) {
 	file, perr := Parse(path, src)
 	if perr != nil {
 		return nil, nil, perr
@@ -107,6 +128,7 @@ func ConvertWithMap(path string, src []byte) (out []byte, lines map[int]int, err
 		path: path, file: file, b: &strings.Builder{},
 		enums: map[string]*enumInfo{}, classes: map[string]*classInfo{},
 		nullaryOps: map[string]bool{}, lines: map[int]int{},
+		holes: map[string]Pos{},
 	}
 	defer func() {
 		if r := recover(); r != nil {
@@ -114,12 +136,12 @@ func ConvertWithMap(path string, src []byte) (out []byte, lines map[int]int, err
 			if !ok {
 				panic(r)
 			}
-			out, lines, err = nil, nil, b.err
+			out, info, err = nil, nil, b.err
 		}
 	}()
 	c.indexEnums()
 	c.printFile()
-	return []byte(c.b.String()), c.lines, nil
+	return []byte(c.b.String()), &ConvertInfo{Lines: c.lines, Holes: c.holes}, nil
 }
 
 // indexEnums records local sum types: binder sorts (for nat/type

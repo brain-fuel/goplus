@@ -328,6 +328,16 @@ type Try struct {
 
 func (e *Try) exprPos() Pos { return e.Pos }
 
+// Hole is a typed hole: `?name`, standing where code is not written yet.
+// The name travels verbatim into the lowered .gp text, where the core
+// reports the hole's goal.
+type Hole struct {
+	Name string
+	Pos  Pos // position of the '?'
+}
+
+func (e *Hole) exprPos() Pos { return e.Pos }
+
 // If is if/then/else (always both branches).
 type If struct {
 	Cond, Then, Else Expr

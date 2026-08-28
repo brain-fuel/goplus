@@ -222,6 +222,16 @@ type TryExpr struct {
 	QPos token.Pos    // position of '?'
 }
 
+// HoleExpr is one `?name` typed hole (v0.10.0): a placeholder for code not
+// written yet, whose expected type and in-scope bindings are reported as a
+// diagnostic. The name is byte-adjacent to the '?', which is what keeps the
+// claim disjoint from the postfix try suffix.
+type HoleExpr struct {
+	Bad  *ast.BadExpr // placeholder spanning QPos..Name.End()
+	QPos token.Pos    // position of '?'
+	Name *ast.Ident   // the hole's name; never nil
+}
+
 // IfExpr is one `if cond { e } else …` expression (v0.4.0). Only the root
 // of an else-if chain carries Bad and registers in Extensions.IfExprs;
 // else-if links hang off ElseIf with Bad == nil.
@@ -307,6 +317,8 @@ type Extensions struct {
 	Tails []*TailFunc
 	// v0.9.0 — source order.
 	Refinements []*RefinementDecl
+	// v0.10.0 — creation order; resolve placeholders by pointer.
+	Holes []*HoleExpr
 }
 
 // ParseFileExt parses Go+ source: stock Go grammar plus enum declarations,

@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"goforge.dev/goplus/internal/diag"
 	"goforge.dev/goplus/internal/version"
 )
 
@@ -44,6 +45,7 @@ type repl struct {
 	lastRender  string
 	pending     map[string]bool // names introduced by the input being evaluated
 	lastGood    string          // last render that generated cleanly
+	lastHoles   []diag.HoleInfo // goals from the most recent input with holes
 	mu          sync.Mutex
 	cancelRun   context.CancelFunc // cancels the evaluation in flight
 	warmed      bool

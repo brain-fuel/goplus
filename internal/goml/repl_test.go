@@ -245,14 +245,68 @@ func TestREPLReportsOlderBinding(t *testing.T) {
 	}
 }
 
-func TestREPLTypeReportsErasedGoType(t *testing.T) {
+// A named binding reports the signature the user wrote, in goml spelling.
+// The erased Go type — and its caveat — is now only the fallback.
+func TestREPLTypeShowsDeclaredSignature(t *testing.T) {
 	requireGo(t)
 	out, errOut := runREPLScript(t, "let Twice (n : Int) : Int := n * 2\n:type Twice\n:quit\n")
-	if !strings.Contains(out, "func(n int) int") {
+	if !strings.Contains(out, "Twice : (n : Int) -> Int") {
+		t.Fatalf(":type output:\n%s\nstderr:\n%s", out, errOut)
+	}
+	if strings.Contains(out, "erased") {
+		t.Fatalf(":type on a declared name must not need the erasure caveat:\n%s", out)
+	}
+}
+
+// An expression has no declaration to read, so it still reports the
+// erased Go type, and that is where the caveat belongs.
+func TestREPLTypeExpressionStaysErased(t *testing.T) {
+	requireGo(t)
+	out, errOut := runREPLScript(t, "let Twice (n : Int) : Int := n * 2\n:type Twice 3\n:quit\n")
+	if !strings.Contains(out, "int") {
 		t.Fatalf(":type output:\n%s\nstderr:\n%s", out, errOut)
 	}
 	if !strings.Contains(out, "erased") {
-		t.Fatalf(":type must state the erasure caveat:\n%s", out)
+		t.Fatalf(":type on an expression must state the erasure caveat:\n%s", out)
+	}
+}
+
+// The dependent case is the point of the feature: indices survive, and
+// the elaborated line shows the binder the user left implicit.
+func TestREPLTypeDependentSignature(t *testing.T) {
+	requireGo(t)
+	script := "type Vec (a : Type) : Nat -> Type where\n" +
+		"  | Nil : Vec a 0\n" +
+		"  | Cons (head : a) (tail : Vec a n) : Vec a (n + 1)\n\n" +
+		"let First : Vec a (n + 1) -> a\n  | Cons h _ => h\n\n" +
+		":type First\n:quit\n"
+	out, errOut := runREPLScript(t, script)
+	if !strings.Contains(out, "First : Vec a (n + 1) -> a") {
+		t.Fatalf(":type lost the indices:\n%s\nstderr:\n%s", out, errOut)
+	}
+	if !strings.Contains(out, "elaborated: First[a any](0 n nat, v Vec[a, n+1]) a") {
+		t.Fatalf(":type did not report the elaborated signature:\n%s", out)
+	}
+}
+
+// A declaration with a hole reports its goal and is not retained: the
+// session compiles and replays as a whole, so an unfinished binding
+// cannot be kept without breaking every later input.
+func TestREPLHoleReportsGoalAndIsNotRetained(t *testing.T) {
+	requireGo(t)
+	script := "let Half (n : Int) : Int := ?impl\n:holes\n:list\n:quit\n"
+	out, errOut := runREPLScript(t, script)
+	if !strings.Contains(errOut, "hole ?impl : int") {
+		t.Fatalf("hole goal not reported:\n%s", errOut)
+	}
+	if !strings.Contains(errOut, "not retained") {
+		t.Fatalf("the REPL must say the declaration was dropped:\n%s", errOut)
+	}
+	if !strings.Contains(out, "?impl : int") {
+		t.Fatalf(":holes did not recall the goal:\n%s", out)
+	}
+	if strings.Contains(out, "let Half") {
+		t.Fatalf("a declaration with a hole must not be retained:\n%s", out)
 	}
 }
 
@@ -332,5 +386,18 @@ func TestREPLRawModeWritesCRLF(t *testing.T) {
 	var plain lineReader = &bufReader{}
 	if plain.Raw() {
 		t.Error("bufReader must not claim raw mode")
+	}
+}
+
+// Binders alone are not a signature: without a result annotation the last
+// parameter would be printed as the result.
+func TestGomlSigStringNeedsResult(t *testing.T) {
+	file, err := Parse("t.goml", []byte("module m\n\nlet Add (a : Int) (b : Int) := a + b\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := file.Decls[0].(*LetDecl)
+	if got, ok := gomlSigString(d); ok {
+		t.Fatalf("unannotated binder form reported a signature: %q", got)
 	}
 }

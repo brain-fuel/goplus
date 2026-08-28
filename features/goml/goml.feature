@@ -238,3 +238,39 @@ Feature: goml, the ML-family surface
     Then the exit code is 2
     And stderr contains "bad.goml:9"
     And stderr contains "cannot hoist at package level"
+
+  Scenario: A typed hole reports its goal at the hole, keeping the indices
+    Given a file "go.mod":
+      """
+      module example.com/demo
+
+      go 1.24
+      """
+    And a file "vec.goml":
+      """
+      module vec
+
+      type Vec (a : Type) : Nat -> Type where
+        | Nil : Vec a 0
+        | Cons (head : a) (tail : Vec a n) : Vec a (n + 1)
+
+      let Rest {0 n : Nat} (v : Vec a (n + 1)) : Vec a n :=
+        ?rest
+      """
+    When I run goml with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "vec.goml:8:3: hole ?rest : Vec[a, n]"
+    And stderr contains "n : nat (erased, quantity 0)"
+    And the file "vec_gml.go" does not exist
+
+  Scenario: Hole names must be unique within a file
+    Given a file "dup.goml":
+      """
+      module dup
+
+      let F (a : Int) (b : Int) : Int := ?gap + ?gap
+      """
+    When I run goml with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "hole ?gap already appears"
+    And the file "dup_gml.go" does not exist

@@ -231,6 +231,8 @@ func TestConvertErrors(t *testing.T) {
 		{"valueAttr", "module m\n@[laws \"out=lawtest\"]\nlet X : Int := 1", "binds a value"},
 		{"valueLambda", "module m\nlet F := fun (x : Int) => x", "needs a result type"},
 		{"whileMatch", "module m\ntype T := | A | B\nlet F (t : T) : Int := do { while (match t with | A => true | B => false) do { }; 1 }", "while condition cannot contain a match"},
+		{"holeDuplicate", "module m\nlet F (a b : Int) : Int := ?gap + ?gap", "hole ?gap already appears"},
+		{"holeSpaced", "module m\nlet F (n : Int) : Int := ? gap", "a typed hole is spelled ?name"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -776,5 +778,101 @@ func Any(xs []int) bool {
 `
 	if got != want {
 		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+// A hole passes through to the .gp text verbatim: the core reports its
+// goal, so goml neither infers nor rewrites anything.
+func TestConvertHoles(t *testing.T) {
+	src := `module m
+
+let Pick (xs : Slice String) : String := ?choice
+
+let Add (a : Int) : Int := a + ?rest
+
+let Apply (f : Int -> Int) (n : Int) : Int := f ?arg
+`
+	got := convertOK(t, src)
+	for _, want := range []string{
+		"return ?choice",
+		"return a + ?rest",
+		"return f(?arg)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("lowered .gp missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// A hole's position is recorded by name, so its diagnostic can be placed
+// exactly rather than through the line map's decl-grained lookup.
+func TestConvertWithInfoHoles(t *testing.T) {
+	src := `module m
+
+let Pick (xs : Slice String) : String := ?choice
+
+let Run (n : Int) : Int := do {
+  let m := ?step;
+  m + n
+}
+`
+	_, info, err := ConvertWithInfo("test.goml", []byte(src))
+	if err != nil {
+		t.Fatalf("ConvertWithInfo: %v", err)
+	}
+	want := map[string]Pos{
+		"choice": {Line: 3, Col: 42},
+		"step":   {Line: 6, Col: 12},
+	}
+	if len(info.Holes) != len(want) {
+		t.Fatalf("got %d holes, want %d: %v", len(info.Holes), len(want), info.Holes)
+	}
+	for name, pos := range want {
+		if got := info.Holes[name]; got != pos {
+			t.Errorf("hole ?%s at %v, want %v", name, got, pos)
+		}
+	}
+}
+
+// Postfix `?` and a typed hole never compete: the try's `?` is attached
+// to the expression before it, a hole's to the name after it.
+func TestConvertHoleAndTryCoexist(t *testing.T) {
+	src := `module m
+
+import "strconv"
+
+let Parse (s : String) : Result Int Error := do {
+  let n := strconv.Atoi s ?;
+  Ok (n + ?bump)
+}
+`
+	got := convertOK(t, src)
+	if !strings.Contains(got, "strconv.Atoi(s)?") {
+		t.Errorf("postfix try was not preserved:\n%s", got)
+	}
+	if !strings.Contains(got, "?bump") {
+		t.Errorf("hole was not preserved:\n%s", got)
+	}
+}
+
+// An or-pattern arm renders once per alternative, so the same hole is
+// printed twice; that must not read as two holes of the same name.
+func TestConvertHoleInOrPatternArm(t *testing.T) {
+	src := `module m
+
+type T :=
+  | A (x : Int)
+  | B (x : Int)
+
+let F (t : T) : Int :=
+  match t with
+  | A x | B x => ?todo
+`
+	out, err := Convert("test.goml", []byte(src))
+	if err != nil {
+		t.Fatalf("or-pattern arm with a hole was rejected: %v", err)
+	}
+	if n := strings.Count(string(out), "?todo"); n != 2 {
+		t.Fatalf("expected the arm body duplicated per alternative, got %d:\n%s", n, out)
 	}
 }

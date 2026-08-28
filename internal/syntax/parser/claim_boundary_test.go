@@ -167,6 +167,48 @@ func TestClaimBoundary(t *testing.T) {
 		}
 	})
 
+	t.Run("v0.10 holes are claimed only when the name is adjacent", func(t *testing.T) {
+		// Claimed: '?' in operand position with a byte-adjacent name.
+		for _, tc := range []struct {
+			expr         string
+			holes, tries int
+		}{
+			{"?h", 1, 0},
+			{"?h + 1", 1, 0},
+			{"f(?h)", 1, 0},
+			{"f(?a, ?b)", 2, 0},
+			{"f()? + ?h", 1, 1},
+		} {
+			stockErr, forkErr, ext := parseBoth(t, wrap(tc.expr))
+			if stockErr == nil {
+				t.Errorf("%q: expected stock go/parser to reject this", tc.expr)
+			}
+			if forkErr != nil {
+				t.Errorf("%q: fork failed: %v", tc.expr, forkErr)
+				continue
+			}
+			if len(ext.Holes) != tc.holes || len(ext.Tries) != tc.tries {
+				t.Errorf("%q: got holes=%d tries=%d, want %d/%d",
+					tc.expr, len(ext.Holes), len(ext.Tries), tc.holes, tc.tries)
+			}
+		}
+		// Near-misses: a spaced '?', a non-identifier after it, and the
+		// ternary shape all keep the stock illegal-character error.
+		for _, expr := range []string{"? h", "?1", "a ? b : c", "?"} {
+			stockErr, forkErr, ext := parseBoth(t, wrap(expr))
+			if stockErr == nil {
+				t.Errorf("%q: expected a stock parse error", expr)
+				continue
+			}
+			if forkErr == nil || forkErr.Error() != stockErr.Error() {
+				t.Errorf("%q: error parity broken:\nstock: %v\nfork:  %v", expr, stockErr, forkErr)
+			}
+			if ext != nil && len(ext.Holes) > 0 {
+				t.Errorf("%q: near-miss was claimed as a hole", expr)
+			}
+		}
+	})
+
 	t.Run("kleisli kinds", func(t *testing.T) {
 		_, forkErr, ext := parseBoth(t, wrap("f >=> g >>> h"))
 		if forkErr != nil {

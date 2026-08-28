@@ -42,6 +42,7 @@ type (
 	SwitchExprArm      = parser.SwitchExprArm
 	MatchExpr          = parser.MatchExpr
 	MatchExprArm       = parser.MatchExprArm
+	HoleExpr           = parser.HoleExpr
 )
 
 // Composition operator kinds.
@@ -81,6 +82,9 @@ type File struct {
 	SwitchExprs []*SwitchExpr
 	MatchExprs  []*MatchExpr
 
+	// v0.10.0 typed holes, creation order.
+	Holes []*HoleExpr
+
 	matchOf     map[*ast.BadStmt]*MatchStmt
 	pipeOf      map[*ast.BadExpr]*PipeExpr
 	composeOf   map[*ast.BadExpr]*ComposeExpr
@@ -88,6 +92,7 @@ type File struct {
 	ifOf        map[*ast.BadExpr]*IfExpr
 	switchExpOf map[*ast.BadExpr]*SwitchExpr
 	matchExpOf  map[*ast.BadExpr]*MatchExpr
+	holeOf      map[*ast.BadExpr]*HoleExpr
 }
 
 // GenericMethod is a method declaration carrying its own type parameters.
@@ -149,6 +154,12 @@ func (f *File) MatchExprFor(bad *ast.BadExpr) (*MatchExpr, bool) {
 	return e, ok
 }
 
+// HoleFor resolves a placeholder expression to its typed hole.
+func (f *File) HoleFor(bad *ast.BadExpr) (*HoleExpr, bool) {
+	h, ok := f.holeOf[bad]
+	return h, ok
+}
+
 // flowSpan returns the byte span of a flow extension's placeholder.
 func (f *File) flowSpan(bad *ast.BadExpr) (int, int) {
 	return f.Offset(bad.From), f.Offset(bad.To)
@@ -174,6 +185,9 @@ func (f *File) extPlaceholders() []*ast.BadExpr {
 	}
 	for _, e := range f.MatchExprs {
 		out = append(out, e.Bad)
+	}
+	for _, h := range f.Holes {
+		out = append(out, h.Bad)
 	}
 	return out
 }
@@ -281,6 +295,7 @@ func ParseFile(fset *token.FileSet, path string, src []byte) (*File, error) {
 		IfExprs:     ext.IfExprs,
 		SwitchExprs: ext.SwitchExprs,
 		MatchExprs:  ext.MatchExprs,
+		Holes:       ext.Holes,
 		matchOf:     map[*ast.BadStmt]*MatchStmt{},
 		pipeOf:      map[*ast.BadExpr]*PipeExpr{},
 		composeOf:   map[*ast.BadExpr]*ComposeExpr{},
@@ -288,6 +303,7 @@ func ParseFile(fset *token.FileSet, path string, src []byte) (*File, error) {
 		ifOf:        map[*ast.BadExpr]*IfExpr{},
 		switchExpOf: map[*ast.BadExpr]*SwitchExpr{},
 		matchExpOf:  map[*ast.BadExpr]*MatchExpr{},
+		holeOf:      map[*ast.BadExpr]*HoleExpr{},
 	}
 	for _, m := range ext.Matches {
 		f.matchOf[m.Stmt] = m
@@ -309,6 +325,9 @@ func ParseFile(fset *token.FileSet, path string, src []byte) (*File, error) {
 	}
 	for _, e := range ext.MatchExprs {
 		f.matchExpOf[e.Bad] = e
+	}
+	for _, h := range ext.Holes {
+		f.holeOf[h.Bad] = h
 	}
 	// Enclosing GenDecl for each enum (doc comments of ungrouped decls
 	// live on the GenDecl, not the TypeSpec).

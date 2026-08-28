@@ -720,12 +720,17 @@ compiler by construction rather than by diligence.
   `go/types` check of the final texts, so a declaration that generates
   cleanly compiles. Measured, declarations land in ~100ms against
   ~450ms for expressions.
-- **`:type` reports the erased Go type.** Indices, quantities, and
-  refinements are gone from generated Go by design, so `Vec a (n+1)`
-  reads as `Vec[a]`. The REPL says so once per session and points at
-  `:gp`, which keeps the annotations. Recovering the source-level
-  dependent type would mean surfacing the elaborated core signature —
-  a separate feature, not a REPL feature.
+- **`:type` reports the declared signature** *(v0.147.0; it reported the
+  erased Go type through v0.146.0)*. A named binding's signature is
+  already written in goml spelling in the session's own source, so the
+  REPL prints the parsed declaration back — `First : Vec a (n + 1) -> a`,
+  indices and quantities intact — with no pipeline run at all. When the
+  generated file is current, an `elaborated:` line adds the un-erased
+  signature the pipeline recorded (`//goplus:dep`), which names the
+  binders auto-quantification supplied. Anything with no declaration to
+  read — an expression, an unannotated value, an imported name — falls
+  back to type-checking the generated package, and that is now the only
+  place the erasure caveat appears.
 - **`it` expands inline.** A binding that referenced its own previous
   definition would be an initialization cycle, since the new definition
   replaces the old under the same name. So `it + 1` after `21 * 2`
@@ -759,3 +764,51 @@ guess: type conversions (`[]byte(s)`), `make`, and slice literals. Mixed
 packages cover them — a `.go` file beside the `.goml` ones — which is the
 documented escape hatch, and the example uses exactly three such
 helpers. Reserved words now include `send`, `recv`, and `in`.
+
+## 13. Typed holes (v0.147.0)
+
+`?name` stands where code is not written yet, and generation reports what
+belongs there: the goal type — in the un-erased dependent spelling where
+the position is dependent — and the bindings in scope, including the
+quantity-0 indices that the generated Go no longer mentions.
+
+```
+let Rest {0 n : Nat} (v : Vec a (n + 1)) : Vec a n :=
+  ?rest
+
+-- vec.goml:8:3: hole ?rest : Vec[a, n]
+--   erased: Vec[a]
+--   in scope:
+--     n : nat (erased, quantity 0)
+--     v : Vec[a, n+1]
+```
+
+The whole feature lives in the shared core — goml adds no inference. The
+transpiler passes `?name` through to the `.gp` text verbatim, which is
+also what makes the diagnostic exact: holes are *named*, so their source
+positions are recorded by name and reported with a real column, where
+ordinary diagnostics arrive at decl granularity with none.
+
+Decided consequences:
+
+- **A hole is spelled with a name, attached to the `?`.** That is what
+  keeps it disjoint from postfix `?`: the try's `?` is glued to the
+  expression before it, a hole's to the name after it. So `path ?;` is
+  still a try and `f ?x` passes a hole. A spaced `? x` is a guided error
+  rather than a guess.
+- **Hole names are unique within a file**, which is what lets a goal be
+  traced back to its exact `?` without a per-expression source map.
+- **A declaration with a hole is not retained in the REPL.** Each
+  evaluation compiles and replays the whole session, so a retained
+  unfinished binding would fail every later input. Its goal is printed
+  and `:holes` recalls it; retaining holed declarations would need the
+  core to lower them to typed panic stubs, which is deliberately not part
+  of this milestone.
+- **Generation refuses to write while any hole remains** — including
+  outside a module, where the goal itself cannot be computed. A committed
+  `*_gml.go` therefore never contains a hole.
+- **In the editor**, goals arrive as Information-severity diagnostics and
+  hovering a `?name` serves the goal directly. Hover is answered natively
+  rather than forwarded, because a hole is precisely the reason there is
+  no generated Go to forward to; `goplus lsp` therefore advertises
+  `hoverProvider` whether or not its gopls delegate started.

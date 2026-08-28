@@ -28,6 +28,12 @@ import (
 // `__gp_v0 := __gp_val0()`.
 const ValCarrierPrefix = "__gp_val"
 
+// HoleCarrierPrefix marks a typed hole for resolution, which reports its
+// goal: `?rest` ⇒ `__gp_hole0_rest()`. The carrier is deliberately an
+// undefined call — a hole never reaches generated output, because its
+// diagnostic stops the write.
+const HoleCarrierPrefix = "__gp_hole"
+
 // Hoister renders a file's pass-1 flow and expression-form lowerings.
 type Hoister struct {
 	f        *syntax.File
@@ -144,6 +150,9 @@ func (h *Hoister) render(e ast.Expr) (string, bool) {
 		if me, isMe := h.f.MatchExprFor(bad); isMe {
 			return h.renderMatchExpr(me)
 		}
+		if hl, isHole := h.f.HoleFor(bad); isHole {
+			return h.renderHole(hl)
+		}
 		return string(h.f.Src[h.f.Offset(e.Pos()):h.f.Offset(e.End())]), true
 	}
 	// Stock expression: splice nested extension placeholders.
@@ -183,6 +192,23 @@ func (h *Hoister) renderTry(t *syntax.TryExpr) (string, bool) {
 		return "", false
 	}
 	return fmt.Sprintf("__gp_try%d(%s)", h.tryIndex(t), inner), true
+}
+
+// renderHole emits the pass-1 hole carrier. It needs no prelude: the
+// carrier is a plain expression, so a hole works anywhere an expression
+// does, package-level initializers included.
+func (h *Hoister) renderHole(hl *syntax.HoleExpr) (string, bool) {
+	return fmt.Sprintf("%s%d_%s()", HoleCarrierPrefix, h.holeIndex(hl), hl.Name.Name), true
+}
+
+// holeIndex is a hole's stable pass-1 number: its index in the file's Holes.
+func (h *Hoister) holeIndex(hl *syntax.HoleExpr) int {
+	for i, cand := range h.f.Holes {
+		if cand == hl {
+			return i
+		}
+	}
+	return 0
 }
 
 // tryIndex is a try's stable pass-1 number: its index in the file's Tries.

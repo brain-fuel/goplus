@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"goforge.dev/goplus/internal/diag"
 	"goforge.dev/goplus/internal/gen"
 	"goforge.dev/goplus/internal/toolchain"
 )
@@ -58,6 +59,9 @@ func (r *repl) tryGenerate(s session, trailing string) (*RunResult, bool) {
 	ok := len(res.Gen.Diags) == 0
 	if ok {
 		r.lastGood = src
+		r.lastHoles = nil
+	} else if len(res.Gen.Holes) > 0 {
+		r.lastHoles = res.Gen.Holes
 	}
 	return res, ok
 }
@@ -69,6 +73,9 @@ func wantsStatement(res *RunResult) bool {
 		return false
 	}
 	for _, d := range res.Gen.Diags {
+		if d.Kind == diag.KindHole {
+			continue // a hole's goal is the answer, not a shape complaint
+		}
 		msg := d.Msg
 		if strings.Contains(msg, "used as value") ||
 			strings.Contains(msg, "multiple-value") ||
@@ -97,11 +104,34 @@ func (r *repl) reportDiags(s session, src, trailing string, res *RunResult) {
 			}
 		}
 		if rel > 0 {
+			// Only a hole carries a column, and it is exact.
+			if d.Kind == diag.KindHole && d.Pos.Column > 0 {
+				fmt.Fprintf(r.errOut, "%s<stdin>:%d:%d: %s\n", where, rel, d.Pos.Column, d.Msg)
+				continue
+			}
 			fmt.Fprintf(r.errOut, "%s<stdin>:%d: %s\n", where, rel, d.Msg)
 			continue
 		}
 		fmt.Fprintf(r.errOut, "%s%s\n", where, d.Msg)
 	}
+	// A hole is a question, not a mistake — but the session compiles and
+	// replays as a whole, so a declaration with one cannot be kept.
+	if allHoles(res) {
+		fmt.Fprintln(r.errOut, "(not retained: fill the hole and enter it again; :holes recalls the goals)")
+	}
+}
+
+// allHoles reports whether every diagnostic in res is a hole's goal.
+func allHoles(res *RunResult) bool {
+	if res == nil || res.Gen == nil || len(res.Gen.Diags) == 0 {
+		return false
+	}
+	for _, d := range res.Gen.Diags {
+		if d.Kind != diag.KindHole {
+			return false
+		}
+	}
+	return true
 }
 
 // span maps a line range of the rendered session to its origin.
@@ -271,10 +301,18 @@ func (r *repl) reportRunFailure(stdout, stderr string) {
 	}
 }
 
-// typeOf reports the Go type of an expression by type-checking the
-// generated package. Dependent indices are erased in generated Go, so
-// the answer is the erased type; :gp shows the lowered signature.
+// typeOf reports a name's declared signature, in the goml spelling the
+// user wrote — indices, quantities, and refinements intact. Anything with
+// no declaration to read (an expression, an unannotated value, an
+// imported name) falls back to type-checking the generated package, where
+// the answer is necessarily the erased one.
 func (r *repl) typeOf(input string) {
+	if name := strings.TrimSpace(input); isPlainName(name) {
+		if sig, ok := r.declaredSignature(name); ok {
+			r.reportDeclaredType(name, sig)
+			return
+		}
+	}
 	next := r.sess.clone()
 	r.autoImport(&next, input)
 	r.seq++

@@ -84,3 +84,25 @@ Feature: the goml REPL
       """
     Then the exit code is 0
     And stdout contains "re-execute on every evaluation"
+
+  Scenario: :type reports a declared binding's own signature
+    When I run goml with arguments "repl" and input:
+      """
+      let Twice (n : Int) : Int := n * 2
+      :type Twice
+      :quit
+      """
+    Then the exit code is 0
+    And stdout contains "Twice : (n : Int) -> Int"
+
+  Scenario: A declaration with a hole prints its goal and is not retained
+    When I run goml with arguments "repl" and input:
+      """
+      let Half (n : Int) : Int := ?impl
+      :holes
+      :quit
+      """
+    Then the exit code is 0
+    And stderr contains "hole ?impl : int"
+    And stderr contains "not retained"
+    And stdout contains "?impl : int"

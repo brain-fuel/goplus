@@ -1,0 +1,44 @@
+(* Go+ v0.10.0 grammar delta: typed holes.
+
+   The complete base grammar is Go plus the declarations and expressions in
+   grammar-v0.9.0.ebnf. This file specifies the typed-hole addition.
+*)
+
+Operand         = ... | Hole .
+Hole            = "?" identifier .
+
+(*
+  `?rest` stands where code has not been written yet. It is a question the
+  compiler answers: what type belongs here, and what is available to build
+  it from.
+
+  - `?` is not a Go token, so no valid Go program changes meaning. The hole
+    claim requires the identifier to begin at the byte immediately after the
+    `?`; a spaced `? x`, a `?1`, or a `?` before anything else keeps the
+    stock scanner's illegal-character error verbatim.
+  - The hole claim is in OPERAND position; the v0.4.0 postfix-try claim is in
+    SUFFIX position and requires the `?` to be adjacent to the end of the
+    expression before it. The two are therefore disjoint: `a?b` is `(a?) b`,
+    while `a ?b` applies a to the hole `?b`. A hole is spelled with a name
+    precisely so that neither claim has to guess.
+  - A hole is an expression and may appear wherever one may, including a
+    package-level initializer. Type and index positions are not expression
+    positions, so `Vec[int, ?n]` is not a hole.
+  - A hole has no lowering. Generation REFUSES to write any output while a
+    hole remains, so a committed artifact never contains one and the exit
+    status is the ordinary diagnostic failure.
+  - The reported goal is the type the hole's context expects: the un-erased
+    dependent spelling when the hole is an argument of a dependent call or
+    the result of a dependent function, and the erased Go type otherwise —
+    both when they differ. A context that fixes no type (`x := ?h`, an
+    untyped position) says so and names the fix rather than guessing.
+  - The goal also lists the bindings in scope at the hole, each in its
+    un-erased spelling where one is known, including the enclosing
+    function's quantity-0 parameters, which are visible to the checker but
+    absent from the generated Go.
+  - Computing a goal requires type information, and therefore a module.
+    Outside one the hole is still reported and generation still refuses to
+    write; only the goal itself is unavailable.
+  - Holes are reported on the post-convergence audit pass, so a hole never
+    perturbs resolution and its goal reflects fully resolved surroundings.
+*)

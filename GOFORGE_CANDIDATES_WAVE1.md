@@ -704,6 +704,7 @@ page have all been verified.
 | goml (surface) | — | v0.144.1 | std/v0.212.0 | — | brain-fuel/goplus (`goforge.dev/goplus`, `cmd/goml`) | `/goplus/` published | ML-family second surface; 418 Godog scenarios, differential parity vs .gp, race + gen -check clean; released 2026-08-12 |
 | goml REPL + value bindings | — | v0.145.0 | std/v0.212.0 | — | brain-fuel/goplus (`goforge.dev/goplus`, `cmd/goml`) | `/goplus/` published | `goml repl` compiles and runs (no interpreter); nullary `let` binds a value, `()` is the unit binder; 425 Godog scenarios, race + gen -check clean; released 2026-08-12 |
 | goml Go-interop | — | v0.146.0 | std/v0.212.0 | — | brain-fuel/goplus (`goforge.dev/goplus`, `cmd/goml`) | `/goplus/` published | `&x`, `xs[i]`, channel send/recv, imported ctor patterns, if-as-statement; two wrong lowerings fixed (void if/else ran both arms; binders blanked inside record literals); forced by the knockknock C2C example; 434 scenarios, race + gen -check clean; released 2026-08-20 |
+| Typed holes | — | v0.147.0 | std/v0.212.0 | — | brain-fuel/goplus (`goforge.dev/goplus`, `cmd/goplus` + `cmd/goml`) | `/goplus/` published | `?name` goals: un-erased dependent type + in-scope bindings incl. quantity-0 indices; refuses to write while any hole remains (module or not); LSP Information diagnostics + native hover; goml `:holes` and declared-signature `:type`; 433 scenarios, race + gen -check clean; released 2026-08-27 |
 
 ## Verification commands
 

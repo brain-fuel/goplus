@@ -31,6 +31,7 @@ type fileResolver struct {
 	dependentUnstable map[*types.Var]bool
 	dependentBlocked  map[*ast.CallExpr]bool
 	diags             []diag.Diagnostic
+	holes             []diag.HoleInfo
 	edits             []lower.Edit
 
 	// report enables give-up diagnostics. It is set only on the audit
@@ -86,6 +87,7 @@ func (r *fileResolver) resolve() ([]lower.Edit, []diag.Diagnostic) {
 		case *ast.Ident:
 			r.ctorCandidate(x)
 		case *ast.CallExpr:
+			r.holeCandidate(x)
 			r.refinementCallCandidate(x)
 			r.refinedFunctionCallCandidate(x)
 			r.pipeCandidate(x)

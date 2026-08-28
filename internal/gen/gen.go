@@ -54,6 +54,12 @@ type Result struct {
 	Orphans []string          // generated files whose .gp source is gone
 	Outputs map[string][]byte // DryRun: would-be generated content
 	Diags   []diag.Diagnostic
+	// Holes are the typed holes that stopped this run, positioned in
+	// their .gp sources. Each has a matching KindHole diagnostic.
+	Holes []diag.HoleInfo
+	// Reg is the resolved registry, available even when diagnostics
+	// stopped the run so callers can still report un-erased signatures.
+	Reg *registry.Registry
 }
 
 // Ok reports whether generation completed without diagnostics.
@@ -113,6 +119,10 @@ func Run(opts Options) (*Result, error) {
 	lawsOutByDir := map[string]string{}
 	goplusSources := map[string][]byte{} // output abs path -> .gp source bytes
 	goplusPaths := map[string]string{}   // output abs path -> .gp path (relative)
+	// Hole positions come from the parser, not the line-diff sourcemap: a
+	// hole's carrier text differs from `?name`, so the diff cannot anchor
+	// its line, and holes are named, so the source position is exact.
+	holePos := map[string]map[string]token.Position{} // output abs path -> hole name -> .gp position
 	var orphans []string
 
 	// Pre-load every directory once: the parses are reused below, and
@@ -166,6 +176,15 @@ func Run(opts Options) (*Result, error) {
 					out := emit.OutputPath(f.path)
 					goplusSources[out] = f.src
 					goplusPaths[out] = relTo(opts.Dir, f.path)
+					if len(f.gp.Holes) > 0 {
+						byName := map[string]token.Position{}
+						for _, h := range f.gp.Holes {
+							pos := f.gp.Fset.Position(h.QPos)
+							pos.Filename = relTo(opts.Dir, f.path)
+							byName[h.Name.Name] = pos
+						}
+						holePos[out] = byName
+					}
 				}
 			}
 		}
@@ -198,6 +217,7 @@ func Run(opts Options) (*Result, error) {
 		if err != nil {
 			return nil, err
 		}
+		res.Reg = out.Reg
 		if len(out.Diags) > 0 {
 			if opts.DryRun {
 				res.Outputs = out.Texts
@@ -208,7 +228,31 @@ func Run(opts Options) (*Result, error) {
 			for path, text := range out.Texts {
 				maps[path] = sourcemap.Build(goplusPaths[path], goplusSources[path], text)
 			}
+			// Holes carry their parsed .gp position; their diagnostics
+			// follow the same correction, keyed by the carrier position
+			// they were reported at.
+			holeFix := map[token.Position]token.Position{}
+			for _, h := range out.Holes {
+				exact, found := holePos[h.Pos.Filename][h.Name]
+				if !found {
+					if m, ok := maps[h.Pos.Filename]; ok {
+						if mapped, mok := m.Map(h.Pos); mok {
+							exact = mapped
+						}
+					}
+				}
+				if exact.Filename != "" {
+					holeFix[h.Pos] = exact
+					h.Pos = exact
+				}
+				res.Holes = append(res.Holes, h)
+			}
 			for _, d := range out.Diags {
+				if fixed, ok := holeFix[d.Pos]; ok && d.Kind == diag.KindHole {
+					d.Pos = fixed
+					res.Diags = append(res.Diags, d)
+					continue
+				}
 				if m, ok := maps[d.Pos.Filename]; ok {
 					if mapped, mok := m.Map(d.Pos); mok {
 						d.Pos = mapped
@@ -263,6 +307,28 @@ func Run(opts Options) (*Result, error) {
 				return res, nil
 			}
 			orphans = append(orphans, findLawOrphans(dirs, lawsOutByDir, outputs)...)
+		}
+	}
+
+	// A hole must never reach generated Go. Resolution is what computes a
+	// hole's goal, and it needs a module; without one it does not run, so
+	// report every hole plainly rather than writing its carrier out.
+	if reported := reportedHoles(res.Holes); len(holePos) > 0 {
+		for _, out := range sortedKeys(holePos) {
+			byName := holePos[out]
+			for _, name := range sortedKeys(byName) {
+				pos := byName[name]
+				if reported[holeKey{pos.Filename, name}] {
+					continue
+				}
+				res.Holes = append(res.Holes, diag.HoleInfo{Name: name, Pos: pos})
+				res.Diags = append(res.Diags, diag.HoleAt(pos, fmt.Sprintf(
+					"hole ?%s : this package has no module context, so the goal cannot be inferred; run inside a module to see it", name)))
+			}
+		}
+		if len(res.Diags) > 0 {
+			res.Diags = diag.Sort(res.Diags)
+			return res, nil
 		}
 	}
 
@@ -797,7 +863,7 @@ func relTo(base, path string) string {
 	return rel
 }
 
-func sortedKeys(m map[string][]byte) []string {
+func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -826,4 +892,17 @@ func readWithOverlay(path string, overlay map[string][]byte) ([]byte, error) {
 		return src, nil
 	}
 	return os.ReadFile(path)
+}
+
+// holeKey identifies one hole by its source file and name.
+type holeKey struct{ file, name string }
+
+
+// reportedHoles indexes the holes whose goals resolution already reported.
+func reportedHoles(holes []diag.HoleInfo) map[holeKey]bool {
+	out := make(map[holeKey]bool, len(holes))
+	for _, h := range holes {
+		out[holeKey{h.Pos.Filename, h.Name}] = true
+	}
+	return out
 }
