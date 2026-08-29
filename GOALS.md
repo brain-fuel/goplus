@@ -410,6 +410,127 @@ artifact — invalid Go from a command that exited 0. It parses, which is
 why three goml scenarios and four goml tests had been asserting against
 it. This is the rule typed holes already followed, generalized.
 
+### Stage C - dependent matching that keeps its promises
+
+Stage B made preconditions statable. Matching is where they are CONSUMED,
+and it is the daily ergonomics gap against Idris2. Go+ already has GADT
+matching, index refinement, exhaustiveness, and (v0.154.0) pruning driven
+by a proposition in scope. What it does not have:
+
+- **Guards and literal patterns** (`case P if cond:` / `| P if cond =>`).
+  Reserved productions in both surfaces since the goml design, deferred
+  because exhaustiveness over literals needs decider work. They land in
+  `.gp` and goml simultaneously, per that decision.
+- **Dot patterns** — a pattern position forced by unification, written as
+  such rather than rebound. Today the forced value is either spelled again
+  (and must be proved equal) or the arm cannot be written.
+- **`with` abstraction / views** — matching on an intermediate whose type
+  refines the scrutinee's indices. This is Idris2's central matching tool
+  and has no Go+ spelling.
+- **Explicit impossible arms.** Pruning is inferred from index clash; an
+  author cannot say "this arm cannot occur" and have it checked.
+- **Dependent motives** for a match in expression position.
+
+Forcing consumers: `std/vec` and `std/smt`, both of which currently spell
+around the gap.
+
+### Stage D - totality, completed
+
+`total func` already checks termination (`internal/core/total.go`,
+v0.7.0): every self-recursive call must shrink an argument, structurally
+or arithmetically. The gap is scope, not principle. The v1 surface admits
+only `nat` parameters and a single `nat` result with no receiver, and only
+SELF-recursion is inspected — mutual recursion is unsupported, and a
+well-founded recursion with an author-supplied measure cannot be written
+at all.
+
+Stage D widens `total` to general types, adds mutual recursion and
+measure-based descent, and adds productivity for codata if codata lands.
+This is not a nicety: Stage F's kernel needs terminating reduction, so a
+checked totality predicate is F's **precondition**. It is also what a
+reorderable `do` block needs (see below), because `total` is pure today
+only by accident of being restricted to nat arithmetic.
+
+### Stage E - automation beyond the linear fragment
+
+The arithmetic decider settles a linear fragment over naturals, and does
+it well — it is `omega`-shaped, and four consecutive Stage B features
+needed no new power from it. Outside that fragment there is nothing.
+Lean4 has `simp`, `ring`, `decide`, and a tactic language; Idris2 has
+proof search and `auto` implicits.
+
+Go+ has a hook neither of them has in this form: **`class` laws are
+already declared, and already property-tested**. A law is a rewrite rule
+that the repo has independently gained evidence for. Stage E is:
+
+1. **Law-driven rewriting** — a `simp`-shaped normalizer whose rule set is
+   the laws in scope, so an equality the decider cannot see is discharged
+   by rewriting rather than by arithmetic.
+2. **Witness search** — instance resolution generalized to `auto`-style
+   implicit proof arguments, so a proposition provable by composing
+   in-scope facts need not be spelled.
+
+Explicitly NOT a tactic language. Elaboration and automation stay outside
+the trusted core, per Stage F's constraint.
+
+### Where the Idris2 / Lean4 line actually is
+
+Stages C through E make Go+ a strong refinement/indexed language with
+matching, totality, and automation comparable in daily use. They do not
+make it Idris2 or Lean4.
+
+- **Idris2 parity** additionally needs Stage F's kernel (universes,
+  Pi/Sigma, inductive families, intensional equality), plus codata and
+  productivity.
+- **Lean4 parity** needs all of that AND a metaprogramming layer —
+  syntax quotation, macro expansion, elaborator reflection, and an
+  interactive tactic surface. Nothing in Stages A-G covers it, and it
+  should be named as its own stage rather than smuggled into F.
+
+Typed holes (v0.147.0) already supply the goal display both languages
+have; the gap is what you can DO at a goal, not seeing it.
+
+### Effect ordering - `do` and `doseq`
+
+A separate workstream from the dependent stages, and the one place the
+roadmap proposes a distinction neither Idris2 nor Lean4 draws.
+
+goml today has `do { ... }`: an ordered block, the honest embedding of Go
+statements (`let mut`, assignment, `defer`, `go`, loops, `?`). Order is
+written order, because that is what Go means.
+
+The proposal splits that in two:
+
+- **`doseq ... end`** - ordered. Today's `do` block, renamed. Statements
+  execute in written order because their effects are observable.
+- **`do ... end`** - ordered ONLY by data dependency. The block is a DAG
+  over its bindings; the compiler may emit any topological order, and
+  independent subtrees are candidates for concurrent evaluation.
+
+The Haskell analogue is exact — `do ... end` is `ApplicativeDo` and
+`doseq ... end` is monadic `do` — but the naming inverts the convention
+every ML-family and Lean-family programmer carries, where `do` IS the
+sequenced one. **Open decision**: keep `do`/`doseq` as proposed, or spell
+the reorderable one `dopar`/`dodag` and leave `do` meaning what it means
+everywhere else. Recommendation is the latter, because the surface is
+already an ML surface and the cost of inverting `do` is paid by every
+reader forever; the cost of a new keyword is paid once.
+
+**The soundness precondition is the interesting part.** Reordering is only
+sound if a statement's observable behaviour is exhausted by its bindings,
+so `do ... end` needs a purity predicate. Go+ has exactly one candidate —
+`total func` — and it is pure today only by accident: the v1 surface
+restricts it to `nat` parameters and a single `nat` result, so there is
+nothing it could do besides arithmetic. Widening `total` to general types
+is Stage D. **So `do ... end` depends on Stage D**, and building it before
+that means inventing a second effect discipline that Stage D would then
+have to reconcile.
+
+`doseq ... end` does not: it is a rename plus an `end`-delimiter spelling,
+and can land whenever the surface churn is acceptable. Doing the rename
+first — while `do` still means ordered — and introducing the reorderable
+`do` only after Stage D keeps every intermediate state honest.
+
 ### Stage F - total dependent core
 
 To accurately call Go+ dependently typed, add an opt-in kernel with universes,
