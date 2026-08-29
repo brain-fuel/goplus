@@ -1,0 +1,73 @@
+(* Go+ v0.18.0 grammar delta: a spelled proof no longer forces spelled
+   indices, and an unresolved skeleton is never written.
+
+   The complete base grammar is Go plus the declarations and expressions in
+   grammar-v0.17.0.ebnf. No production changes. This file records the two
+   contract changes above it.
+*)
+
+DependentCall   = FunctionName "(" [ ArgumentList ] ")" .
+
+(*
+  ## An index can be inferred; a proof cannot
+
+  A dependent signature mixes two kinds of erased parameter. An INDEX is
+  recoverable from the arguments — `n` in `v Vec[T, n]` is whatever `v`'s
+  own type says. A PROOF is not: it is a claim about those indices, and
+  v0.14.0 made writing it mandatory precisely because nothing can supply
+  it on the author's behalf.
+
+  Erased arguments were nevertheless omitted as a GROUP. A call named all
+  of them or none, so naming the mandatory proof forced spelling every
+  index beside it:
+
+      return AtIndex(i-1, n-1, decide, t)   (* before *)
+      return AtIndex(i-1, decide, t)        (* now *)
+
+  A call may now omit exactly the inferable erased arguments and still
+  name its proofs. The older shape — every erased argument omitted —
+  remains valid wherever no proof is carried, so the 78 existing
+  omitted-index sites are unaffected, and the fully-spelled shape is
+  unchanged.
+
+  - Nothing is waved through. The index is inferred, then the proposition
+    is checked against it: `AtIndex(7, decide, v)` on a `Vec[int, 3]` is
+    still `cannot prove 7 < 3`, and omitting `decide` is still
+    `the proof argument for p of AtIndex cannot be omitted`.
+  - Inference now binds what it can rather than abandoning a whole
+    instantiation at the first position it cannot solve. Unifying the
+    parameter's `Vec[T, n]` against the caller's `Vec[int, 3]` clashes at
+    `T` — a type parameter, not a dependent variable — and used to give up
+    there, losing `n`, the one position inference wanted. It could only
+    ever succeed when the caller's type spelled the callee's own type
+    parameters, which is true of a recursive step and false of a call site.
+  - std/vec's `AtIndex` and `Set` are written in the shorter form. The
+    generated Go is byte-identical: erased is erased either way.
+
+  ## An unresolved skeleton is not an artifact
+
+  Pass 1 does not lower a construct to Go. It lowers it to a skeleton plus
+  a carrier that resolution consumes: a match becomes `case nil:` heads
+  whose bodies are `//goplus:pattern` comments, a pipeline becomes a
+  `__gp_bare_` call, an expression-position block becomes a `__gp_val`
+  binding. Resolution needs type information, so it needs a module.
+
+  Without one it did not run, and the skeleton was WRITTEN OUT as if it
+  were the finished artifact — two `case nil:` arms in one switch, binders
+  that were never bound, no return — from a command that exited 0. The
+  file parses as Go, which is why it went unnoticed: three goml scenarios
+  and four goml tests had been asserting against it.
+
+  Generation now checks the artifact for those carriers before writing,
+  and refuses:
+
+      a match cannot be generated here: this package has no module
+      context, so it cannot be resolved; run inside a module
+
+  This is the rule typed holes already followed (v0.10.0), one step more
+  general. It is keyed off the reserved `__gp_` names and the pattern
+  marker rather than the skeleton's shape, because `case nil:` is a legal
+  arm of a real Go type switch and std/decimal writes one. Go+ that needs
+  no resolution still generates outside a module, so a single `.gp` file
+  remains usable as a script.
+*)

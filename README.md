@@ -19,6 +19,69 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.157.0 — inferred indices beside a spelled proof, and no half-written artifacts
+
+### A spelled proof no longer forces spelled indices
+
+An index can be inferred; a proof cannot. Erased arguments were
+nevertheless omitted as a **group**, so naming the mandatory proof forced
+spelling every index beside it:
+
+```go
+return AtIndex(i-1, n-1, decide, t)   // before
+return AtIndex(i-1, decide, t)        // now
+```
+
+A call may now omit exactly the inferable erased arguments and still name
+its proofs. Nothing is waved through: the index is inferred, then the
+proposition is checked against it, so `AtIndex(7, decide, v)` on a
+`Vec[int, 3]` is still `cannot prove 7 < 3`, and dropping `decide` is
+still `the proof argument for p of AtIndex cannot be omitted`.
+
+The fix was in inference, not in the rule. Unifying a parameter's
+`Vec[T, n]` against a caller's `Vec[int, 3]` clashes at `T` — a type
+parameter, not a dependent variable — and used to abandon the whole
+instantiation there, losing `n`, the one position it wanted. It now binds
+what it can, which is why the recursive form worked before this and the
+call site did not. `std/vec`'s `AtIndex` and `Set` are written in the
+shorter form; the generated Go is byte-identical.
+
+### An unresolved skeleton is never written
+
+Pass 1 does not lower a construct to Go. It lowers it to a **skeleton**
+plus a carrier that resolution consumes: a match becomes `case nil:` heads
+whose bodies are `//goplus:pattern` comments, a pipeline becomes a
+`__gp_bare_` call. Resolution needs type information, so it needs a
+module — and without one it did not run, so the skeleton was written out
+as if it were the finished artifact:
+
+```go
+func UnwrapOr[a any](o Option[a], d a) a {
+	switch __gp_m0 := any(o).(type) {
+	case nil:
+		//goplus:pattern Some(v)
+		return v      // v was never bound; two `case nil:` arms; no return
+	}
+}
+```
+
+That file **parses** as Go, which is why it went unnoticed: three goml
+scenarios and four goml tests had been asserting against output like it,
+with `goplus gen` exiting 0. Generation now checks the artifact for those
+carriers before writing and refuses instead:
+
+```
+a match cannot be generated here: this package has no module context,
+so it cannot be resolved; run inside a module
+```
+
+This is the rule typed holes already followed, one step more general. It
+keys off the reserved `__gp_` names and the pattern marker rather than the
+skeleton's shape, because `case nil:` is a legal arm of a real Go type
+switch and `std/decimal` writes one. Go+ that needs no resolution still
+generates outside a module, so a single `.gp` file is still usable as a
+script.
+
 ## std/v0.213.0 — vec indexes by a plain number
 
 Stage B now has a real consumer. `std/vec` gains `AtIndex` and `Set`,
@@ -1342,6 +1405,7 @@ The spec is executable: the Godog/Cucumber feature suite under
 | v0.25.0 | Goals 01–08 dependent rewrite foundations: indexed decimal, collections, config, HTTP routes, expressions, JSON paths, validation, and schedules — shipped |
 | v0.27.0 | Goal 10 foundations: consistent inferred indices across all imported runtime arguments — shipped |
 | v0.26.0 | Goal 09 foundations: inferred preserved indices across linear calls and shared overflow-safe retry primitives — shipped |
+| v0.157.0 | A spelled proof no longer forces spelled indices; an unresolved skeleton is never written — shipped
 | v0.156.0 | Named propositions (`prop`), completing Stage B — shipped |
 | v0.155.0 | `And[P, Q]` conjunction: the whole precondition in one proof parameter — shipped |
 | v0.154.0 | A proposition in scope refines a match, pruning variants its bound excludes — shipped |

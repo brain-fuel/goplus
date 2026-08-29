@@ -390,6 +390,26 @@ function may also only be used in a direct call, since composition,
 piping, partial application, and plain assignment all reached generated
 Go without a proof. Ordinary erased indices keep their inference.
 
+The ergonomic cost that rule imposed is repaid in v0.157.0. Erased
+arguments were omitted as a GROUP, so naming the mandatory proof forced
+spelling every index beside it — `AtIndex(i-1, n-1, decide, t)`. A call
+may now omit exactly the INFERABLE erased arguments and still name its
+proofs, and nothing is waved through: the index is inferred, then the
+proposition is checked against it. The fix was in inference rather than
+in the rule — unifying a parameter's `Vec[T, n]` against a caller's
+`Vec[int, 3]` clashed at `T`, a type parameter rather than a dependent
+variable, and abandoned the instantiation there, losing the one position
+it wanted. `std/vec` is written in the shorter form, and the generated Go
+is byte-identical.
+
+Also in v0.157.0, and not a dependent-typing matter at all: generation
+refuses to write an artifact that still contains a lowering carrier.
+Pass 1 emits a SKELETON that resolution completes, resolution needs a
+module, and without one the skeleton was written out as the finished
+artifact — invalid Go from a command that exited 0. It parses, which is
+why three goml scenarios and four goml tests had been asserting against
+it. This is the rule typed holes already followed, generalized.
+
 ### Stage F - total dependent core
 
 To accurately call Go+ dependently typed, add an opt-in kernel with universes,

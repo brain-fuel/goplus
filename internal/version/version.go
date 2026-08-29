@@ -9,7 +9,7 @@ import (
 )
 
 // Version is the goplus distribution version reported by the CLI and LSP.
-const Version = "v0.156.0"
+const Version = "v0.157.0"
 
 // Vintage is the generated-source compatibility version. It advances only
 // when generated Go requires a newer language lowering, independently of
