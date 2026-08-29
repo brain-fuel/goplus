@@ -247,36 +247,47 @@ parity is green and NFR has reached a materially stable point.
   0 rather than 1 allocation (100% fewer). The shipped module is
   `goforge.dev/gpgjson` (repository `brain-fuel/gpgjson`, released through
   v1.0.3), not `goforge.dev/gjson` as this entry previously implied.
-- **Progress, and what still blocks `(complete)`:** one real divergence is
-  CLOSED. A hard-coded recovery collapsed `*.*.#.[".#|#.""""0"]` to `[]`
-  where upstream projects to `[[],[]]`; it was written for the sibling
-  `*.*.#.[".#|""""|#."]`, where upstream does collapse, and the
-  discriminator turned out to be order — the empty-quote run must precede
-  the projection marker. Located with a coverage profile, since dozens of
-  similarly shaped recovery branches exist.
-  The gate is also now split, which is what makes its criterion reachable.
-  `TestDynamicPathCorpus` replays all 2411 recorded seeds under FULL parity
-  with no grammar bound, so every agreement already reached — including
-  bug-for-bug agreement on malformed paths, which a drop-in replacement owes
-  its callers — stays pinned. `FuzzDynamicPathDifferential` bounds NEW
-  exploration to the syntax the tier claims. Because the corpus asserts the
-  recorded set separately, tightening the bound cannot surrender ground.
-  Two designs were tried and DISPROVED before this one, and neither should
-  be retried. Filtering the failing shape by an instance-specific predicate
-  excluded 1 of 2412 entries and the fuzzer produced another divergence
-  immediately. Asserting "our result is valid JSON" over the malformed
-  remainder looked strong — upstream returns Raw `[0"]`, an array literal
-  with an unbalanced quote, for `[").[0A).0|!0"]` — until measurement showed
-  **gpgjson reproduces that same `[0"]` byte-for-byte** on other paths. The
-  engine is deliberately bug-for-bug compatible, so that invariant would
-  break the compatibility the package exists to provide.
-  What remains: the exploration bound still admits `|!` literal-pipe forms
-  that diverge (`*.*.#.0.#|!0|1`), so the fuzz gate is not green. Completing
-  it means writing out GJSON's documented path grammar and bounding against
-  THAT, rather than tightening against whatever the fuzzer produced last.
-  That is the honest completion criterion: a stated grammar the tier claims
-  parity within, not the absence of a counterexample in a region where
-  upstream's own behaviour is accidental.
+- **Progress, and the one thing still blocking `(complete)`:** two real
+  compatibility bugs are CLOSED, both found by the re-scoped gate.
+  1. A hard-coded recovery collapsed `*.*.#.[".#|#.""""0"]` to `[]` where
+     upstream projects to `[[],[]]`. It was written for a sibling where
+     upstream does collapse; the discriminator is order — the empty-quote
+     run must precede the projection marker.
+  2. The BOOLEAN QUERY TABLE. `#[active<=0]` matched nothing where upstream
+     selects every false element, because a guard refused any ordering
+     comparison between a boolean field and a string operand, assuming the
+     two would order once coerced. They never order: GJSON switches on the
+     field's type and compares the operand TEXT, and the result is
+     asymmetric — `true >= x` holds for every operand including `"x"` and
+     `null`, while `true <= x` holds for none, not even `x == "true"`. The
+     table was read off upstream by enumeration, because reasoning yields
+     the plausible symmetric version and that version is wrong. 336
+     combinations now agree exactly, where 40 did not.
+  The gate is also split, which is what made those findable. Recorded seeds
+  are replayed by `TestDynamicPathCorpus` under FULL parity — all 2412, no
+  grammar bound — so nothing already achieved is at risk; the fuzzer bounds
+  only NEW exploration, to eight rules read off the GJSON path reference
+  (balanced quotes/brackets/parens; parens only as `#(` query heads;
+  escapes only of `.`/`*`/`?`/`\`; no empty query or multipath; no path
+  metacharacter inside a quoted key within a container or query; no quoted
+  segment abutting another quoted segment or a bare token; literals only in
+  multipath element position, which excludes `|!literal`).
+  Two designs were tried and DISPROVED; neither should be retried. An
+  instance-specific filter excluded 1 of 2412 entries and the fuzzer
+  produced another divergence immediately. A valid-JSON invariant over the
+  malformed remainder looked strong — upstream returns Raw `[0"]` for
+  `[").[0A).0|!0"]` — until measurement showed gpgjson reproduces that same
+  `[0"]` byte-for-byte elsewhere. The engine is deliberately BUG-FOR-BUG
+  compatible, so that invariant would break the compatibility the package
+  exists to provide.
+  **What remains:** the fuzzer still reaches the grammar boundary
+  (`*.*.#(*)#["."]`, `#(*)` as a condition, a multipath abutting `#(...)#`
+  with no separator). Each is a question about what GJSON's path grammar
+  actually admits, and answering them belongs in a systematic pass over the
+  reference and upstream's parser — not in another round of tightening
+  against the last counterexample, which is how the dozens of hand-written
+  recovery branches in `compat_path.gp` accumulated. That pass is the
+  completion criterion: a stated grammar, with parity asserted within it.
 
 ### `/goals/08-cron` - `robfig/cron` -> `std/schedule` (complete)
 
