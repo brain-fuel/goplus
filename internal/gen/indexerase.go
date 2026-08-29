@@ -3,6 +3,7 @@ package gen
 import (
 	"go/ast"
 
+	"goforge.dev/goplus/internal/core"
 	"goforge.dev/goplus/internal/lower"
 	"goforge.dev/goplus/internal/registry"
 )
@@ -99,7 +100,7 @@ func eraseOrdinaryIndexUses(f *sourceFile, isIndexed registry.IndexArity) []lowe
 			if !ok || handled[n] {
 				return true
 			}
-			if baseName(base) == "Eq" {
+			if core.IsProp(baseName(base)) {
 				return true // proof propositions live only in dropped params
 			}
 			if _, _, known := isIndexed(baseName(base)); known {

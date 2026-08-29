@@ -19,6 +19,37 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.151.0 — bounds are statable
+
+`Eq[a, b]` was the only proposition a signature could state. But the most
+common dependent obligation is a **bound** — an index below a length —
+and it could not be written down at all, so the programs that most want
+dependent types could not express their real precondition.
+
+`Le[a, b]` and `Lt[a, b]` complete the set:
+
+```go
+func At[T any](0 i nat, 0 n nat, 0 p Lt[i, n], v Vec[T, n]) T { … }
+
+At(1, 3, decide, v)   // the decider discharges 1 < 3
+At(5, 3, decide, v)   // cannot prove 5 < 3 at this call to At
+```
+
+The decider needed no new power — `FactGe` already sat beside `FactEq`.
+Ordering was decidable long before it was sayable; this release makes it
+sayable. Propositions erase exactly as `Eq` does.
+
+**`refl` is reflexivity**, which is true of equality and meaningless for a
+strict inequality, so it discharges `Eq` alone. `decide` is the general
+witness — "the decider proved it" — and covers every proposition
+including `Eq`, so one spelling now works across the set. `refl` remains
+valid on `Eq`; using it on an ordering is an error that names `decide`.
+`assume` asserts any of them, and the audit record carries the relation.
+
+A proposition is not yet a *hypothesis*: `Lt[i, n]` in scope does not tell
+a match that `n` is non-zero. Propositions as hypotheses, user-declared
+predicates, and conjunction are the remaining Stage B work.
+
 ## v0.150.0 — assumptions cross the module boundary
 
 `goplus assumptions` read the `.gp` source, so it could tell you what
@@ -1125,6 +1156,7 @@ The spec is executable: the Godog/Cucumber feature suite under
 | v0.25.0 | Goals 01–08 dependent rewrite foundations: indexed decimal, collections, config, HTTP routes, expressions, JSON paths, validation, and schedules — shipped |
 | v0.27.0 | Goal 10 foundations: consistent inferred indices across all imported runtime arguments — shipped |
 | v0.26.0 | Goal 09 foundations: inferred preserved indices across linear calls and shared overflow-safe retry primitives — shipped |
+| v0.151.0 | `Le`/`Lt` propositions and the general `decide` witness: bounds are statable — shipped |
 | v0.150.0 | Assumptions travel in the generated artifact via `//goplus:assume`, so a consumer can audit what its dependencies assumed — shipped |
 | v0.149.0 | `assume`: an auditable escape hatch for propositions the decider cannot discharge, with `goplus assumptions` — shipped |
 | v0.148.0 | `goplus lsp` serves `.goml` buffers; editor clients register both surfaces — shipped |

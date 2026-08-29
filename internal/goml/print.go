@@ -500,7 +500,7 @@ func (c *converter) printType(d *TypeDecl) {
 		switch dv {
 		case "Gen":
 			c.b.WriteString("//goplus:derive gen\n")
-		case "Eq", "Universe", "Transform", "Fold":
+		case "Eq", "Le", "Lt", "Universe", "Transform", "Fold":
 			// Derived by default; the clause documents intent.
 		default:
 			c.failf(d.Pos, "unknown deriving name %q", dv)

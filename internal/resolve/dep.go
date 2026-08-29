@@ -615,13 +615,15 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 			continue
 		}
 		base, eqArgs := instantiationBase(d.Params[i].Type)
-		if base != "Eq" || len(eqArgs) != 2 {
+		op, isProp := core.PropFor(base)
+		if !isProp || len(eqArgs) != 2 {
 			continue
 		}
 		id, isIdent := a.(*ast.Ident)
-		if !isIdent || (id.Name != "refl" && id.Name != "assume") {
+		if !isIdent || !validWitness(op, id.Name) {
 			if r.report {
-				r.errorf(a.Pos(), "the proof argument for %s of %s must be refl (proved by the decider) or assume (asserted on your authority)", d.Params[i].Name, d.Name)
+				r.errorf(a.Pos(), "the proof argument for %s of %s must be %s (proved by the decider) or assume (asserted on your authority)",
+					d.Params[i].Name, d.Name, op.Witness())
 			}
 			return
 		}
@@ -656,17 +658,17 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 				Fn:          r.enclosingDeclName(call),
 				Callee:      d.Name,
 				Param:       d.Params[i].Name,
-				Proposition: substText(eqArgs[0], sub) + " = " + substText(eqArgs[1], sub),
+				Proposition: substText(eqArgs[0], sub) + " " + op.Symbol() + " " + substText(eqArgs[1], sub),
 			}
 			r.assumptions = append(r.assumptions, record)
 			r.emitAssumeMarker(call, record)
 			continue
 		}
-		ok, err := core.DecideEqTexts(eqArgs[0], eqArgs[1], sub, r.reg.TotalDefs(), calleeResolve)
+		ok, err := core.DecidePropTexts(op, eqArgs[0], eqArgs[1], sub, r.reg.TotalDefs(), calleeResolve)
 		if err != nil || !ok {
 			if r.report {
-				r.errorf(a.Pos(), "cannot prove %s = %s at this call to %s; the arithmetic decider could not discharge refl (rephrase the indices, pass values that make the equality manifest, or assert it with assume)",
-					substText(eqArgs[0], sub), substText(eqArgs[1], sub), d.Name)
+				r.errorf(a.Pos(), "cannot prove %s %s %s at this call to %s; the arithmetic decider could not discharge %s (rephrase the indices, pass values that make it manifest, or assert it with assume)",
+					substText(eqArgs[0], sub), op.Symbol(), substText(eqArgs[1], sub), d.Name, op.Witness())
 			}
 			return
 		}
@@ -1304,4 +1306,17 @@ func (r *fileResolver) emitAssumeMarker(call *ast.CallExpr, a diag.Assumption) {
 		at--
 	}
 	r.edits = append(r.edits, lower.Edit{Start: at, End: at, New: marker + "\n"})
+}
+
+// validWitness reports whether name discharges op. `assume` asserts any
+// proposition; `decide` proves any by decision; `refl` is reflexivity and
+// so belongs to equality alone.
+func validWitness(op core.PropOp, name string) bool {
+	switch name {
+	case "assume", "decide":
+		return true
+	case "refl":
+		return op == core.PropEq
+	}
+	return false
 }

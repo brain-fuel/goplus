@@ -359,8 +359,12 @@ forcing consumers.
 
 ### Stage B - propositions and validated witnesses
 
-Add an opt-in proposition kind, named predicate parameters, conjunction,
-equality witnesses, and proof-preserving functions. Explicit `assume` shipped
+Add named predicate parameters, conjunction, and proof-preserving
+functions. Equality witnesses shipped in v0.7.0 and ordering propositions
+(`Le`, `Lt`) in v0.151.0, with `decide` as the general discharge witness —
+the decider already settled inequalities, so this made them statable
+rather than adding power. Propositions are not yet HYPOTHESES: one in
+scope does not refine a match the way a constructor index does. Explicit `assume` shipped
 first, in v0.149.0: at a proof parameter it stands where `refl` would and
 asserts the proposition instead of proving it, erasing identically and
 recorded for review by `goplus assumptions`. It is currently accepted

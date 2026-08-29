@@ -117,7 +117,7 @@ func processDeps(f *sourceFile, pkgPath string, totals map[*ast.FuncDecl]bool, p
 		}
 		eqOK := true
 		for _, p := range params {
-			if base, _ := instantiationOf(p.typeText); base == "Eq" && p.quantity != "0" {
+			if base, _ := instantiationOf(p.typeText); core.IsProp(base) && p.quantity != "0" {
 				errf(p.name, "a proof parameter (%s) must be erased: give %s quantity 0", p.typeText, p.name.Name)
 				eqOK = false
 			}

@@ -1,0 +1,36 @@
+(* Go+ v0.12.0 grammar delta: ordering propositions.
+
+   The complete base grammar is Go plus the declarations and expressions in
+   grammar-v0.11.0.ebnf. This file specifies Le and Lt, and the general
+   proof witness they need.
+*)
+
+Proposition     = ( "Eq" | "Le" | "Lt" ) "[" IndexTerm "," IndexTerm "]" .
+ProofArg        = "refl" | "decide" | "assume" .
+
+(*
+  `Eq[a, b]` was the only proposition a signature could state, so the most
+  common dependent obligation — a BOUND, an index below a length — could
+  not be written down. `Le[a, b]` (a at most b) and `Lt[a, b]` (a strictly
+  below b) complete the set the decider already settles.
+
+  - A proposition is a type, used only at a quantity-0 parameter, and
+    erases with it. Nothing of Le or Lt reaches generated Go, exactly as
+    for Eq.
+  - The decider needed no new power. `core.Fact` already had FactGe beside
+    FactEq; ordering was decidable long before it was sayable. `a <= b` is
+    the fact `b - a >= 0`, and `a < b` is `b - (a+1) >= 0` — exact,
+    because indices are naturals.
+  - **`refl` is reflexivity.** It is true of equality and meaningless for
+    a strict inequality, so it discharges `Eq` alone. `decide` is the
+    general witness — "the decider proved it" — and discharges every
+    proposition INCLUDING `Eq`, so one spelling covers the whole set.
+    `refl` remains valid on `Eq`, where it is both correct and already
+    shipped. Using `refl` on an ordering is an error that names `decide`.
+  - `assume` asserts any proposition, and its audit record carries the
+    relation: `assumed 5 < 3 for p of Bounded`.
+  - A proposition is not yet a HYPOTHESIS: `Lt[i, n]` in scope does not
+    tell a match that `n` is non-zero, so it does not prune arms the way a
+    constructor index does. Propositions as hypotheses, user-declared
+    predicates, and conjunction are the remaining Stage B work.
+*)

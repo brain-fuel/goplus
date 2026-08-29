@@ -288,3 +288,100 @@ Feature: Propositional equality
     And the file "main_gp.go" contains "//goplus:assume Widen Cast p 2 = 3"
     When I run goplus with arguments "gen -check ."
     Then the exit code is 0
+
+  Scenario: A bound is statable, and the decider discharges it
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      type Vec[T any, n nat] enum {
+      	Nil() Vec[T, 0]
+      	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+      }
+
+      func Bounded[T any](0 i nat, 0 n nat, 0 p Lt[i, n], v Vec[T, n]) int {
+      	return 0
+      }
+
+      func AtMost[T any](0 i nat, 0 n nat, 0 p Le[i, n], v Vec[T, n]) int {
+      	return 1
+      }
+
+      func Ok(v Vec[int, 3]) int {
+      	return Bounded(1, 3, decide, v) + AtMost(3, 3, decide, v)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 0
+    And the file "main_gp.go" is valid Go
+    # Propositions erase exactly as Eq does.
+    And the file "main_gp.go" contains "func Bounded[T any](v Vec[T]) int"
+
+  Scenario: A false bound is refused, naming the relation
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      func Bounded(0 i nat, 0 n nat, 0 p Lt[i, n]) int {
+      	return 0
+      }
+
+      func main() {
+      	_ = Bounded(5, 3, decide)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "cannot prove 5 < 3 at this call to Bounded"
+    And stderr contains "or assert it with assume"
+
+  Scenario: refl is reflexivity, so an ordering wants decide
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      func Bounded(0 i nat, 0 n nat, 0 p Lt[i, n]) int {
+      	return 0
+      }
+
+      func main() {
+      	_ = Bounded(1, 3, refl)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "the proof argument for p of Bounded must be decide (proved by the decider) or assume (asserted on your authority)"
+
+  Scenario: decide discharges an equality too, so one witness covers every proposition
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      func Claim(0 n nat, 0 m nat, 0 p Eq[n, m]) int {
+      	return 0
+      }
+
+      func main() {
+      	_ = Claim(1+1, 2, decide)
+      	_ = Claim(1+1, 2, refl)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 0
+
+  Scenario: An assumed bound is audited with its own relation
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      func Bounded(0 i nat, 0 n nat, 0 p Lt[i, n]) int {
+      	return 0
+      }
+
+      func Use() int {
+      	return Bounded(5, 3, assume)
+      }
+      """
+    When I run goplus with arguments "assumptions ."
+    Then the exit code is 0
+    And stdout contains "assumed 5 < 3 for p of Bounded"

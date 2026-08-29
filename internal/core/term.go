@@ -268,6 +268,11 @@ func SubstVars(t Term, sub map[string]Term) Term {
 // equality holds symbolically (free variables as non-negative nats;
 // total calls unfold through defs when their arguments ground).
 func DecideEqTexts(aText, bText string, sub map[string]Term, defs Defs, resolve CallResolver) (bool, error) {
+	return DecidePropTexts(PropEq, aText, bText, sub, defs, resolve)
+}
+
+// DecidePropTexts decides one proposition between two index-term texts.
+func DecidePropTexts(op PropOp, aText, bText string, sub map[string]Term, defs Defs, resolve CallResolver) (bool, error) {
 	a, err := ParseIndexTerm(aText, resolve)
 	if err != nil {
 		return false, err
@@ -281,5 +286,5 @@ func DecideEqTexts(aText, bText string, sub map[string]Term, defs Defs, resolve 
 	if av == nil || bv == nil {
 		return false, nil
 	}
-	return Decide(MkEq(av, bv), nil), nil
+	return Decide(op.fact(av, bv), nil), nil
 }
