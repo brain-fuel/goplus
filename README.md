@@ -19,6 +19,32 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.155.0 — conjunction
+
+`And[P, Q]` asserts both propositions, so the common precondition fits in
+one parameter. Indexing wants `0 <= i` *and* `i < n`; saying that used to
+take two proof parameters and two witnesses.
+
+```go
+func At[T any](0 i nat, 0 n nat, 0 p And[Le[0, i], Lt[i, n]], v Vec[T, n]) T {
+	match v {
+	case Cons(h, t):   // Lt[i, n] still prunes Nil: every part is a hypothesis
+		_ = t
+		return h
+	}
+}
+```
+
+It costs the decider nothing, for the same reason as everything else in
+this sequence: `Decide` already takes a *list* of facts, and a conjunction
+is exactly that. As a goal each part is proved in turn; in scope every
+part becomes a hypothesis. It nests, and the parts may mix relations.
+
+Erasure, the witnesses, the audit record, and match refinement all apply
+unchanged — they were written against propositions rather than against
+relations. A diagnostic substitutes the call's arguments into each part,
+so you see which half failed: `cannot prove Le[0, 5] and Lt[5, 3]`.
+
 ## v0.154.0 — a bound refines a match
 
 A proposition in scope became a hypothesis for the decider in v0.152.0,
@@ -1258,6 +1284,7 @@ The spec is executable: the Godog/Cucumber feature suite under
 | v0.25.0 | Goals 01–08 dependent rewrite foundations: indexed decimal, collections, config, HTTP routes, expressions, JSON paths, validation, and schedules — shipped |
 | v0.27.0 | Goal 10 foundations: consistent inferred indices across all imported runtime arguments — shipped |
 | v0.26.0 | Goal 09 foundations: inferred preserved indices across linear calls and shared overflow-safe retry primitives — shipped |
+| v0.155.0 | `And[P, Q]` conjunction: the whole precondition in one proof parameter — shipped |
 | v0.154.0 | A proposition in scope refines a match, pruning variants its bound excludes — shipped |
 | v0.153.0 | Proof arguments are mandatory, closing a bypass that predated v0.146.0; a proof-carrying function may only be used in a direct call — shipped |
 | v0.152.0 | Propositions in scope act as hypotheses; erased indices may be forwarded to calls — shipped |

@@ -367,8 +367,10 @@ rather than adding power. A proposition in scope became a HYPOTHESIS in
 v0.152.0, which also allows an erased index to be forwarded to a call, so
 bounds compose. As of v0.154.0 it is a hypothesis for MATCH
 refinement too: a bound prunes a variant it excludes, and the generated
-boundary guard agrees. Remaining in this stage: named predicate
-parameters and conjunction.
+boundary guard agrees. Conjunction shipped in v0.155.0 as `And[P, Q]`,
+whose parts are propositions: as a goal each is proved in turn, in scope
+each becomes a hypothesis. Remaining in this stage: named predicate
+parameters (a `prop` declaration form and its unfolding story).
 
 The omitted-proof unsoundness found while building v0.152.0 is FIXED in
 v0.153.0: obligations are settled on the first resolve iteration, before

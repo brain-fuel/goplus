@@ -280,11 +280,64 @@ func DecidePropTexts(op PropOp, aText, bText string, sub map[string]Term, defs D
 // proposition in scope is a hypothesis, which is what lets one compose:
 // under `Lt[i, n]`, both `Le[i, n]` and `Lt[i, n+1]` follow.
 func DecidePropUnder(hyps []Fact, op PropOp, aText, bText string, sub map[string]Term, defs Defs, resolve CallResolver) (bool, error) {
+	if op.Nested() {
+		// A conjunction holds exactly when each part does; the parts are
+		// themselves propositions, so this recurses rather than measuring
+		// two index terms.
+		for _, part := range []string{aText, bText} {
+			name, args := SplitProp(SubstPropText(part, sub))
+			partOp, isProp := PropFor(name)
+			if !isProp || len(args) != 2 {
+				return false, nil
+			}
+			ok, err := DecidePropUnder(hyps, partOp, args[0], args[1], sub, defs, resolve)
+			if err != nil || !ok {
+				return false, err
+			}
+		}
+		return true, nil
+	}
 	av, bv, err := propValues(aText, bText, sub, defs, resolve)
 	if err != nil || av == nil || bv == nil {
 		return false, err
 	}
 	return Decide(op.fact(av, bv), hyps), nil
+}
+
+// SubstPropText replaces index variables inside a proposition text. The
+// parts of a conjunction are spelled in the callee's names, so they need
+// the call's substitution before they can be decided — and a nested
+// proposition is not an index term, so term-level substitution cannot
+// reach inside it.
+func SubstPropText(text string, sub map[string]Term) string {
+	if len(sub) == 0 {
+		return text
+	}
+	out := text
+	for name, t := range sub {
+		out = replaceIdent(out, name, t.String())
+	}
+	return out
+}
+
+// replaceIdent substitutes whole-identifier occurrences of name.
+func replaceIdent(s, name, with string) string {
+	isIdentByte := func(b byte) bool {
+		return b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if strings.HasPrefix(s[i:], name) &&
+			(i == 0 || !isIdentByte(s[i-1])) &&
+			(i+len(name) == len(s) || !isIdentByte(s[i+len(name)])) {
+			b.WriteString(with)
+			i += len(name)
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
 }
 
 // PropFact builds the decider fact for a proposition whose terms are

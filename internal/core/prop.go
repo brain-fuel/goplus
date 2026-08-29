@@ -1,6 +1,9 @@
 package core
 
-import "math/big"
+import (
+	"math/big"
+	"strings"
+)
 
 // Propositions (v0.151.0). A proof parameter carries a proposition about
 // index terms, erased at quantity 0 and discharged before erasure.
@@ -15,13 +18,18 @@ import "math/big"
 type PropOp int
 
 const (
-	PropEq PropOp = iota // Eq[a, b] — a equals b
-	PropLe               // Le[a, b] — a is at most b
-	PropLt               // Lt[a, b] — a is strictly below b
+	PropEq  PropOp = iota // Eq[a, b] — a equals b
+	PropLe                // Le[a, b] — a is at most b
+	PropLt                // Lt[a, b] — a is strictly below b
+	PropAnd               // And[P, Q] — both propositions hold
 )
 
 // propNames maps each proposition's type name to its relation.
-var propNames = map[string]PropOp{"Eq": PropEq, "Le": PropLe, "Lt": PropLt}
+var propNames = map[string]PropOp{"Eq": PropEq, "Le": PropLe, "Lt": PropLt, "And": PropAnd}
+
+// Nested reports whether the proposition's arguments are themselves
+// propositions rather than index terms.
+func (op PropOp) Nested() bool { return op == PropAnd }
 
 // PropFor reports the relation a proposition type name asserts.
 func PropFor(name string) (PropOp, bool) {
@@ -42,6 +50,8 @@ func (op PropOp) Symbol() string {
 		return "<="
 	case PropLt:
 		return "<"
+	case PropAnd:
+		return "and"
 	default:
 		return "="
 	}
@@ -58,6 +68,36 @@ func (op PropOp) Witness() string {
 	return "decide"
 }
 
+// PropFactsFor builds the decider facts a proposition asserts. A relation
+// contributes one; a conjunction contributes its parts, which is what
+// makes `And` cost nothing at the decider — the solver already takes a
+// list of facts, and a conjunction is exactly that.
+func PropFactsFor(op PropOp, aText, bText string, defs Defs, resolve CallResolver) ([]Fact, bool) {
+	if op.Nested() {
+		left, okL := propTextFacts(aText, defs, resolve)
+		right, okR := propTextFacts(bText, defs, resolve)
+		if !okL || !okR {
+			return nil, false
+		}
+		return append(left, right...), true
+	}
+	f, ok := PropFact(op, aText, bText, defs, resolve)
+	if !ok {
+		return nil, false
+	}
+	return []Fact{f}, true
+}
+
+// propTextFacts reads one proposition written as a type text.
+func propTextFacts(text string, defs Defs, resolve CallResolver) ([]Fact, bool) {
+	base, args := SplitProp(text)
+	op, isProp := PropFor(base)
+	if !isProp || len(args) != 2 {
+		return nil, false
+	}
+	return PropFactsFor(op, args[0], args[1], defs, resolve)
+}
+
 // fact builds the decider goal for this relation over two values.
 func (op PropOp) fact(a, b Value) Fact {
 	switch op {
@@ -70,4 +110,37 @@ func (op PropOp) fact(a, b Value) Fact {
 	default:
 		return MkEq(a, b)
 	}
+}
+
+// SplitProp splits a proposition type text into its name and arguments,
+// respecting nesting so `And[Lt[0, n], Lt[n, m]]` yields two arguments
+// rather than three.
+func SplitProp(text string) (string, []string) {
+	text = strings.TrimSpace(text)
+	open := strings.IndexByte(text, '[')
+	if open <= 0 || !strings.HasSuffix(text, "]") {
+		return "", nil
+	}
+	name := strings.TrimSpace(text[:open])
+	if i := strings.LastIndexByte(name, '.'); i >= 0 {
+		name = name[i+1:]
+	}
+	var args []string
+	depth, start := 0, 0
+	inner := text[open+1 : len(text)-1]
+	for i := 0; i < len(inner); i++ {
+		switch inner[i] {
+		case '[', '(':
+			depth++
+		case ']', ')':
+			depth--
+		case ',':
+			if depth == 0 {
+				args = append(args, strings.TrimSpace(inner[start:i]))
+				start = i + 1
+			}
+		}
+	}
+	args = append(args, strings.TrimSpace(inner[start:]))
+	return name, args
 }

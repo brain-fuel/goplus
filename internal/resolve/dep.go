@@ -1229,7 +1229,9 @@ func splitArgsTopLevel(s string) []string {
 func substText(text string, sub map[string]core.Term) string {
 	t, err := core.ParseIndexTerm(text, nil)
 	if err != nil {
-		return text
+		// Not an index term — a nested proposition, say. Substitute its
+		// identifiers directly so a diagnostic still shows real values.
+		return core.SubstPropText(text, sub)
 	}
 	return core.SubstVars(t, sub).String()
 }
@@ -1356,8 +1358,8 @@ func (r *fileResolver) scopeHypothesesAt(pos token.Pos) []core.Fact {
 		if !isProp || len(args) != 2 {
 			continue
 		}
-		if f, built := core.PropFact(hypOp, args[0], args[1], r.reg.TotalDefs(), resolveKey); built {
-			hyps = append(hyps, f)
+		if fs, built := core.PropFactsFor(hypOp, args[0], args[1], r.reg.TotalDefs(), resolveKey); built {
+			hyps = append(hyps, fs...)
 		}
 	}
 	return hyps

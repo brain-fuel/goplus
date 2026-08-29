@@ -282,8 +282,8 @@ func processDeps(f *sourceFile, pkgPath string, totals map[*ast.FuncDecl]bool, p
 					// caller cannot reach the body without discharging it.
 					if base, terms := instantiationOf(p.typeText); len(terms) == 2 {
 						if op, isProp := core.PropFor(base); isProp {
-							if f, built := core.PropFact(op, terms[0], terms[1], nil, nil); built {
-								hyps = append(hyps, f)
+							if fs, built := core.PropFactsFor(op, terms[0], terms[1], nil, nil); built {
+								hyps = append(hyps, fs...)
 							}
 						}
 					}

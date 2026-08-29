@@ -1,0 +1,28 @@
+(* Go+ v0.16.0 grammar delta: conjunction.
+
+   The complete base grammar is Go plus the declarations and expressions in
+   grammar-v0.15.0.ebnf. This file adds And to the proposition set.
+*)
+
+Proposition     = ( "Eq" | "Le" | "Lt" ) "[" IndexTerm "," IndexTerm "]"
+                | "And" "[" Proposition "," Proposition "]" .
+
+(*
+  `And[P, Q]` asserts both propositions. Its arguments are propositions
+  rather than index terms, which is the only shape in the set that nests.
+
+  - It costs the decider nothing. `Decide` already takes a LIST of facts,
+    and a conjunction is exactly that: as a goal each part is proved in
+    turn, and in scope every part becomes a hypothesis.
+  - It nests: `And[And[P, Q], R]` is admitted, and the parts may mix
+    relations freely.
+  - It is what the common precondition actually needs. Indexing wants
+    `0 <= i` AND `i < n`; before this it took two proof parameters and two
+    witnesses to say so.
+  - Erasure, the `refl`/`decide`/`assume` witnesses, the audit record, and
+    match refinement all apply unchanged, because they were written
+    against propositions rather than against relations. An assumed
+    conjunction is recorded whole: `assumed Le[0, 5] and Lt[5, 3]`.
+  - A diagnostic substitutes the call's arguments into each part, so the
+    reader sees which half failed rather than the declared spelling.
+*)

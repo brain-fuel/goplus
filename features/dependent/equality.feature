@@ -724,3 +724,69 @@ Feature: Propositional equality
     When I run goplus with arguments "gen ."
     Then the exit code is 2
     And stderr contains "non-exhaustive match on Vec[T]: missing Nil"
+
+  Scenario: A conjunction states the whole precondition in one parameter
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      type Vec[T any, n nat] enum {
+      	Nil() Vec[T, 0]
+      	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+      }
+
+      func At[T any](0 i nat, 0 n nat, 0 p And[Le[0, i], Lt[i, n]], v Vec[T, n]) T {
+      	match v {
+      	case Cons(h, t):
+      		_ = t
+      		return h
+      	}
+      }
+
+      func Ok(v Vec[int, 3]) int {
+      	return At(1, 3, decide, v)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 0
+    And the file "main_gp.go" is valid Go
+    # Every part is a hypothesis, so Lt[i, n] prunes the Nil arm.
+    And the file "main_gp.go" contains:
+      """
+      panic("goplus: At: v with index n cannot be Nil")
+      """
+
+  Scenario: A conjunction fails when either part does, and says which
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      func At(0 i nat, 0 n nat, 0 p And[Le[0, i], Lt[i, n]]) int {
+      	return 0
+      }
+
+      func Bad() int {
+      	return At(5, 3, decide)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "cannot prove Le[0, 5] and Lt[5, 3] at this call to At"
+    And the file "main_gp.go" does not exist
+
+  Scenario: An assumed conjunction is audited whole
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      func At(0 i nat, 0 n nat, 0 p And[Le[0, i], Lt[i, n]]) int {
+      	return 0
+      }
+
+      func Asserted() int {
+      	return At(5, 3, assume)
+      }
+      """
+    When I run goplus with arguments "assumptions ."
+    Then the exit code is 0
+    And stdout contains "assumed Le[0, 5] and Lt[5, 3] for p of At"
