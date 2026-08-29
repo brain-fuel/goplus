@@ -363,8 +363,18 @@ Add named predicate parameters, conjunction, and proof-preserving
 functions. Equality witnesses shipped in v0.7.0 and ordering propositions
 (`Le`, `Lt`) in v0.151.0, with `decide` as the general discharge witness —
 the decider already settled inequalities, so this made them statable
-rather than adding power. Propositions are not yet HYPOTHESES: one in
-scope does not refine a match the way a constructor index does. Explicit `assume` shipped
+rather than adding power. A proposition in scope became a HYPOTHESIS in
+v0.152.0, which also allows an erased index to be forwarded to a call, so
+bounds compose. It is still not a hypothesis for MATCH refinement: one in
+scope does not refine a match the way a constructor index does.
+
+KNOWN UNSOUNDNESS, found while building v0.152.0 and not yet fixed:
+omitting a proof argument skips its obligation. `Cast(v)`, with the erased
+arguments left out, is accepted with no proof and no recorded assumption.
+The cause is architectural — a call whose erased arguments were never
+written is textually identical to one whose arguments a previous pass has
+already erased — so closing it means settling the obligation while the
+call site is still pristine. This is the highest-priority Stage B item. Explicit `assume` shipped
 first, in v0.149.0: at a proof parameter it stands where `refl` would and
 asserts the proposition instead of proving it, erasing identically and
 recorded for review by `goplus assumptions`. It is currently accepted

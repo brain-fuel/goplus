@@ -273,18 +273,40 @@ func DecideEqTexts(aText, bText string, sub map[string]Term, defs Defs, resolve 
 
 // DecidePropTexts decides one proposition between two index-term texts.
 func DecidePropTexts(op PropOp, aText, bText string, sub map[string]Term, defs Defs, resolve CallResolver) (bool, error) {
+	return DecidePropUnder(nil, op, aText, bText, sub, defs, resolve)
+}
+
+// DecidePropUnder decides a proposition given facts already known. A
+// proposition in scope is a hypothesis, which is what lets one compose:
+// under `Lt[i, n]`, both `Le[i, n]` and `Lt[i, n+1]` follow.
+func DecidePropUnder(hyps []Fact, op PropOp, aText, bText string, sub map[string]Term, defs Defs, resolve CallResolver) (bool, error) {
+	av, bv, err := propValues(aText, bText, sub, defs, resolve)
+	if err != nil || av == nil || bv == nil {
+		return false, err
+	}
+	return Decide(op.fact(av, bv), hyps), nil
+}
+
+// PropFact builds the decider fact for a proposition whose terms are
+// written in the caller's own namespace. It reports false when either
+// term does not reduce to a linear value.
+func PropFact(op PropOp, aText, bText string, defs Defs, resolve CallResolver) (Fact, bool) {
+	av, bv, err := propValues(aText, bText, nil, defs, resolve)
+	if err != nil || av == nil || bv == nil {
+		return Fact{}, false
+	}
+	return op.fact(av, bv), true
+}
+
+func propValues(aText, bText string, sub map[string]Term, defs Defs, resolve CallResolver) (Value, Value, error) {
 	a, err := ParseIndexTerm(aText, resolve)
 	if err != nil {
-		return false, err
+		return nil, nil, err
 	}
 	b, err := ParseIndexTerm(bText, resolve)
 	if err != nil {
-		return false, err
+		return nil, nil, err
 	}
 	a, b = SubstVars(a, sub), SubstVars(b, sub)
-	av, bv := symbolicValueDefs(a, defs), symbolicValueDefs(b, defs)
-	if av == nil || bv == nil {
-		return false, nil
-	}
-	return Decide(op.fact(av, bv), nil), nil
+	return symbolicValueDefs(a, defs), symbolicValueDefs(b, defs), nil
 }

@@ -1,0 +1,39 @@
+(* Go+ v0.13.0 grammar delta: propositions as hypotheses.
+
+   The complete base grammar is Go plus the declarations and expressions in
+   grammar-v0.12.0.ebnf. No new syntax: this file records a change in what
+   an existing form MEANS.
+*)
+
+(*
+  v0.151.0 made a bound statable but left it inert — a proposition in
+  scope did nothing. Two changes make it work.
+
+  - **A proposition in scope is a hypothesis.** The enclosing function's
+    own quantity-0 proposition parameters are supplied to the decider when
+    it discharges a call's obligation, so propositions compose: under
+    `Lt[1, n]`, both `Le[1, n]` and `Lt[1, n+1]` follow with no new proof.
+    The decider always accepted hypotheses (`Decide(goal, hyps)`); the
+    proof path simply passed none.
+
+  - **An erased index may be forwarded to a call.** A quantity-0 parameter
+    could not be named in any runtime position, and a call argument is
+    indistinguishable from one in pass 1, so an index could be written
+    only as a literal — which made composition unreachable. A quantity-0
+    name is now admitted as a call argument. Passing one to a genuine
+    runtime parameter is still refused: it is absent from the generated
+    signature, so the strict go/types backstop rejects the reference, and
+    that error now explains the erasure rather than only reporting an
+    undefined name.
+
+  A proposition is still not a hypothesis for MATCH refinement: `Lt[i, n]`
+  does not tell an exhaustiveness check that `n` is non-zero. That, and
+  user-declared predicates, remain.
+
+  KNOWN UNSOUNDNESS (predates this delta; see GOALS.md Stage B): omitting
+  a proof argument entirely skips its obligation, because a call whose
+  erased arguments were never written is textually identical to one whose
+  arguments have already been erased by a previous pass. `Cast(v)` is
+  accepted with no proof and no assumption recorded. Closing it needs the
+  obligation settled while the call site is still pristine.
+*)

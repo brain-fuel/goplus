@@ -103,6 +103,15 @@ func runtimeUse(body *ast.BlockStmt, name string) (string, bool) {
 				ast.Inspect(ie.X, walk)
 			}
 			return false
+		case *ast.CallExpr:
+			// A call ARGUMENT may be an erased index: a dependent callee's
+			// quantity-0 parameters take index terms, and pass 1 cannot
+			// know which positions those are. Passing an erased name to a
+			// genuine runtime parameter is still caught — it is absent
+			// from the generated signature, so the strict go/types
+			// backstop rejects the reference.
+			ast.Inspect(x.Fun, walk)
+			return false
 		case *ast.Ident:
 			if x.Name == name {
 				found = true

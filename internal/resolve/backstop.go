@@ -43,6 +43,7 @@ func Backstop(in *Input, maps map[string]*sourcemap.Map) ([]diag.Diagnostic, err
 					msg = "goplus internal lowering error (please report): " + msg
 				}
 			}
+			msg = explainErasedUse(msg, in)
 			d := diag.At(pos, "%s", msg)
 			if !seen[d.String()] {
 				seen[d.String()] = true
@@ -77,4 +78,26 @@ func parsePos(s string) token.Position {
 		line, col = col, 0
 	}
 	return token.Position{Filename: rest, Line: line, Column: col}
+}
+
+// explainErasedUse recovers the reason behind an "undefined" error whose
+// name is a quantity-0 parameter. Those parameters are absent from the
+// generated signature by design, so using one at runtime reaches
+// go/types as a plain undefined name; saying why is more use than saying
+// what.
+func explainErasedUse(msg string, in *Input) string {
+	name, ok := strings.CutPrefix(msg, "undefined: ")
+	if !ok || strings.ContainsAny(name, ". ") {
+		return msg
+	}
+	for _, deps := range in.DepsByDir {
+		for _, d := range deps {
+			for _, p := range d.Params {
+				if p.Quantity == "0" && p.Name == name {
+					return msg + " — a quantity-0 parameter exists only at check time, so it is erased from the generated code; use it in types and index terms, not as a value"
+				}
+			}
+		}
+	}
+	return msg
 }

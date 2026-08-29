@@ -385,3 +385,50 @@ Feature: Propositional equality
     When I run goplus with arguments "assumptions ."
     Then the exit code is 0
     And stdout contains "assumed 5 < 3 for p of Bounded"
+
+  Scenario: An erased index may be forwarded to another dependent call
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      func NeedsLe(0 i nat, 0 n nat, 0 p Le[i, n]) int { return 0 }
+
+      func Forward(0 n nat, 0 p Lt[1, n]) int {
+      	return NeedsLe(1, n, decide)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 0
+    And the file "main_gp.go" is valid Go
+    And the file "main_gp.go" contains "func Forward() int"
+
+  Scenario: A proposition in scope is a hypothesis, so bounds compose
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      func NeedsLe(0 i nat, 0 n nat, 0 p Le[i, n]) int { return 0 }
+
+      func NoBound(0 n nat) int {
+      	return NeedsLe(1, n, decide)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    # Without Lt[1, n] in scope there is nothing to derive 1 <= n from.
+    And stderr contains "cannot prove 1 <= n at this call to NeedsLe"
+
+  Scenario: An erased parameter used as a value still says why
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      func Plain(x int) int { return x }
+
+      func Misuse(0 n nat, 0 p Le[0, n]) int {
+      	return Plain(n)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "a quantity-0 parameter exists only at check time"

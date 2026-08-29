@@ -19,6 +19,43 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.152.0 — a bound in scope now means something
+
+v0.151.0 made a bound statable but left it **inert**: a proposition in
+scope did nothing for you. Two changes make it work.
+
+**A proposition in scope is a hypothesis.** The enclosing function's own
+proof parameters are given to the decider, so propositions compose —
+under `Lt[1, n]`, both `Le[1, n]` and `Lt[1, n+1]` follow without a new
+proof. The decider always took hypotheses; the proof path passed none.
+
+**An erased index may be forwarded to a call.** A quantity-0 parameter
+could not be named in any runtime position, and pass 1 cannot tell a call
+argument from a runtime use — so an index could only ever be written as a
+literal, which made composition unreachable:
+
+```go
+func Forward(0 n nat, 0 p Lt[1, n]) int {
+	return NeedsLe(1, n, decide)   // n forwarded; 1 <= n from the bound
+}
+```
+
+Passing an erased name to a genuine runtime parameter is still refused,
+and that error now explains the erasure instead of only reporting an
+undefined name.
+
+### Known unsoundness
+
+Investigating this release surfaced a bug that predates it: **omitting a
+proof argument skips its obligation entirely.** `Cast(v)` — with the
+erased arguments left out — is accepted with no proof and no recorded
+assumption, so a dependent guarantee can be bypassed by accident. The
+cause is that a call whose erased arguments were never written is
+textually identical to one whose arguments a previous pass already
+erased. Closing it means settling the obligation while the call site is
+still pristine, which is the next piece of work; it is tracked in
+GOALS.md Stage B and in `spec/grammar-v0.13.0.ebnf`.
+
 ## v0.151.0 — bounds are statable
 
 `Eq[a, b]` was the only proposition a signature could state. But the most
@@ -1156,6 +1193,7 @@ The spec is executable: the Godog/Cucumber feature suite under
 | v0.25.0 | Goals 01–08 dependent rewrite foundations: indexed decimal, collections, config, HTTP routes, expressions, JSON paths, validation, and schedules — shipped |
 | v0.27.0 | Goal 10 foundations: consistent inferred indices across all imported runtime arguments — shipped |
 | v0.26.0 | Goal 09 foundations: inferred preserved indices across linear calls and shared overflow-safe retry primitives — shipped |
+| v0.152.0 | Propositions in scope act as hypotheses; erased indices may be forwarded to calls — shipped |
 | v0.151.0 | `Le`/`Lt` propositions and the general `decide` witness: bounds are statable — shipped |
 | v0.150.0 | Assumptions travel in the generated artifact via `//goplus:assume`, so a consumer can audit what its dependencies assumed — shipped |
 | v0.149.0 | `assume`: an auditable escape hatch for propositions the decider cannot discharge, with `goplus assumptions` — shipped |

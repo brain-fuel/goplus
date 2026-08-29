@@ -664,7 +664,7 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 			r.emitAssumeMarker(call, record)
 			continue
 		}
-		ok, err := core.DecidePropTexts(op, eqArgs[0], eqArgs[1], sub, r.reg.TotalDefs(), calleeResolve)
+		ok, err := core.DecidePropUnder(r.scopeHypotheses(call), op, eqArgs[0], eqArgs[1], sub, r.reg.TotalDefs(), calleeResolve)
 		if err != nil || !ok {
 			if r.report {
 				r.errorf(a.Pos(), "cannot prove %s %s %s at this call to %s; the arithmetic decider could not discharge %s (rephrase the indices, pass values that make it manifest, or assert it with assume)",
@@ -1319,4 +1319,35 @@ func validWitness(op core.PropOp, name string) bool {
 		return op == core.PropEq
 	}
 	return false
+}
+
+// scopeHypotheses gathers the propositions already in scope at call: the
+// enclosing function's own quantity-0 proof parameters. They are written
+// in that function's namespace, which is the caller's, so they compose
+// with the obligation directly — under `Lt[i, n]`, `Le[i, n]` follows.
+func (r *fileResolver) scopeHypotheses(call *ast.CallExpr) []core.Fact {
+	fn := r.enclosingFuncDecl(call)
+	if fn == nil || fn.Name == nil {
+		return nil
+	}
+	d, ok := r.reg.LookupDepFn(r.pkg.PkgPath, fn.Name.Name)
+	if !ok {
+		return nil
+	}
+	resolveKey := fileCallResolver(r.pkg.PkgPath, r.file)
+	var hyps []core.Fact
+	for _, p := range d.Params {
+		if p.Quantity != "0" {
+			continue
+		}
+		base, args := instantiationBase(p.Type)
+		hypOp, isProp := core.PropFor(base)
+		if !isProp || len(args) != 2 {
+			continue
+		}
+		if f, built := core.PropFact(hypOp, args[0], args[1], r.reg.TotalDefs(), resolveKey); built {
+			hyps = append(hyps, f)
+		}
+	}
+	return hyps
 }
