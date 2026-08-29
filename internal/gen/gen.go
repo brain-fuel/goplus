@@ -369,6 +369,19 @@ func Run(opts Options) (*Result, error) {
 		}
 	}
 
+	// Nor may an unresolved lowering carrier. Same reason as a hole, one
+	// step more general: pass 1 emits a skeleton, resolution completes it,
+	// and without a module resolution does not run — so the skeleton must
+	// not be mistaken for the artifact.
+	for _, path := range sortedKeys(outputs) {
+		res.Diags = append(res.Diags, residueDiags(
+			goplusPaths[path], goplusSources[path], outputs[path], moduleRoot != "")...)
+	}
+	if len(res.Diags) > 0 {
+		res.Diags = diag.Sort(res.Diags)
+		return res, nil
+	}
+
 	if opts.DryRun {
 		res.Outputs = outputs
 		res.Diags = diag.Sort(res.Diags)

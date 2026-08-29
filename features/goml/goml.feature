@@ -4,6 +4,14 @@ Feature: goml, the ML-family surface
   pipeline, emitting <file>_gml.go beside it. These scenarios twin their
   .gp counterparts: same core semantics, second spelling.
 
+  Background:
+    Given a file "go.mod":
+      """
+      module example.com/demo
+
+      go 1.24
+      """
+
   Scenario: A sum type and exhaustive match generate from goml
     Given a file "option.goml":
       """

@@ -66,7 +66,7 @@ func runOK(t *testing.T, opts goml.Options) *goml.Result {
 }
 
 func TestRunGeneratesFromGoml(t *testing.T) {
-	dir := t.TempDir()
+	dir := moduleDir(t)
 	write(t, filepath.Join(dir, "option.goml"), optionGoml)
 
 	res := runOK(t, goml.Options{Dir: dir})
@@ -101,13 +101,15 @@ func TestRunGeneratesFromGoml(t *testing.T) {
 }
 
 func TestCheckReportsStaleAndOrphans(t *testing.T) {
-	dir := t.TempDir()
+	dir := moduleDir(t)
 	path := filepath.Join(dir, "option.goml")
 	write(t, path, optionGoml)
 	runOK(t, goml.Options{Dir: dir})
 
-	// Edit the source: check mode reports the output stale.
-	write(t, path, strings.Replace(optionGoml, "| None => None", "| None => o", 1))
+	// Edit the source: check mode reports the output stale. The edit has
+	// to stay well-typed — the fixture is a module now, so the generated
+	// Go is type-checked before it is compared.
+	write(t, path, strings.Replace(optionGoml, "| Some v => Some (f v)", "| Some x => Some (f x)", 1))
 	res := runOK(t, goml.Options{Dir: dir, Check: true})
 	if len(res.Stale) != 1 {
 		t.Fatalf("Stale = %v", res.Stale)
@@ -135,7 +137,7 @@ func TestDifferentialParity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	gpDir := t.TempDir()
+	gpDir := moduleDir(t)
 	write(t, filepath.Join(gpDir, "vec.gp"), string(gp))
 	genRes, err := gen.Run(gen.Options{Dir: gpDir})
 	if err != nil {
@@ -148,7 +150,7 @@ func TestDifferentialParity(t *testing.T) {
 		t.FailNow()
 	}
 
-	gomlDir := t.TempDir()
+	gomlDir := moduleDir(t)
 	write(t, filepath.Join(gomlDir, "vec.goml"), vecGoml)
 	runOK(t, goml.Options{Dir: gomlDir})
 
@@ -198,7 +200,7 @@ func TestDifferentialParityEffectful(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gpDir := t.TempDir()
+	gpDir := moduleDir(t)
 	write(t, filepath.Join(gpDir, "worker.gp"), string(gp))
 	genRes, err := gen.Run(gen.Options{Dir: gpDir})
 	if err != nil {
@@ -210,7 +212,7 @@ func TestDifferentialParityEffectful(t *testing.T) {
 	if t.Failed() {
 		t.FailNow()
 	}
-	gomlDir := t.TempDir()
+	gomlDir := moduleDir(t)
 	write(t, filepath.Join(gomlDir, "worker.goml"), workerGoml)
 	runOK(t, goml.Options{Dir: gomlDir})
 
@@ -249,7 +251,7 @@ let Get (o : Option Int) : Int :=
   match o with
   | Some v => v
 `
-	dir := t.TempDir()
+	dir := moduleDir(t)
 	write(t, filepath.Join(dir, "go.mod"), "module opttest\n\ngo 1.26.0\n")
 	write(t, filepath.Join(dir, "opt.goml"), src)
 	res, err := goml.Run(goml.Options{Dir: dir})
@@ -271,4 +273,15 @@ let Get (o : Option Int) : Int :=
 	if d.Line < 8 || d.Line > 9 {
 		t.Fatalf("diagnostic line = %d, want 8 or 9 (the match)", d.Line)
 	}
+}
+
+// moduleDir is a temp directory that is a Go module. Generation resolves
+// a match against type information, which needs a module context; without
+// one gen refuses rather than writing an unresolved skeleton, so a fixture
+// exercising real output has to be a module.
+func moduleDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "go.mod"), "module example.com/demo\n\ngo 1.24\n")
+	return dir
 }

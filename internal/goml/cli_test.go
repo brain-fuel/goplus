@@ -40,6 +40,11 @@ func TestCLIGenAndCheck(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "option.goml"), []byte(cliOption), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Generating a match resolves it against type information, which needs
+	// a module; without one gen refuses rather than writing a skeleton.
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -61,9 +66,10 @@ func TestCLIGenAndCheck(t *testing.T) {
 		t.Fatalf("fresh -check exit %d: %s%s", code, stdout.String(), stderr.String())
 	}
 
-	// Stale output: -check exits 1 and names it.
+	// Stale output: -check exits 1 and names it. The edit stays well-typed,
+	// because the fixture is a module and so the output is type-checked.
 	if err := os.WriteFile(filepath.Join(dir, "option.goml"),
-		[]byte(strings.Replace(cliOption, "| None => d", "| None => v", 1)), 0o644); err != nil {
+		[]byte(strings.Replace(cliOption, "| Some v => v", "| Some x => x", 1)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	stdout.Reset()
