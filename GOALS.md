@@ -247,35 +247,36 @@ parity is green and NFR has reached a materially stable point.
   0 rather than 1 allocation (100% fewer). The shipped module is
   `goforge.dev/gpgjson` (repository `brain-fuel/gpgjson`, released through
   v1.0.3), not `goforge.dev/gjson` as this entry previously implied.
-- **Remaining, and why this is not `(complete)`:** `FuzzDynamicPathDifferential`
-  still finds real divergences on MALFORMED paths — several distinct ones
-  within minutes of fuzzing, all escaping the declared out-of-scope filter
-  `dynamicMalformedContainerLiteral`.
-  What the remaining work is NOT: a gate re-scoping. That was attempted and
-  disproved. The proposal was to assert the differential only over
-  well-formed paths, and over the malformed remainder to assert the stronger
-  invariant that our own result is valid JSON — on the evidence that upstream
-  returns text which is not JSON at all for some of these paths
-  (`[").[0A).0|!0"]` yields Raw `[0"]`, an array literal with an unbalanced
-  quote). Measuring it killed it: **gpgjson reproduces that same `[0"]`
-  byte-for-byte** on `["|![0|!0).0|!0"]` and `["(.[A).0|!0"]`. The engine is
-  deliberately BUG-FOR-BUG compatible, which is the point of a drop-in
-  replacement, so a valid-JSON invariant would not harden the gate — it would
+- **Progress, and what still blocks `(complete)`:** one real divergence is
+  CLOSED. A hard-coded recovery collapsed `*.*.#.[".#|#.""""0"]` to `[]`
+  where upstream projects to `[[],[]]`; it was written for the sibling
+  `*.*.#.[".#|""""|#."]`, where upstream does collapse, and the
+  discriminator turned out to be order — the empty-quote run must precede
+  the projection marker. Located with a coverage profile, since dozens of
+  similarly shaped recovery branches exist.
+  The gate is also now split, which is what makes its criterion reachable.
+  `TestDynamicPathCorpus` replays all 2411 recorded seeds under FULL parity
+  with no grammar bound, so every agreement already reached — including
+  bug-for-bug agreement on malformed paths, which a drop-in replacement owes
+  its callers — stays pinned. `FuzzDynamicPathDifferential` bounds NEW
+  exploration to the syntax the tier claims. Because the corpus asserts the
+  recorded set separately, tightening the bound cannot surrender ground.
+  Two designs were tried and DISPROVED before this one, and neither should
+  be retried. Filtering the failing shape by an instance-specific predicate
+  excluded 1 of 2412 entries and the fuzzer produced another divergence
+  immediately. Asserting "our result is valid JSON" over the malformed
+  remainder looked strong — upstream returns Raw `[0"]`, an array literal
+  with an unbalanced quote, for `[").[0A).0|!0"]` — until measurement showed
+  **gpgjson reproduces that same `[0"]` byte-for-byte** on other paths. The
+  engine is deliberately bug-for-bug compatible, so that invariant would
   break the compatibility the package exists to provide.
-  Two narrower filter-based repairs were also tried and rejected: an
-  instance-specific exclusion caught exactly 1 of 2412 corpus entries before
-  the fuzzer produced another divergence (accretion, not a fix), and a
-  structural characterization of the class swept up 2149 of 2412,
-  surrendering most of the differential coverage.
-  So the remaining work is what CLAUDE.md already calls it: ordinary
-  case-by-case compatibility hardening, closing each path where the
-  compatibility evaluator does not yet reproduce upstream exactly — including
-  where what upstream produces is malformed. `*.*.#.[".#|#.""""0"]` (ours
-  `[]`, upstream `[[],[]]`) is one such case, and unlike the `[0"]` family it
-  diverges where BOTH sides are well formed, which makes it the one to close
-  first. The space is large, so the honest completion criterion is a stated
-  bound on the path grammar the compatibility tier claims, not the absence of
-  a fuzz counterexample.
+  What remains: the exploration bound still admits `|!` literal-pipe forms
+  that diverge (`*.*.#.0.#|!0|1`), so the fuzz gate is not green. Completing
+  it means writing out GJSON's documented path grammar and bounding against
+  THAT, rather than tightening against whatever the fuzzer produced last.
+  That is the honest completion criterion: a stated grammar the tier claims
+  parity within, not the absence of a counterexample in a region where
+  upstream's own behaviour is accidental.
 
 ### `/goals/08-cron` - `robfig/cron` -> `std/schedule` (complete)
 
