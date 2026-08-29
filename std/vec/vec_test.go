@@ -116,3 +116,47 @@ func TestZipGuardFiresFromPlainGo(t *testing.T) {
 		}()
 	}
 }
+
+// AtIndex is the plain-number counterpart to At: the bound is proved at
+// the call site and erased, so the generated function is an ordinary
+// walk with no evidence to carry.
+func TestAtIndex(t *testing.T) {
+	v := fromSlice([]int{10, 20, 30})
+	for i, want := range []int{10, 20, 30} {
+		if got := AtIndex(i, v); got != want {
+			t.Errorf("AtIndex(%d) = %d, want %d", i, got, want)
+		}
+	}
+}
+
+// Set is AtIndex's dual and preserves length, so its index is unchanged.
+func TestSet(t *testing.T) {
+	v := fromSlice([]int{10, 20, 30})
+	for i, want := range [][]int{{99, 20, 30}, {10, 99, 30}, {10, 20, 99}} {
+		got := toSlice(Set(i, 99, v))
+		if len(got) != len(want) {
+			t.Fatalf("Set(%d) changed the length: %v", i, got)
+		}
+		for j := range want {
+			if got[j] != want[j] {
+				t.Errorf("Set(%d) = %v, want %v", i, got, want)
+				break
+			}
+		}
+	}
+	// The original is untouched: Vec is a persistent cons list.
+	if got := toSlice(v); got[0] != 10 {
+		t.Errorf("Set mutated its input: %v", got)
+	}
+}
+
+// A plain-Go caller has no proof, so the erased boundary is guarded
+// rather than left to compute garbage.
+func TestAtIndexGuardsPlainGoCallers(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("indexing an empty vector must panic at the boundary")
+		}
+	}()
+	AtIndex(0, Vec[int](Nil[int]{}))
+}

@@ -887,3 +887,34 @@ Feature: Propositional equality
     When I run goplus with arguments "gen ."
     Then the exit code is 0
     And the file "main_gp.go" is valid Go
+
+  Scenario: std/vec indexes by a plain number, and rejects an out-of-range one
+    Given a module "example.com/demo" using the goplus standard library
+    And a Go+ file "main.gp":
+      """
+      package main
+
+      import "goforge.dev/goplus/std/vec"
+
+      func Good(v vec.Vec[int, 3]) int {
+      	return vec.AtIndex(2, 3, decide, v)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 0
+    And the file "main_gp.go" is valid Go
+    # The bound erases: the call is an ordinary two-argument walk.
+    And the file "main_gp.go" contains "vec.AtIndex(2, v)"
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      import "goforge.dev/goplus/std/vec"
+
+      func Bad(v vec.Vec[int, 3]) int {
+      	return vec.AtIndex(7, 3, decide, v)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "cannot prove 7 < 3 at this call to AtIndex"

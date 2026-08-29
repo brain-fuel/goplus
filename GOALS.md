@@ -374,7 +374,10 @@ each becomes a hypothesis. Named propositions shipped in v0.156.0 as
 use unfolds into the relations everything downstream already handled, and
 the declaration erases to a marker so consumers can unfold it too.
 
-**Stage B is complete.** What it deliberately does not include: an opt-in
+**Stage B is complete, and consumed**: `std/vec`'s `AtIndex` and `Set`
+carry their bound as `Lt[i, n]` rather than `Fin[n]` evidence, so the
+proposition is a precondition at the call, a hypothesis that prunes the
+impossible arm, and the fact that discharges the recursive step. What it deliberately does not include: an opt-in
 Prop SORT distinct from Type, disjunction and negation, and quantifiers.
 Those belong with Stage F's kernel, not with an SMT-free arithmetic
 fragment.

@@ -232,3 +232,52 @@ func At[T any](index Fin, values Vec[T]) T {
 		panic("goplus: impossible enum value in match")
 	}
 }
+
+// AtIndex selects by an ordinary number rather than Peano evidence. The
+// bound travels as a proposition, so it is proved at the call and then
+// erased: no Fin to build, and an out-of-range index is a compile error
+// rather than a panic. Prefer Fin when the evidence is already in hand
+// (recursing over an index), and AtIndex when you have a plain number.
+//
+//goplus:dep AtIndex[T any](i nat, 0 n nat, 0 p Lt[i, n], values Vec[T, n]) T
+func AtIndex[T any](i int, values Vec[T]) T {
+	if _, ok := any(values).(Nil[T]); ok {
+		panic("goplus: AtIndex: values with index n cannot be Nil")
+	}
+
+	switch __gp_m7 := any(values).(type) {
+	case Cons[T]:
+		h := __gp_m7.Head
+		t := __gp_m7.Tail
+
+		if i == 0 {
+			return h
+		}
+		return AtIndex(i-1, t)
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+}
+
+// Set replaces the element at i, the dual of AtIndex and bounded the
+// same way. The length is preserved, so the result keeps its index.
+//
+//goplus:dep Set[T any](i nat, 0 n nat, 0 p Lt[i, n], x T, values Vec[T, n]) Vec[T, n]
+func Set[T any](i int, x T, values Vec[T]) Vec[T] {
+	if _, ok := any(values).(Nil[T]); ok {
+		panic("goplus: Set: values with index n cannot be Nil")
+	}
+
+	switch __gp_m8 := any(values).(type) {
+	case Cons[T]:
+		h := __gp_m8.Head
+		t := __gp_m8.Tail
+
+		if i == 0 {
+			return Cons[T]{Head: x, Tail: t}
+		}
+		return Cons[T]{Head: h, Tail: Set(i-1, x, t)}
+	default:
+		panic("goplus: impossible enum value in match")
+	}
+}

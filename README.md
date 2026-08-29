@@ -19,6 +19,32 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## std/v0.213.0 — vec indexes by a plain number
+
+Stage B now has a real consumer. `std/vec` gains `AtIndex` and `Set`,
+which take an ordinary number and carry the bound as a **proposition**
+rather than as `Fin[n]` evidence:
+
+```go
+func AtIndex[T any](i nat, 0 n nat, 0 p Lt[i, n], values Vec[T, n]) T
+```
+
+The bound is proved at the call and then erased, so there is no `Fin` to
+build and the generated function is an ordinary walk —
+`func AtIndex[T any](i int, values Vec[T]) T` — with a boundary guard for
+plain-Go callers. An out-of-range index is a compile error:
+
+```
+cannot prove 7 < 3 at this call to AtIndex
+```
+
+`Fin[n]` remains the right tool when the evidence is already in hand
+(recursing over an index, as `std/smt` does); `AtIndex` is for when you
+have a plain number. Writing it also exercised the whole stage at once:
+the proposition is a precondition at the call, a hypothesis that prunes
+the impossible `Nil` arm, and — in the recursive step — the fact that
+proves `Lt[i-1, n-1]`.
+
 ## v0.156.0 — named propositions
 
 `prop` names a proposition, so a precondition can be stated once and used

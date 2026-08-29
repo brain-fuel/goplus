@@ -104,3 +104,30 @@ func At[T any](0 n nat, index Fin[n], values Vec[T, n]) T {
 		return At(previous, Rest(values))
 	}
 }
+
+// AtIndex selects by an ordinary number rather than Peano evidence. The
+// bound travels as a proposition, so it is proved at the call and then
+// erased: no Fin to build, and an out-of-range index is a compile error
+// rather than a panic. Prefer Fin when the evidence is already in hand
+// (recursing over an index), and AtIndex when you have a plain number.
+func AtIndex[T any](i nat, 0 n nat, 0 p Lt[i, n], values Vec[T, n]) T {
+	match values {
+	case Cons(h, t):
+		if i == 0 {
+			return h
+		}
+		return AtIndex(i-1, n-1, decide, t)
+	}
+}
+
+// Set replaces the element at i, the dual of AtIndex and bounded the
+// same way. The length is preserved, so the result keeps its index.
+func Set[T any](i nat, 0 n nat, 0 p Lt[i, n], x T, values Vec[T, n]) Vec[T, n] {
+	match values {
+	case Cons(h, t):
+		if i == 0 {
+			return Cons(x, t)
+		}
+		return Cons(h, Set(i-1, n-1, decide, x, t))
+	}
+}
