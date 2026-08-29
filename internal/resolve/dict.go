@@ -277,7 +277,7 @@ func (r *fileResolver) witnessTypeText(ref registry.ClassRef, arg string) (strin
 // dictCallCandidate inserts dictionary arguments at a call of a
 // constrained function.
 func (r *fileResolver) dictCallCandidate(call *ast.CallExpr) {
-	fnIdent, sel, pkgPath := calleeIdent(r, call.Fun)
+	fnIdent, sel, pkgPath := calleeIdent(r.file, r.pkg.PkgPath, call.Fun)
 	if fnIdent == nil || !r.reg.HasConstrainedFnName(fnIdent.Name) {
 		return
 	}
@@ -337,7 +337,10 @@ func (r *fileResolver) dictCallCandidate(call *ast.CallExpr) {
 
 // calleeIdent digs the called function's identifier out of an
 // (optionally instantiated, optionally qualified) callee expression.
-func calleeIdent(r *fileResolver, fun ast.Expr) (id *ast.Ident, sel *ast.SelectorExpr, pkgPath string) {
+// calleeIdent resolves a call's callee to its name and defining package.
+// It reads only the file's imports and the local package path — never type
+// information — so it is usable before the fixpoint has typed anything.
+func calleeIdent(file *ast.File, localPath string, fun ast.Expr) (id *ast.Ident, sel *ast.SelectorExpr, pkgPath string) {
 	e := fun
 	switch t := e.(type) {
 	case *ast.IndexExpr:
@@ -347,13 +350,13 @@ func calleeIdent(r *fileResolver, fun ast.Expr) (id *ast.Ident, sel *ast.Selecto
 	}
 	switch t := e.(type) {
 	case *ast.Ident:
-		return t, nil, r.pkg.PkgPath
+		return t, nil, localPath
 	case *ast.SelectorExpr:
 		alias, ok := t.X.(*ast.Ident)
 		if !ok {
 			return nil, nil, ""
 		}
-		if path, found := fileImportPath(r.file, alias.Name); found {
+		if path, found := fileImportPath(file, alias.Name); found {
 			return t.Sel, t, path
 		}
 	}

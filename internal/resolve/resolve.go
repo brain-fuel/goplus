@@ -103,6 +103,34 @@ func Fixpoint(in *Input) (*Output, error) {
 		}
 		typesByPath := indexTypesPackages(pkgs)
 
+		// Proof obligations are settled here, on the first iteration,
+		// because this is the last moment the text is exactly what the
+		// author wrote. Once erasure begins, a call that never had a
+		// proof argument is indistinguishable from one whose argument
+		// has been deleted. Returning before any edit also hands gen the
+		// pass-1 text, which its sourcemap can position against most
+		// accurately.
+		if iter == 0 {
+			var proofDiags []diag.Diagnostic
+			scanned := map[string]bool{}
+			for _, pkg := range pkgs {
+				for i, fileAST := range pkg.Syntax {
+					if i >= len(pkg.CompiledGoFiles) {
+						break
+					}
+					path := pkg.CompiledGoFiles[i]
+					if _, ours := texts[path]; !ours || scanned[path] {
+						continue
+					}
+					scanned[path] = true
+					proofDiags = append(proofDiags, proofObligations(pkg.PkgPath, pkg.Fset, fileAST, reg)...)
+				}
+			}
+			if len(proofDiags) > 0 {
+				return &Output{Texts: texts, Diags: diag.Sort(proofDiags), Reg: reg}, nil
+			}
+		}
+
 		runPass := func(report bool) (int, []diag.Diagnostic, error) {
 			var passDiags []diag.Diagnostic
 			if report {

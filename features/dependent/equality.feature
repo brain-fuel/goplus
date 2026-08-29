@@ -432,3 +432,118 @@ Feature: Propositional equality
     When I run goplus with arguments "gen ."
     Then the exit code is 2
     And stderr contains "a quantity-0 parameter exists only at check time"
+
+  Scenario: A proof argument cannot be omitted
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      type Vec[T any, n nat] enum {
+      	Nil() Vec[T, 0]
+      	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+      }
+
+      func Cast[T any](0 n nat, 0 m nat, 0 p Eq[n, m], v Vec[T, n]) Vec[T, m] {
+      	return v
+      }
+
+      func Sneak(v Vec[int, 2]) Vec[int, 3] {
+      	return Cast(v)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "main.gp:13:13: the proof argument for p of Cast cannot be omitted"
+    And stderr contains "Eq[n, m] is a proposition, not an inferable index"
+    And stderr contains "assume (asserted on your authority)"
+    And the file "main_gp.go" does not exist
+
+  Scenario: A proposition with no runtime arguments cannot be omitted either
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      func Swap(0 n nat, 0 m nat, 0 p Eq[n+m, m+n]) string {
+      	return "ok"
+      }
+
+      func Use() string {
+      	return Swap()
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "the proof argument for p of Swap cannot be omitted"
+    And the file "main_gp.go" does not exist
+
+  Scenario: An omitted proof is caught inside a match arm
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      type Vec[T any, n nat] enum {
+      	Nil() Vec[T, 0]
+      	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+      }
+
+      func Cast[T any](0 n nat, 0 m nat, 0 p Eq[n, m], v Vec[T, n]) Vec[T, m] {
+      	return v
+      }
+
+      func Inside(v Vec[int, 2]) int {
+      	match v {
+      	case Cons(h, t):
+      		_ = t
+      		_ = Cast(v)
+      		return h
+      	case Nil():
+      		return 0
+      	}
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "the proof argument for p of Cast cannot be omitted"
+    And the file "main_gp.go" does not exist
+
+  Scenario: An ordering obligation names decide as its witness
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      func Bounded(0 i nat, 0 n nat, 0 p Lt[i, n]) int {
+      	return 0
+      }
+
+      func Use() int {
+      	return Bounded()
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "pass decide (proved by the decider) or assume"
+
+  Scenario: An omitted erased index is still inferred
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      type Vec[T any, n nat] enum {
+      	Nil() Vec[T, 0]
+      	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+      }
+
+      func Length[T any](0 n nat, v Vec[T, n]) int {
+      	match v {
+      	case Cons(h, t):
+      		_ = h
+      		return Length(t) + 1
+      	case Nil():
+      		return 0
+      	}
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 0
+    And the file "main_gp.go" is valid Go
+    And the file "main_gp.go" contains "func Length[T any](v Vec[T]) int"

@@ -113,7 +113,7 @@ func (r *fileResolver) holeDepArgGoal(call *ast.CallExpr) string {
 	if !ok || parent.Fun == call {
 		return ""
 	}
-	fnIdent, _, pkgPath := calleeIdent(r, parent.Fun)
+	fnIdent, _, pkgPath := calleeIdent(r.file, r.pkg.PkgPath, parent.Fun)
 	if fnIdent == nil {
 		return ""
 	}

@@ -114,7 +114,7 @@ func (r *fileResolver) indexDependentVariables() {
 }
 
 func (r *fileResolver) dependentCallResult(call *ast.CallExpr) (string, string, bool) {
-	fn, _, pkgPath := calleeIdent(r, call.Fun)
+	fn, _, pkgPath := calleeIdent(r.file, r.pkg.PkgPath, call.Fun)
 	if fn == nil {
 		return "", "", false
 	}
@@ -209,7 +209,7 @@ func (r *fileResolver) dependentConstructorResult(call *ast.CallExpr) (string, s
 	}
 	uses := r.recognizeCtors(name)
 	if len(uses) == 0 {
-		fn, selector, pkgPath := calleeIdent(r, call.Fun)
+		fn, selector, pkgPath := calleeIdent(r.file, r.pkg.PkgPath, call.Fun)
 		if fn != nil {
 			for _, enum := range r.reg.EnumsByVariantName(pkgPath, fn.Name) {
 				variant, found := enum.Variant(fn.Name)
@@ -530,7 +530,7 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 	if r.dependentBlocked[call] {
 		return
 	}
-	fnIdent, _, pkgPath := calleeIdent(r, call.Fun)
+	fnIdent, _, pkgPath := calleeIdent(r.file, r.pkg.PkgPath, call.Fun)
 	if fnIdent == nil {
 		return
 	}
@@ -589,7 +589,11 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 		return
 	}
 	if !full {
-		return // erased parameters were inferred and are already absent
+		// Erased parameters were inferred and are already absent. This
+		// is now provably "already erased" rather than "never supplied":
+		// proof.go settles obligations on the first iteration, before any
+		// erasure exists, so an omission can no longer reach here.
+		return
 	}
 	dropped := map[int]bool{}
 	for _, i := range d.Dropped {
@@ -958,7 +962,7 @@ func (r *fileResolver) blockDependentOrigin(origin *ast.CallExpr) {
 }
 
 func (r *fileResolver) constructorIndexNames(call *ast.CallExpr) map[string]bool {
-	fn, _, pkgPath := calleeIdent(r, call.Fun)
+	fn, _, pkgPath := calleeIdent(r.file, r.pkg.PkgPath, call.Fun)
 	if fn == nil {
 		return nil
 	}
