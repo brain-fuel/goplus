@@ -19,6 +19,48 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.153.0 — a proof can no longer be skipped
+
+**`Cast(v)` was accepted.** A call to a function with a proof parameter,
+with the erased arguments left out, produced working Go with no proof, no
+`assume`, and no audit record — so a dependent guarantee was bypassable by
+accident and in silence. It reproduces against v0.146.0, so it long
+predates the recent proposition work, and it undermined everything built
+on it.
+
+The cause: a proof argument is deleted by the same pass that discharges
+it, so a call that never had one is textually identical to a call whose
+argument has already been erased. The checker could not tell "never
+proved" from "proved and erased", and assumed the second.
+
+The ambiguity only exists *after* erasure begins. Obligations are now
+settled on the first resolve iteration, where the text is still exactly
+what you wrote — so the two cases are distinguishable with certainty
+rather than by heuristic. The check deliberately uses no type
+information, which is what lets it run that early: on the first iteration
+a match arm's binders do not exist yet, so a type-directed check would
+give up exactly where recursive dependent code lives.
+
+```
+main.gp:13:13: the proof argument for p of Cast cannot be omitted:
+Eq[n, m] is a proposition, not an inferable index — pass refl (proved by
+the decider) or assume (asserted on your authority)
+```
+
+**A proof-carrying function may also only be used in a direct call.**
+Closing the omission alone would just relocate the bypass: `f := Cast`,
+`Cast >>> g`, `v |> Cast`, and partial application all reach generated Go
+with no proof. A proof can be written in exactly one place, so those are
+refused. A dependent function with *no* proposition is unaffected and may
+still be composed, piped, and stored.
+
+Ordinary erased indices keep their inference — the check fires only for
+parameters carrying a proposition, so `std` regenerates byte-identically.
+
+One limit remains, inherent rather than open: a plain Go caller of the
+generated artifact sees the erased signature and can call it with no
+proof. Obligations are enforced at the `.gp` boundary.
+
 ## v0.152.0 — a bound in scope now means something
 
 v0.151.0 made a bound statable but left it **inert**: a proposition in
@@ -44,17 +86,12 @@ Passing an erased name to a genuine runtime parameter is still refused,
 and that error now explains the erasure instead of only reporting an
 undefined name.
 
-### Known unsoundness
+### Proof arguments are now mandatory
 
-Investigating this release surfaced a bug that predates it: **omitting a
-proof argument skips its obligation entirely.** `Cast(v)` — with the
-erased arguments left out — is accepted with no proof and no recorded
-assumption, so a dependent guarantee can be bypassed by accident. The
-cause is that a call whose erased arguments were never written is
-textually identical to one whose arguments a previous pass already
-erased. Closing it means settling the obligation while the call site is
-still pristine, which is the next piece of work; it is tracked in
-GOALS.md Stage B and in `spec/grammar-v0.13.0.ebnf`.
+Investigating v0.152.0 surfaced a bug that predated it: **omitting a proof
+argument skipped its obligation.** `Cast(v)` was accepted with no proof
+and no recorded assumption, so a dependent guarantee could be bypassed by
+accident. v0.153.0 fixes it.
 
 ## v0.151.0 — bounds are statable
 
@@ -1193,6 +1230,7 @@ The spec is executable: the Godog/Cucumber feature suite under
 | v0.25.0 | Goals 01–08 dependent rewrite foundations: indexed decimal, collections, config, HTTP routes, expressions, JSON paths, validation, and schedules — shipped |
 | v0.27.0 | Goal 10 foundations: consistent inferred indices across all imported runtime arguments — shipped |
 | v0.26.0 | Goal 09 foundations: inferred preserved indices across linear calls and shared overflow-safe retry primitives — shipped |
+| v0.153.0 | Proof arguments are mandatory, closing a bypass that predated v0.146.0; a proof-carrying function may only be used in a direct call — shipped |
 | v0.152.0 | Propositions in scope act as hypotheses; erased indices may be forwarded to calls — shipped |
 | v0.151.0 | `Le`/`Lt` propositions and the general `decide` witness: bounds are statable — shipped |
 | v0.150.0 | Assumptions travel in the generated artifact via `//goplus:assume`, so a consumer can audit what its dependencies assumed — shipped |

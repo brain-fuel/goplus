@@ -368,50 +368,13 @@ v0.152.0, which also allows an erased index to be forwarded to a call, so
 bounds compose. It is still not a hypothesis for MATCH refinement: one in
 scope does not refine a match the way a constructor index does.
 
-KNOWN UNSOUNDNESS, found while building v0.152.0 and not yet fixed:
-omitting a proof argument skips its obligation. `Cast(v)`, with the erased
-arguments left out, is accepted with no proof and no recorded assumption.
-The cause is architectural — a call whose erased arguments were never
-written is textually identical to one whose arguments a previous pass has
-already erased — so closing it means settling the obligation while the
-call site is still pristine. This is the highest-priority Stage B item. Explicit `assume` shipped
-first, in v0.149.0: at a proof parameter it stands where `refl` would and
-asserts the proposition instead of proving it, erasing identically and
-recorded for review by `goplus assumptions`. It is currently accepted
-anywhere a proof parameter appears rather than only at foreign boundaries;
-assumptions travel into distributed artifacts via a `//goplus:assume`
-marker as of v0.150.0, so a consumer can audit what its dependencies
-assumed. Narrowing `assume` to foreign boundaries is deferred until
-predicate parameters land — the phrase fits validated witnesses from
-external data, not an equality proof. Proof terms erase; generated Go rechecks exported inputs.
-Keep inference decidable by limiting automatic discharge to constants, path
-conditions, registered total functions, and an SMT-free arithmetic fragment.
-Goal 02 is the primary acceptance test.
-
-### Stage C - existential dependent pairs
-
-Add `exists n. T[n]`/Sigma packaging and match-based witness recovery so parsing
-runtime data can safely return a value whose index was not known statically.
-Support equality transport and dependent pattern refinement without casts.
-Goals 03, 06, 07, 08, and 10 require this stage.
-
-### Stage D - a predictable index solver
-
-Implement canonical normalization plus Presburger arithmetic for naturals and
-integers, finite-set membership, singleton strings, and user-declared opaque
-index functions with congruence only. Emit proof traces for diagnostics and
-cache normalized imported contracts. Do not make arbitrary Go execution part
-of type checking. Goals 03, 05, 06, 07, and 08 exercise these domains.
-
-### Stage E - dependent functions and records
-
-Generalize indexed declarations to Pi types, dependent records, schema/key
-projection, implicit arguments, and bidirectional elaboration. Holes with
-actionable goals shipped early, in v0.147.0: `?name` reports the expected
-type — un-erased in dependent positions — and the bindings in scope, and
-blocks generation until it is filled. Proof search and hole-filling code
-actions remain future work. Add row-like finite maps only after singleton
-strings and existentials are stable. Goals 04, 05, 07, and 10 are the forcing consumers.
+The omitted-proof unsoundness found while building v0.152.0 is FIXED in
+v0.153.0: obligations are settled on the first resolve iteration, before
+any erasure exists, so a call that never carried a proof is
+distinguishable from one whose proof was erased. A proof-carrying
+function may also only be used in a direct call, since composition,
+piping, partial application, and plain assignment all reached generated
+Go without a proof. Ordinary erased indices keep their inference.
 
 ### Stage F - total dependent core
 
