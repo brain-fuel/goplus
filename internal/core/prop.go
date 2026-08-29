@@ -68,6 +68,37 @@ func (op PropOp) Witness() string {
 	return "decide"
 }
 
+// PropDefs is the unfolding table for named propositions: a name maps to
+// its comma-joined parameters and its body. A named proposition is not a
+// new kind of fact — it is an abbreviation, so unfolding is all it needs.
+type PropDefs map[string][2]string
+
+// Unfold expands a named proposition applied to arguments into its body.
+// It reports false when the name is not declared or the arity is wrong.
+func (p PropDefs) Unfold(name string, args []string) (string, bool) {
+	def, ok := p[name]
+	if !ok {
+		return "", false
+	}
+	var params []string
+	for _, s := range strings.Split(def[0], ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			params = append(params, s)
+		}
+	}
+	if len(params) != len(args) {
+		return "", false
+	}
+	body := def[1]
+	// Substitute in one pass over placeholders so a parameter named like
+	// another's argument cannot be re-substituted.
+	sub := make(map[string]string, len(params))
+	for i, name := range params {
+		sub[name] = args[i]
+	}
+	return substIdents(body, sub), true
+}
+
 // PropFactsFor builds the decider facts a proposition asserts. A relation
 // contributes one; a conjunction contributes its parts, which is what
 // makes `And` cost nothing at the decider — the solver already takes a
@@ -90,12 +121,77 @@ func PropFactsFor(op PropOp, aText, bText string, defs Defs, resolve CallResolve
 
 // propTextFacts reads one proposition written as a type text.
 func propTextFacts(text string, defs Defs, resolve CallResolver) ([]Fact, bool) {
-	base, args := SplitProp(text)
-	op, isProp := PropFor(base)
-	if !isProp || len(args) != 2 {
+	return PropTextFactsUnder(nil, text, defs, resolve)
+}
+
+// PropTextFactsUnder reads one proposition, unfolding any named ones it
+// meets. Unfolding is bounded: a name may not expand into itself.
+func PropTextFactsUnder(props PropDefs, text string, defs Defs, resolve CallResolver) ([]Fact, bool) {
+	return propTextFactsDepth(props, text, defs, resolve, 0)
+}
+
+func propTextFactsDepth(props PropDefs, text string, defs Defs, resolve CallResolver, depth int) ([]Fact, bool) {
+	if depth > maxPropUnfold {
 		return nil, false
 	}
-	return PropFactsFor(op, args[0], args[1], defs, resolve)
+	base, args := SplitProp(text)
+	if base == "" {
+		return nil, false
+	}
+	if op, isProp := PropFor(base); isProp {
+		if len(args) != 2 {
+			return nil, false
+		}
+		if op.Nested() {
+			left, okL := propTextFactsDepth(props, args[0], defs, resolve, depth+1)
+			right, okR := propTextFactsDepth(props, args[1], defs, resolve, depth+1)
+			if !okL || !okR {
+				return nil, false
+			}
+			return append(left, right...), true
+		}
+		f, ok := PropFact(op, args[0], args[1], defs, resolve)
+		if !ok {
+			return nil, false
+		}
+		return []Fact{f}, true
+	}
+	// A named proposition: unfold and try again.
+	body, ok := props.Unfold(base, args)
+	if !ok {
+		return nil, false
+	}
+	return propTextFactsDepth(props, body, defs, resolve, depth+1)
+}
+
+// maxPropUnfold bounds unfolding so a self-referential declaration ends
+// as a refusal rather than a hang.
+const maxPropUnfold = 32
+
+// substIdents replaces whole-identifier occurrences, all in one pass.
+func substIdents(s string, sub map[string]string) string {
+	identByte := func(b byte) bool {
+		return b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if !identByte(s[i]) || (i > 0 && identByte(s[i-1])) {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		j := i
+		for j < len(s) && identByte(s[j]) {
+			j++
+		}
+		if with, ok := sub[s[i:j]]; ok {
+			b.WriteString(with)
+		} else {
+			b.WriteString(s[i:j])
+		}
+		i = j
+	}
+	return b.String()
 }
 
 // fact builds the decider goal for this relation over two values.

@@ -369,8 +369,15 @@ bounds compose. As of v0.154.0 it is a hypothesis for MATCH
 refinement too: a bound prunes a variant it excludes, and the generated
 boundary guard agrees. Conjunction shipped in v0.155.0 as `And[P, Q]`,
 whose parts are propositions: as a goal each is proved in turn, in scope
-each becomes a hypothesis. Remaining in this stage: named predicate
-parameters (a `prop` declaration form and its unfolding story).
+each becomes a hypothesis. Named propositions shipped in v0.156.0 as
+`type InRange[i nat, n nat] prop { … }`: a name is an abbreviation, so a
+use unfolds into the relations everything downstream already handled, and
+the declaration erases to a marker so consumers can unfold it too.
+
+**Stage B is complete.** What it deliberately does not include: an opt-in
+Prop SORT distinct from Type, disjunction and negation, and quantifiers.
+Those belong with Stage F's kernel, not with an SMT-free arithmetic
+fragment.
 
 The omitted-proof unsoundness found while building v0.152.0 is FIXED in
 v0.153.0: obligations are settled on the first resolve iteration, before

@@ -47,6 +47,7 @@ type Input struct {
 	TotalsByDir      map[string][]*registry.Total
 	DepsByDir        map[string][]*registry.DepFn
 	RefinementsByDir map[string][]*registry.Refinement
+	PropsByDir       map[string][]*registry.PropDef
 	BuildFlags       []string
 }
 
@@ -298,6 +299,11 @@ func buildRegistry(reg *registry.Registry, roots []*packages.Package, in *Input)
 				clone.PkgPath = pkg.PkgPath
 				record(reg.AddRefinement(&clone))
 			}
+			for _, pd := range in.PropsByDir[dir] {
+				clone := *pd
+				clone.PkgPath = pkg.PkgPath
+				record(reg.AddPropDef(&clone))
+			}
 			registerRefinedFunctions(reg, pkg, record)
 			return
 		}
@@ -341,6 +347,14 @@ func buildRegistry(reg *registry.Registry, roots []*packages.Package, in *Input)
 				if err == nil { // marker damage in a dep is not fatal
 					for _, m := range methods {
 						record(reg.Add(m))
+					}
+				}
+			}
+			if strings.Contains(string(src), registry.PropPrefix) {
+				defs, err := registry.PropDefsFromMarkers(pkg.PkgPath, file, src)
+				if err == nil {
+					for _, d := range defs {
+						record(reg.AddPropDef(d))
 					}
 				}
 			}

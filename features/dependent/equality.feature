@@ -790,3 +790,100 @@ Feature: Propositional equality
     When I run goplus with arguments "assumptions ."
     Then the exit code is 0
     And stdout contains "assumed Le[0, 5] and Lt[5, 3] for p of At"
+
+  Scenario: A named proposition abbreviates a precondition
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      type Vec[T any, n nat] enum {
+      	Nil() Vec[T, 0]
+      	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+      }
+
+      type InRange[i nat, n nat] prop { And[Le[0, i], Lt[i, n]] }
+
+      func At[T any](0 i nat, 0 n nat, 0 p InRange[i, n], v Vec[T, n]) T {
+      	match v {
+      	case Cons(h, t):
+      		_ = t
+      		return h
+      	}
+      }
+
+      func Ok(v Vec[int, 3]) int {
+      	return At(1, 3, decide, v)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 0
+    And the file "main_gp.go" is valid Go
+    # The declaration names facts, never values, so it erases completely
+    # and only its marker survives for consumers.
+    And the file "main_gp.go" contains "//goplus:prop InRange[i, n] And[Le[0, i], Lt[i, n]]"
+    And the file "main_gp.go" does not contain "prop {"
+    # Unfolding reaches the hypotheses, so Lt[i, n] still prunes Nil.
+    And the file "main_gp.go" contains:
+      """
+      panic("goplus: At: v with index n cannot be Nil")
+      """
+
+  Scenario: A named proposition that does not hold is refused, by name
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      type InRange[i nat, n nat] prop { And[Le[0, i], Lt[i, n]] }
+
+      func At(0 i nat, 0 n nat, 0 p InRange[i, n]) int {
+      	return 0
+      }
+
+      func Bad() int {
+      	return At(5, 3, decide)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "cannot prove InRange[5, 3] at this call to At"
+    And the file "main_gp.go" does not exist
+
+  Scenario: A named proposition may be asserted, and is audited by name
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      type InRange[i nat, n nat] prop { And[Le[0, i], Lt[i, n]] }
+
+      func At(0 i nat, 0 n nat, 0 p InRange[i, n]) int {
+      	return 0
+      }
+
+      func Asserted() int {
+      	return At(5, 3, assume)
+      }
+      """
+    When I run goplus with arguments "assumptions ."
+    Then the exit code is 0
+    And stdout contains "assumed InRange[5, 3] for p of At"
+
+  Scenario: A named proposition may name another
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      type Pos[n nat] prop { Lt[0, n] }
+
+      type Both[a nat, b nat] prop { And[Pos[a], Pos[b]] }
+
+      func Need(0 a nat, 0 b nat, 0 p Both[a, b]) int {
+      	return 0
+      }
+
+      func Ok() int {
+      	return Need(1, 2, decide)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 0
+    And the file "main_gp.go" is valid Go

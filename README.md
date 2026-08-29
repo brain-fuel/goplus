@@ -19,6 +19,38 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.156.0 — named propositions
+
+`prop` names a proposition, so a precondition can be stated once and used
+by name — the last piece of the dependent-typing roadmap's Stage B.
+
+```go
+type InRange[i nat, n nat] prop { And[Le[0, i], Lt[i, n]] }
+
+func At[T any](0 i nat, 0 n nat, 0 p InRange[i, n], v Vec[T, n]) T {
+	match v {
+	case Cons(h, t):   // unfolding reaches the bound, so Nil is still pruned
+		_ = t
+		return h
+	}
+}
+```
+
+A name is an **abbreviation, not a new kind of fact**. A use unfolds by
+substituting its arguments into the body, and everything downstream then
+sees the relations it always saw: discharge, hypotheses, match
+refinement, the boundary guard, and the `assume` audit record all work
+unchanged. Propositions may name other propositions, and unfolding is
+bounded, so a self-referential declaration is refused rather than looping.
+
+The declaration **erases completely** — it names facts, never values — so
+nothing reaches generated Go but a `//goplus:prop` marker, which is what
+lets a consumer unfold a use in their own package. Diagnostics read the
+use as you wrote it: `cannot prove InRange[5, 3]`.
+
+`prop` is contextual, joining `enum`, `class`, and `refine` at the same
+declaration hook, so an identifier named prop stays ordinary Go.
+
 ## v0.155.0 — conjunction
 
 `And[P, Q]` asserts both propositions, so the common precondition fits in
@@ -1284,6 +1316,7 @@ The spec is executable: the Godog/Cucumber feature suite under
 | v0.25.0 | Goals 01–08 dependent rewrite foundations: indexed decimal, collections, config, HTTP routes, expressions, JSON paths, validation, and schedules — shipped |
 | v0.27.0 | Goal 10 foundations: consistent inferred indices across all imported runtime arguments — shipped |
 | v0.26.0 | Goal 09 foundations: inferred preserved indices across linear calls and shared overflow-safe retry primitives — shipped |
+| v0.156.0 | Named propositions (`prop`), completing Stage B — shipped |
 | v0.155.0 | `And[P, Q]` conjunction: the whole precondition in one proof parameter — shipped |
 | v0.154.0 | A proposition in scope refines a match, pruning variants its bound excludes — shipped |
 | v0.153.0 | Proof arguments are mandatory, closing a bypass that predated v0.146.0; a proof-carrying function may only be used in a direct call — shipped |

@@ -280,12 +280,11 @@ func processDeps(f *sourceFile, pkgPath string, totals map[*ast.FuncDecl]bool, p
 					// Erased, so absent at runtime — but a proposition
 					// among them is a fact the guard may rely on, since a
 					// caller cannot reach the body without discharging it.
-					if base, terms := instantiationOf(p.typeText); len(terms) == 2 {
-						if op, isProp := core.PropFor(base); isProp {
-							if fs, built := core.PropFactsFor(op, terms[0], terms[1], nil, nil); built {
-								hyps = append(hyps, fs...)
-							}
-						}
+					// Named ones unfold through the file's own table; an
+					// imported name is left to the checker, which has the
+					// registry pass 1 does not.
+					if fs, built := core.PropTextFactsUnder(localProps(f), p.typeText, nil, nil); built {
+						hyps = append(hyps, fs...)
 					}
 					continue
 				}
@@ -579,3 +578,23 @@ func valueUses(body *ast.BlockStmt, name string) []*ast.Ident {
 // domainProbeFn reconstructs an imported package's enums from markers
 // (pass-1 classification of qualified index-domain constraints).
 type domainProbeFn func(importPath string) ([]*registry.Enum, bool)
+
+// localProps is the unfolding table for propositions this file declares.
+// Pass 1 has no registry, so an imported name does not unfold here — the
+// guard is then simply less specific, never wrong.
+func localProps(f *sourceFile) core.PropDefs {
+	if f.gp == nil || len(f.gp.Props) == 0 {
+		return nil
+	}
+	out := core.PropDefs{}
+	for _, pd := range f.gp.Props {
+		if pd.Spec == nil || pd.Body == nil {
+			continue
+		}
+		out[pd.Spec.Name.Name] = [2]string{
+			strings.Join(lower.PropParamNames(pd.Spec), ","),
+			lower.PropBodyText(f.gp, pd),
+		}
+	}
+	return out
+}

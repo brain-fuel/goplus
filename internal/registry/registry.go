@@ -46,6 +46,7 @@ type Registry struct {
 	totalIdx    *totalIndex
 	depIdx      *depIndex
 	assumeIdx   map[string]*Assumption
+	propIdx     map[string]*PropDef
 	refinements map[string]*Refinement
 	refinedFns  map[string]*RefinedFunc
 	paramIdx    map[paramIndexKey][2][]string

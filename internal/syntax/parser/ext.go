@@ -76,6 +76,19 @@ type RefinementDecl struct {
 	Rbrace    token.Pos
 }
 
+// PropDecl is one `type Name[i nat, n nat] prop { … }` declaration
+// (v0.17.0): a NAMED proposition over index terms. Its body is itself a
+// proposition, so a use unfolds into the facts the decider already knows
+// how to settle.
+type PropDecl struct {
+	Gen     *ast.GenDecl  // enclosing declaration; filled by syntax.ParseFile
+	Spec    *ast.TypeSpec // Name/TypeParams are real; Spec.Type is a placeholder
+	PropPos token.Pos
+	Lbrace  token.Pos
+	Body    ast.Expr // the proposition, e.g. And[Le[0, i], Lt[i, n]]
+	Rbrace  token.Pos
+}
+
 // ClassDecl is one `type Name[T any] class { … }` declaration (v0.5.0).
 type ClassDecl struct {
 	Gen      *ast.GenDecl  // enclosing declaration; filled by syntax.ParseFile
@@ -319,6 +332,8 @@ type Extensions struct {
 	Refinements []*RefinementDecl
 	// v0.10.0 — creation order; resolve placeholders by pointer.
 	Holes []*HoleExpr
+	// v0.17.0 — source order.
+	Props []*PropDecl
 }
 
 // ParseFileExt parses Go+ source: stock Go grammar plus enum declarations,

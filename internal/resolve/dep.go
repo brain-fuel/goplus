@@ -620,7 +620,16 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 		}
 		base, eqArgs := instantiationBase(d.Params[i].Type)
 		op, isProp := core.PropFor(base)
-		if !isProp || len(eqArgs) != 2 {
+		named := false
+		if !isProp {
+			// A named proposition stands where a relation does; it is an
+			// abbreviation, so it is decided by unfolding its body.
+			if _, found := r.reg.LookupPropDef(pkgPath, base); !found {
+				continue
+			}
+			named, op = true, core.PropLe // any non-Eq: the witness is decide
+		}
+		if !named && len(eqArgs) != 2 {
 			continue
 		}
 		id, isIdent := a.(*ast.Ident)
@@ -662,17 +671,17 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 				Fn:          r.enclosingDeclName(call),
 				Callee:      d.Name,
 				Param:       d.Params[i].Name,
-				Proposition: substText(eqArgs[0], sub) + " " + op.Symbol() + " " + substText(eqArgs[1], sub),
+				Proposition: propReading(named, d.Params[i].Type, eqArgs, op, sub),
 			}
 			r.assumptions = append(r.assumptions, record)
 			r.emitAssumeMarker(call, record)
 			continue
 		}
-		ok, err := core.DecidePropUnder(r.scopeHypotheses(call), op, eqArgs[0], eqArgs[1], sub, r.reg.TotalDefs(), calleeResolve)
+		ok, err := r.decideProp(call, named, d.Params[i].Type, op, eqArgs, sub, calleeResolve)
 		if err != nil || !ok {
 			if r.report {
-				r.errorf(a.Pos(), "cannot prove %s %s %s at this call to %s; the arithmetic decider could not discharge %s (rephrase the indices, pass values that make it manifest, or assert it with assume)",
-					substText(eqArgs[0], sub), op.Symbol(), substText(eqArgs[1], sub), d.Name, op.Witness())
+				r.errorf(a.Pos(), "cannot prove %s at this call to %s; the arithmetic decider could not discharge %s (rephrase the indices, pass values that make it manifest, or assert it with assume)",
+					propReading(named, d.Params[i].Type, eqArgs, op, sub), d.Name, op.Witness())
 			}
 			return
 		}
@@ -1353,12 +1362,9 @@ func (r *fileResolver) scopeHypothesesAt(pos token.Pos) []core.Fact {
 		if p.Quantity != "0" {
 			continue
 		}
-		base, args := instantiationBase(p.Type)
-		hypOp, isProp := core.PropFor(base)
-		if !isProp || len(args) != 2 {
-			continue
-		}
-		if fs, built := core.PropFactsFor(hypOp, args[0], args[1], r.reg.TotalDefs(), resolveKey); built {
+		// A named proposition contributes exactly the facts its body
+		// does, so both shapes go through one reader.
+		if fs, built := core.PropTextFactsUnder(r.reg.PropDefs(), p.Type, r.reg.TotalDefs(), resolveKey); built {
 			hyps = append(hyps, fs...)
 		}
 	}
@@ -1375,4 +1381,34 @@ func (r *fileResolver) enclosingFuncDeclAt(pos token.Pos) *ast.FuncDecl {
 		}
 	}
 	return nil
+}
+
+// propReading renders a proposition for a diagnostic or an audit record,
+// with the call's arguments substituted so the reader sees real values.
+// A relation reads as `a = b`; a named proposition reads as its own use,
+// since its name is what the author wrote.
+func propReading(named bool, typeText string, terms []string, op core.PropOp, sub map[string]core.Term) string {
+	if named || len(terms) != 2 {
+		return core.SubstPropText(typeText, sub)
+	}
+	return substText(terms[0], sub) + " " + op.Symbol() + " " + substText(terms[1], sub)
+}
+
+// decideProp settles one proposition, unfolding a named one into the body
+// it abbreviates.
+func (r *fileResolver) decideProp(call *ast.CallExpr, named bool, typeText string, op core.PropOp, terms []string, sub map[string]core.Term, calleeResolve core.CallResolver) (bool, error) {
+	hyps := r.scopeHypotheses(call)
+	if named {
+		facts, built := core.PropTextFactsUnder(r.reg.PropDefs(), core.SubstPropText(typeText, sub), r.reg.TotalDefs(), calleeResolve)
+		if !built {
+			return false, nil
+		}
+		for _, f := range facts {
+			if !core.Decide(f, hyps) {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+	return core.DecidePropNamed(r.reg.PropDefs(), hyps, op, terms[0], terms[1], sub, r.reg.TotalDefs(), calleeResolve)
 }

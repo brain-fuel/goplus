@@ -43,6 +43,7 @@ type (
 	MatchExpr          = parser.MatchExpr
 	MatchExprArm       = parser.MatchExprArm
 	HoleExpr           = parser.HoleExpr
+	PropDecl           = parser.PropDecl
 )
 
 // Composition operator kinds.
@@ -68,6 +69,7 @@ type File struct {
 	Totals      []*TotalFunc      // source order (v0.7.0)
 	Tails       []*TailFunc       // source order (v0.8.0)
 	Refinements []*RefinementDecl // source order (v0.9.0)
+	Props       []*PropDecl       // source order (v0.17.0)
 	Matches     []*MatchStmt      // pre-order (nested matches follow their parent)
 
 	// Pipes and Composes are in creation order (extensions nested in a
@@ -288,6 +290,7 @@ func ParseFile(fset *token.FileSet, path string, src []byte) (*File, error) {
 		Totals:      ext.Totals,
 		Tails:       ext.Tails,
 		Refinements: ext.Refinements,
+		Props:       ext.Props,
 		Matches:     ext.Matches,
 		Pipes:       ext.Pipes,
 		Composes:    ext.Composes,
@@ -346,6 +349,9 @@ func ParseFile(fset *token.FileSet, path string, src []byte) (*File, error) {
 	}
 	for _, r := range ext.Refinements {
 		r.Gen = specToGen[r.Spec]
+	}
+	for _, pd := range ext.Props {
+		pd.Gen = specToGen[pd.Spec]
 	}
 	for _, e := range ext.Enums {
 		e.Gen = specToGen[e.Spec]

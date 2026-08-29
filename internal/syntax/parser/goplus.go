@@ -70,7 +70,31 @@ func (p *parser) parseTypeSpecType(spec *ast.TypeSpec) {
 		p.parseRefinementType(spec)
 		return
 	}
+	if p.tok == token.IDENT && p.lit == "prop" && p.peekNonComment() == token.LBRACE {
+		p.parsePropType(spec)
+		return
+	}
 	spec.Type = p.parseType()
+}
+
+// parsePropType parses the contextual, invalid-Go declaration form
+// `type InRange[i nat, n nat] prop { And[Le[0, i], Lt[i, n]] }`. The body
+// is an ordinary type expression — a proposition — so it needs no new
+// grammar of its own.
+func (p *parser) parsePropType(spec *ast.TypeSpec) {
+	if spec.Assign.IsValid() {
+		p.error(spec.Assign, "proposition declarations cannot be type aliases")
+	}
+	d := &PropDecl{Spec: spec, PropPos: p.pos}
+	p.next() // consume `prop`
+	d.Lbrace = p.expect(token.LBRACE)
+	d.Body = p.parseType()
+	if p.tok == token.SEMICOLON {
+		p.next() // permit a newline before the closing brace
+	}
+	d.Rbrace = p.expect(token.RBRACE)
+	spec.Type = &ast.BadExpr{From: d.PropPos, To: d.Rbrace + 1}
+	p.ext.Props = append(p.ext.Props, d)
 }
 
 // parseRefinementType parses the contextual, invalid-Go declaration form

@@ -122,6 +122,7 @@ func Run(opts Options) (*Result, error) {
 	totalsByDir := map[string][]*registry.Total{}
 	depsByDir := map[string][]*registry.DepFn{}
 	refinementsByDir := map[string][]*registry.Refinement{}
+	propsByDir := map[string][]*registry.PropDef{}
 	lawsOutByDir := map[string]string{}
 	goplusSources := map[string][]byte{} // output abs path -> .gp source bytes
 	goplusPaths := map[string]string{}   // output abs path -> .gp path (relative)
@@ -181,6 +182,26 @@ func Run(opts Options) (*Result, error) {
 			depsByDir[dir] = deps
 			refinementsByDir[dir] = refinements
 			lawsOutByDir[dir] = lawsOut
+			// Named propositions are check-time only: they erase to their
+			// marker, so the fixpoint needs them handed over directly.
+			var props []*registry.PropDef
+			for _, f := range idx.files {
+				if f.gp == nil {
+					continue
+				}
+				for _, pd := range f.gp.Props {
+					if pd.Spec == nil || pd.Body == nil {
+						continue
+					}
+					props = append(props, &registry.PropDef{
+						PkgPath: pkgPath(pkgPathRoot, moduleRoot, dir),
+						Name:    pd.Spec.Name.Name,
+						Params:  lower.PropParamNames(pd.Spec),
+						Body:    lower.PropBodyText(f.gp, pd),
+					})
+				}
+			}
+			propsByDir[dir] = props
 			for _, f := range idx.files {
 				if f.gp != nil {
 					out := emit.OutputPath(f.path)
@@ -221,6 +242,7 @@ func Run(opts Options) (*Result, error) {
 			TotalsByDir:      totalsByDir,
 			DepsByDir:        depsByDir,
 			RefinementsByDir: refinementsByDir,
+			PropsByDir:       propsByDir,
 			BuildFlags:       tagBuildFlags(opts.BuildTags),
 		}
 		out, err := resolve.Fixpoint(in)
@@ -674,6 +696,9 @@ func processPackage(idx *pkgIndex, pkgPath string, probe domainProbeFn) (map[str
 		for _, ref := range f.gp.Refinements {
 			edits = append(edits, lower.RefinementEdits(f.gp, ref)...)
 		}
+		for _, pd := range f.gp.Props {
+			edits = append(edits, lower.PropEdits(f.gp, pd)...)
+		}
 		edits = append(edits, refinementGuardEdits(f.gp, refinementModels)...)
 		if needIter {
 			// Universe returns an iter.Seq; inject the import right after
@@ -911,7 +936,6 @@ func readWithOverlay(path string, overlay map[string][]byte) ([]byte, error) {
 
 // holeKey identifies one hole by its source file and name.
 type holeKey struct{ file, name string }
-
 
 // reportedHoles indexes the holes whose goals resolution already reported.
 func reportedHoles(holes []diag.HoleInfo) map[holeKey]bool {

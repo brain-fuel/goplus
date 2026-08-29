@@ -112,3 +112,48 @@ func TestSplitPropRespectsNesting(t *testing.T) {
 		t.Errorf("a non-instantiation must not split: %q", n)
 	}
 }
+
+// A named proposition is an abbreviation, not a new kind of fact: it
+// unfolds into the relations the decider already settles.
+func TestNamedPropositionUnfolds(t *testing.T) {
+	props := PropDefs{
+		"InRange": {"i,n", "And[Le[0, i], Lt[i, n]]"},
+		"Pos":     {"n", "Lt[0, n]"},
+	}
+	// A use unfolds and decides.
+	facts, ok := PropTextFactsUnder(props, "InRange[2, 5]", nil, nil)
+	if !ok || len(facts) != 2 {
+		t.Fatalf("want two facts from InRange[2, 5], got %d (ok=%v)", len(facts), ok)
+	}
+	// It composes: a named proposition may name another.
+	nested := PropDefs{"Both": {"a,b", "And[Pos[a], Pos[b]]"}, "Pos": {"n", "Lt[0, n]"}}
+	if fs, ok := PropTextFactsUnder(nested, "Both[3, 4]", nil, nil); !ok || len(fs) != 2 {
+		t.Errorf("nested named propositions: got %d facts (ok=%v)", len(fs), ok)
+	}
+	// Arity is checked.
+	if _, ok := PropTextFactsUnder(props, "InRange[2]", nil, nil); ok {
+		t.Error("wrong arity must be refused")
+	}
+	// An undeclared name is refused rather than assumed.
+	if _, ok := PropTextFactsUnder(props, "Unknown[1, 2]", nil, nil); ok {
+		t.Error("an undeclared proposition must be refused")
+	}
+	// Self-reference ends as a refusal, not a hang.
+	loop := PropDefs{"Loop": {"n", "Loop[n]"}}
+	if _, ok := PropTextFactsUnder(loop, "Loop[1]", nil, nil); ok {
+		t.Error("a self-referential proposition must be refused")
+	}
+}
+
+// Unfolding substitutes in ONE pass, so a parameter named like another's
+// argument cannot be substituted twice.
+func TestUnfoldSubstitutesOnce(t *testing.T) {
+	props := PropDefs{"Swap": {"a,b", "And[Eq[a, b], Eq[b, a]]"}}
+	got, ok := props.Unfold("Swap", []string{"b", "a"})
+	if !ok {
+		t.Fatal("Unfold refused a well-formed use")
+	}
+	if want := "And[Eq[b, a], Eq[a, b]]"; got != want {
+		t.Errorf("Unfold = %q, want %q", got, want)
+	}
+}

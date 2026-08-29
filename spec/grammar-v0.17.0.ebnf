@@ -1,0 +1,40 @@
+(* Go+ v0.17.0 grammar delta: named propositions.
+
+   The complete base grammar is Go plus the declarations and expressions in
+   grammar-v0.16.0.ebnf. This file adds the prop declaration, completing
+   GOALS.md Stage B.
+*)
+
+TypeDecl        = ... | PropDecl .
+PropDecl        = "type" TypeName TypeParams "prop" "{" Proposition "}" .
+
+(*
+  `type InRange[i nat, n nat] prop { And[Le[0, i], Lt[i, n]] }` NAMES a
+  proposition. A use — `0 p InRange[i, n]` — stands exactly where a
+  relation does.
+
+  - `prop` is contextual and claims only `prop {` in a type declaration's
+    type position, a spelling invalid in Go; existing identifiers named
+    prop remain ordinary Go. It joins `enum`, `class`, and `refine` at the
+    same hook rather than introducing a declaration form of its own.
+  - The body is itself a proposition, written over the declared
+    parameters. It may name other propositions, and unfolding is bounded,
+    so a self-referential declaration is refused rather than looping.
+  - A name is an ABBREVIATION, not a new kind of fact. A use unfolds by
+    substituting its arguments into the body — in one pass, so a parameter
+    named like another's argument cannot be substituted twice — and
+    everything downstream then sees the relations it always saw:
+    discharge, hypotheses, match refinement, the boundary guard, the
+    `assume` audit record.
+  - The declaration ERASES COMPLETELY. It names facts, never values, so
+    nothing of it reaches generated Go except a `//goplus:prop` marker.
+    That marker is a free-floating comment rather than any declaration's
+    doc, since there is no declaration left for it to document — and it is
+    what lets a consumer, who receives generated Go and never the `.gp`,
+    unfold a use in their own package.
+  - Diagnostics and audit records read the use as the author wrote it:
+    `cannot prove InRange[5, 3]`, `assumed InRange[5, 3] for p of At`.
+  - Pass 1's boundary guard unfolds propositions declared in the same
+    file. An imported name is left to the checker, which has the registry
+    pass 1 does not; the guard is then less specific, never wrong.
+*)

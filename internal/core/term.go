@@ -280,6 +280,13 @@ func DecidePropTexts(op PropOp, aText, bText string, sub map[string]Term, defs D
 // proposition in scope is a hypothesis, which is what lets one compose:
 // under `Lt[i, n]`, both `Le[i, n]` and `Lt[i, n+1]` follow.
 func DecidePropUnder(hyps []Fact, op PropOp, aText, bText string, sub map[string]Term, defs Defs, resolve CallResolver) (bool, error) {
+	return DecidePropNamed(nil, hyps, op, aText, bText, sub, defs, resolve)
+}
+
+// DecidePropNamed decides a proposition with named ones available to
+// unfold. A name is an abbreviation, so it is expanded and then decided
+// exactly as its body would have been.
+func DecidePropNamed(props PropDefs, hyps []Fact, op PropOp, aText, bText string, sub map[string]Term, defs Defs, resolve CallResolver) (bool, error) {
 	if op.Nested() {
 		// A conjunction holds exactly when each part does; the parts are
 		// themselves propositions, so this recurses rather than measuring
@@ -287,10 +294,27 @@ func DecidePropUnder(hyps []Fact, op PropOp, aText, bText string, sub map[string
 		for _, part := range []string{aText, bText} {
 			name, args := SplitProp(SubstPropText(part, sub))
 			partOp, isProp := PropFor(name)
-			if !isProp || len(args) != 2 {
+			if !isProp {
+				// A named proposition: unfold it and decide the body.
+				body, expanded := props.Unfold(name, args)
+				if !expanded {
+					return false, nil
+				}
+				facts, built := PropTextFactsUnder(props, body, defs, resolve)
+				if !built {
+					return false, nil
+				}
+				for _, f := range facts {
+					if !Decide(f, hyps) {
+						return false, nil
+					}
+				}
+				continue
+			}
+			if len(args) != 2 {
 				return false, nil
 			}
-			ok, err := DecidePropUnder(hyps, partOp, args[0], args[1], sub, defs, resolve)
+			ok, err := DecidePropNamed(props, hyps, partOp, args[0], args[1], sub, defs, resolve)
 			if err != nil || !ok {
 				return false, err
 			}
