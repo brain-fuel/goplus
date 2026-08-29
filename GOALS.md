@@ -203,18 +203,15 @@ parity is green and NFR has reached a materially stable point.
   4.72x faster with 59.4% fewer allocations, while the typed scalar VM is at
   least 2.81x faster and uses 0 rather than 3 allocations; the `map[string]any`
   migration facade also uses zero allocations.
-- **Remaining, and why this is not `(complete)`:** the work is done but
-  **unreleased**. Unlike every completed goal, `goforge.dev/expr` has no
-  repository, no proxy entry (`go list -m goforge.dev/expr` is a 404), no
-  vanity import path, and no goforge.dev page — it exists only as a local
-  directory. Completion is therefore a RELEASE task, not an engineering
-  one: publish the repository, serve the vanity path, tag, add the tool
-  page, and name the real GoForge consumer that workflow step 6 requires
-  (the status above records fixtures and gates but no consumer, which the
-  completed goals each name).
-  Code state as of goplus v0.157.0: build, vet, tests, and `gen -check`
-  all pass; `typed/typed_gp.go` was regenerated to vintage v0.28.0, a
-  header-only change with the generated Go byte-identical.
+- **Released** as `goforge.dev/expr` v0.1.0 (repository `brain-fuel/expr`,
+  vanity path live, `go list -m goforge.dev/expr@v0.1.0` resolves through the
+  proxy, tool page published). Build, vet, tests, `-race`, and `gen -check`
+  all pass under goplus v0.157.0; `typed/typed_gp.go` regenerated to vintage
+  v0.28.0, a header-only change with the generated Go byte-identical.
+- **Why this is still not `(complete)`:** workflow step 6 requires at least
+  one real GoForge consumer, and this goal has none — the status above
+  records cross-module fixtures and gates, where each completed goal names an
+  actual consuming project. Completion is now that one item.
 
 ### `/goals/07-gjson` - `tidwall/gjson` -> schema-aware GoForge JSON paths
 
@@ -251,26 +248,34 @@ parity is green and NFR has reached a materially stable point.
   `goforge.dev/gpgjson` (repository `brain-fuel/gpgjson`, released through
   v1.0.3), not `goforge.dev/gjson` as this entry previously implied.
 - **Remaining, and why this is not `(complete)`:** `FuzzDynamicPathDifferential`
-  still finds real divergences on MALFORMED paths — two distinct ones inside
-  three minutes of fuzzing. Both escape the declared out-of-scope filter
-  `dynamicMalformedContainerLiteral`; the corpus records their exact bytes.
-  Two repairs were attempted and REJECTED rather than shipped, because each
-  would have weakened the gate:
-  1. Excluding the failing shape by an instance-specific predicate. It
-     excluded exactly 1 of 2412 corpus entries, but the fuzzer produced
-     another divergence immediately — filter accretion, not a fix.
-  2. Characterizing the class structurally (a container literal holding a
-     quoted metacharacter). It swept up 2149 of 2412 corpus entries,
-     surrendering most of the differential coverage.
-  The finding that actually scopes the work: **upstream has no defined
-  behaviour on these paths and returns invalid JSON for some of them** — one
-  failing path yields a Raw array literal containing an unbalanced quote.
-  Byte-for-byte parity against undefined behaviour is not a meaningful
-  target, so the remaining task is not "fix the evaluator" but RE-SCOPE the
-  gate: assert the differential over a stated well-formed path grammar, and
-  over the malformed remainder assert the stronger invariant upstream does
-  not satisfy — that our own result is valid JSON. That is a bounded,
-  specified piece of work; the case-by-case hardening it replaces is not.
+  still finds real divergences on MALFORMED paths — several distinct ones
+  within minutes of fuzzing, all escaping the declared out-of-scope filter
+  `dynamicMalformedContainerLiteral`.
+  What the remaining work is NOT: a gate re-scoping. That was attempted and
+  disproved. The proposal was to assert the differential only over
+  well-formed paths, and over the malformed remainder to assert the stronger
+  invariant that our own result is valid JSON — on the evidence that upstream
+  returns text which is not JSON at all for some of these paths
+  (`[").[0A).0|!0"]` yields Raw `[0"]`, an array literal with an unbalanced
+  quote). Measuring it killed it: **gpgjson reproduces that same `[0"]`
+  byte-for-byte** on `["|![0|!0).0|!0"]` and `["(.[A).0|!0"]`. The engine is
+  deliberately BUG-FOR-BUG compatible, which is the point of a drop-in
+  replacement, so a valid-JSON invariant would not harden the gate — it would
+  break the compatibility the package exists to provide.
+  Two narrower filter-based repairs were also tried and rejected: an
+  instance-specific exclusion caught exactly 1 of 2412 corpus entries before
+  the fuzzer produced another divergence (accretion, not a fix), and a
+  structural characterization of the class swept up 2149 of 2412,
+  surrendering most of the differential coverage.
+  So the remaining work is what CLAUDE.md already calls it: ordinary
+  case-by-case compatibility hardening, closing each path where the
+  compatibility evaluator does not yet reproduce upstream exactly — including
+  where what upstream produces is malformed. `*.*.#.[".#|#.""""0"]` (ours
+  `[]`, upstream `[[],[]]`) is one such case, and unlike the `[0"]` family it
+  diverges where BOTH sides are well formed, which makes it the one to close
+  first. The space is large, so the honest completion criterion is a stated
+  bound on the path grammar the compatibility tier claims, not the absence of
+  a fuzz counterexample.
 
 ### `/goals/08-cron` - `robfig/cron` -> `std/schedule` (complete)
 
