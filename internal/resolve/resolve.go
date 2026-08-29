@@ -316,6 +316,14 @@ func buildRegistry(reg *registry.Registry, roots []*packages.Package, in *Input)
 					}
 				}
 			}
+			if strings.Contains(string(src), registry.AssumePrefix) {
+				as, err := registry.AssumptionsFromMarkers(pkg.PkgPath, file, src)
+				if err == nil { // marker damage in a dep is not fatal
+					for _, a := range as {
+						reg.AddAssumption(a)
+					}
+				}
+			}
 			if strings.Contains(string(src), registry.TotalPrefix) {
 				totals, err := registry.TotalsFromMarkers(pkg.PkgPath, file, src)
 				if err == nil { // marker damage in a dep is not fatal

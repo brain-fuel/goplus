@@ -139,7 +139,9 @@ Feature: Propositional equality
     When I run goplus with arguments "gen ."
     Then the exit code is 0
     And the file "main_gp.go" is valid Go
-    And the file "main_gp.go" does not contain "assume"
+    # The proof argument erases; only the audit marker mentions it.
+    And the file "main_gp.go" does not contain "Cast(2, 3, assume"
+    And the file "main_gp.go" contains "//goplus:assume Widen Cast p 2 = 3"
 
   Scenario: assumptions are listed for review, positioned in the source
     Given a Go+ file "main.gp":
@@ -259,3 +261,30 @@ Feature: Propositional equality
     When I run goplus with arguments "run ."
     Then the exit code is 1
     And stderr contains "goplus: Head: v with index n+1 cannot be Nil"
+
+  Scenario: An assumption travels into the generated artifact for consumers
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      type Vec[T any, n nat] enum {
+      	Nil() Vec[T, 0]
+      	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+      }
+
+      func Cast[T any](0 n nat, 0 m nat, 0 p Eq[n, m], v Vec[T, n]) Vec[T, m] {
+      	return v
+      }
+
+      // Widen keeps its own doc comment.
+      func Widen(v Vec[int, 2]) Vec[int, 3] {
+      	return Cast(2, 3, assume, v)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 0
+    And the file "main_gp.go" is valid Go
+    And the file "main_gp.go" contains "// Widen keeps its own doc comment."
+    And the file "main_gp.go" contains "//goplus:assume Widen Cast p 2 = 3"
+    When I run goplus with arguments "gen -check ."
+    Then the exit code is 0

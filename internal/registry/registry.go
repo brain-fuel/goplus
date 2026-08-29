@@ -45,6 +45,7 @@ type Registry struct {
 	classIdxV   *classIndex
 	totalIdx    *totalIndex
 	depIdx      *depIndex
+	assumeIdx   map[string]*Assumption
 	refinements map[string]*Refinement
 	refinedFns  map[string]*RefinedFunc
 	paramIdx    map[paramIndexKey][2][]string

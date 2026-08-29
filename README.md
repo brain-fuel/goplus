@@ -19,6 +19,35 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.150.0 — assumptions cross the module boundary
+
+`goplus assumptions` read the `.gp` source, so it could tell you what
+*you* assumed but not what your dependencies assumed — and a consumer
+receives committed Go, never the `.gp`. The audit stopped exactly at the
+boundary where trust matters most.
+
+An assumption now travels in the artifact, the way every other
+cross-package fact in Go+ does:
+
+```go
+//goplus:dep Widen(v Vec[int, 2]) Vec[int, 3]
+//goplus:assume Widen Cast p 2 = 3
+func Widen(v Vec[int]) Vec[int] {
+```
+
+```
+$ goplus assumptions ./...
+
+in dependencies:
+  example.com/lib: Widen assumes 2 = 3 for p of Cast
+
+1 assumption(s): each is accepted on the author's authority, not proved.
+```
+
+The marker deliberately carries no source position: generated files are
+committed and `gen -check`ed, and a position would churn the artifact
+whenever an unrelated line moved.
+
 ## v0.149.0 — `assume`, and the decider stops being the last word
 
 The arithmetic decider is sound but incomplete. Until now, a proposition
@@ -1096,6 +1125,7 @@ The spec is executable: the Godog/Cucumber feature suite under
 | v0.25.0 | Goals 01–08 dependent rewrite foundations: indexed decimal, collections, config, HTTP routes, expressions, JSON paths, validation, and schedules — shipped |
 | v0.27.0 | Goal 10 foundations: consistent inferred indices across all imported runtime arguments — shipped |
 | v0.26.0 | Goal 09 foundations: inferred preserved indices across linear calls and shared overflow-safe retry primitives — shipped |
+| v0.150.0 | Assumptions travel in the generated artifact via `//goplus:assume`, so a consumer can audit what its dependencies assumed — shipped |
 | v0.149.0 | `assume`: an auditable escape hatch for propositions the decider cannot discharge, with `goplus assumptions` — shipped |
 | v0.148.0 | `goplus lsp` serves `.goml` buffers; editor clients register both surfaces — shipped |
 | v0.147.1 | goml re-spells hole goals into goml notation — shipped |

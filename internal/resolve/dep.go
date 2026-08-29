@@ -651,12 +651,15 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 			// Recorded on the pass that SEES it, not the audit pass: this
 			// same pass erases the argument, so by the audit the evidence
 			// of the assumption is gone from the text.
-			r.assumptions = append(r.assumptions, diag.Assumption{
+			record := diag.Assumption{
 				Pos:         posOf(r.pkg.Fset, a.Pos()),
+				Fn:          r.enclosingDeclName(call),
 				Callee:      d.Name,
 				Param:       d.Params[i].Name,
 				Proposition: substText(eqArgs[0], sub) + " = " + substText(eqArgs[1], sub),
-			})
+			}
+			r.assumptions = append(r.assumptions, record)
+			r.emitAssumeMarker(call, record)
 			continue
 		}
 		ok, err := core.DecideEqTexts(eqArgs[0], eqArgs[1], sub, r.reg.TotalDefs(), calleeResolve)
@@ -1273,4 +1276,32 @@ func fileCallResolver(pkgPath string, file *ast.File) core.CallResolver {
 		}
 		return "", false
 	}
+}
+
+// enclosingDeclName names the function the call sits in, so a marker can
+// tell a reader which declaration rests on the claim.
+func (r *fileResolver) enclosingDeclName(call *ast.CallExpr) string {
+	if fn := r.enclosingFuncDecl(call); fn != nil && fn.Name != nil {
+		return fn.Name.Name
+	}
+	return "_"
+}
+
+// emitAssumeMarker writes the assumption into the generated Go, above the
+// declaration containing it. The proof argument erases, so without this
+// nothing of the assumption reaches a consumer — who receives generated
+// Go and never the .gp it came from.
+func (r *fileResolver) emitAssumeMarker(call *ast.CallExpr, a diag.Assumption) {
+	fn := r.enclosingFuncDecl(call)
+	if fn == nil {
+		return // a package-level initializer has no declaration to mark
+	}
+	marker := (&registry.Assumption{
+		Fn: a.Fn, Callee: a.Callee, Param: a.Param, Proposition: a.Proposition,
+	}).Marker()
+	at := r.off(fn.Pos())
+	for at > 0 && r.src[at-1] != '\n' {
+		at--
+	}
+	r.edits = append(r.edits, lower.Edit{Start: at, End: at, New: marker + "\n"})
 }

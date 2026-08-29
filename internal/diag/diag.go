@@ -113,6 +113,7 @@ func (h HoleInfo) String() string {
 // of a proof, so every use is recorded for review.
 type Assumption struct {
 	Pos         token.Position
+	Fn          string // the declaration containing the call
 	Callee      string // the function whose proof parameter was assumed
 	Param       string // that parameter's name
 	Proposition string // the proposition assumed, with call arguments substituted

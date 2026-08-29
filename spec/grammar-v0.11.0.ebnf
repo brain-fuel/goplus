@@ -41,7 +41,13 @@ ProofArg        = "refl" | "assume" .
     generated guard: a named panic on exported entry points, and the
     `default:` arm every lowered match retains. So `assume` can cost you a
     crash at a known place; it cannot silently corrupt a result.
-  - An assumption is currently recorded from source. Carrying it into a
-    DISTRIBUTED artifact — so a consumer of generated Go can audit what
-    its dependencies assumed — is the next increment and wants a marker.
+  - An assumption travels into the DISTRIBUTED artifact. The proof
+    argument erases, so without help nothing of it would reach a consumer,
+    who receives generated Go and never the `.gp` it came from. A
+    `//goplus:assume <fn> <callee> <param> <proposition>` marker sits on
+    the declaration containing the call, and `goplus assumptions` reports
+    a dependency's assumptions alongside your own. The marker carries no
+    source position deliberately: generated files are committed and
+    `gen -check`ed, and a position would churn the artifact whenever an
+    unrelated line moved.
 *)

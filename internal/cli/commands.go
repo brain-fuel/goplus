@@ -58,7 +58,15 @@ func runAssumptions(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "(the package has diagnostics; the list below may be incomplete)")
 		}
 	}
-	if len(res.Assumptions) == 0 {
+	external := 0
+	if res.Reg != nil {
+		for _, a := range res.Reg.Assumptions() {
+			if !res.LocalPkgs[a.PkgPath] {
+				external++
+			}
+		}
+	}
+	if len(res.Assumptions) == 0 && external == 0 {
 		if !res.Ok() {
 			return 2
 		}
@@ -68,7 +76,27 @@ func runAssumptions(args []string, stdout, stderr io.Writer) int {
 	for _, a := range res.Assumptions {
 		fmt.Fprintln(stdout, a.String())
 	}
-	fmt.Fprintf(stdout, "\n%d assumption(s): each is accepted on the author's authority, not proved.\n", len(res.Assumptions))
+	total := len(res.Assumptions)
+	// A dependency's assumptions reach us only through the markers in the
+	// Go it distributes — the .gp that recorded them is not shipped.
+	if res.Reg != nil {
+		var external []string
+		for _, a := range res.Reg.Assumptions() {
+			if res.LocalPkgs[a.PkgPath] {
+				continue
+			}
+			external = append(external, fmt.Sprintf("%s: %s assumes %s for %s of %s",
+				a.PkgPath, a.Fn, a.Proposition, a.Param, a.Callee))
+		}
+		if len(external) > 0 {
+			fmt.Fprintln(stdout, "\nin dependencies:")
+			for _, line := range external {
+				fmt.Fprintln(stdout, "  "+line)
+			}
+			total += len(external)
+		}
+	}
+	fmt.Fprintf(stdout, "\n%d assumption(s): each is accepted on the author's authority, not proved.\n", total)
 	if !res.Ok() {
 		return 2
 	}
