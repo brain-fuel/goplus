@@ -26,9 +26,11 @@ package resolve
 import (
 	"go/ast"
 	"go/token"
+	"strings"
 
 	"goforge.dev/goplus/internal/core"
 	"goforge.dev/goplus/internal/diag"
+	"goforge.dev/goplus/internal/lower"
 	"goforge.dev/goplus/internal/registry"
 )
 
@@ -59,16 +61,78 @@ func propParams(d *registry.DepFn) []propParam {
 }
 
 // proofObligations reports the obligations this file leaves unsettled:
-// a call that omits its proof argument entirely.
+// a call that omits its proof argument, and — since a proof can only be
+// written at a call — every use of a proof-carrying function that is not
+// one: composed, piped, partially applied, or stored in a variable.
 func proofObligations(pkgPath string, fset *token.FileSet, file *ast.File, reg *registry.Registry) []diag.Diagnostic {
 	if reg == nil {
 		return nil
 	}
+	// An identifier naming a proof-carrying function is fine as a callee
+	// and nowhere else. A name that is merely being DECLARED — a field, a
+	// parameter, a binding — is not a use of the function at all, even
+	// when it happens to share the name. (A local that shadows one and is
+	// then used would be misreported; the check has no type information,
+	// and every name-keyed lookup here carries that same hazard.) Gather the positions that are not value uses at
+	// all — the declaration's own name, and selector members, which name
+	// a field rather than the function.
+	exempt := map[*ast.Ident]bool{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.CallExpr:
+			if id, _, _ := calleeIdent(file, pkgPath, x.Fun); id != nil {
+				exempt[id] = true
+			}
+		case *ast.FuncDecl:
+			exempt[x.Name] = true
+		case *ast.SelectorExpr:
+			exempt[x.Sel] = true
+		case *ast.KeyValueExpr:
+			if k, isIdent := x.Key.(*ast.Ident); isIdent {
+				exempt[k] = true
+			}
+		case *ast.Field: // struct fields, parameters, results
+			for _, n := range x.Names {
+				exempt[n] = true
+			}
+		case *ast.ValueSpec:
+			for _, n := range x.Names {
+				exempt[n] = true
+			}
+		case *ast.TypeSpec:
+			exempt[x.Name] = true
+		case *ast.LabeledStmt:
+			exempt[x.Label] = true
+		case *ast.AssignStmt:
+			if x.Tok == token.DEFINE {
+				for _, lhs := range x.Lhs {
+					if n, isIdent := lhs.(*ast.Ident); isIdent {
+						exempt[n] = true
+					}
+				}
+			}
+		}
+		return true
+	})
+
 	var diags []diag.Diagnostic
 	at := func(pos token.Pos) token.Position { return posOf(fset, pos) }
+
 	ast.Inspect(file, func(n ast.Node) bool {
-		if call, isCall := n.(*ast.CallExpr); isCall {
-			diags = append(diags, callProofDiags(pkgPath, file, reg, call, at)...)
+		switch x := n.(type) {
+		case *ast.CallExpr:
+			diags = append(diags, callProofDiags(pkgPath, file, reg, x, at)...)
+		case *ast.Ident:
+			if exempt[x] {
+				return true
+			}
+			d, props := lookupProps(file, pkgPath, reg, x)
+			if d == nil {
+				return true
+			}
+			diags = append(diags, diag.At(at(x.Pos()),
+				"%s carries a proof obligation (%s %s) and can only be used in a direct call, where its proof can be written",
+				d.Name, props[0].name, props[0].text))
 		}
 		return true
 	})
@@ -83,6 +147,13 @@ func callProofDiags(pkgPath string, file *ast.File, reg *registry.Registry, call
 		return nil
 	}
 	name := id.Name
+	// A pipeline segment is lowered to a carrier before this runs; the
+	// value it pipes becomes the FIRST argument, which for a dependent
+	// callee is an erased index, so the proof could never land correctly.
+	piped := strings.HasPrefix(name, lower.BareCarrierPrefix)
+	if piped {
+		name = strings.TrimPrefix(name, lower.BareCarrierPrefix)
+	}
 	d, ok := reg.LookupDepFn(callPkg, name)
 	if !ok {
 		return nil
@@ -90,6 +161,20 @@ func callProofDiags(pkgPath string, file *ast.File, reg *registry.Registry, call
 	props := propParams(d)
 	if len(props) == 0 {
 		return nil
+	}
+	if piped {
+		return []diag.Diagnostic{diag.At(at(call.Pos()),
+			"%s carries a proof obligation (%s %s) and cannot be a pipeline stage: the piped value becomes its first argument, which is an erased parameter — call it directly",
+			d.Name, props[0].name, props[0].text)}
+	}
+	// A placeholder defers the call into a closure built later, where no
+	// proof argument can be supplied.
+	for _, a := range call.Args {
+		if ph, isIdent := a.(*ast.Ident); isIdent && ph.Name == "_" {
+			return []diag.Diagnostic{diag.At(at(call.Pos()),
+				"%s carries a proof obligation (%s %s) and cannot be partially applied, because the proof must be written at the call",
+				d.Name, props[0].name, props[0].text)}
+		}
 	}
 	if len(call.Args) == len(d.Params) {
 		return nil // every argument is present; the call site is checked as usual
@@ -101,4 +186,18 @@ func callProofDiags(pkgPath string, file *ast.File, reg *registry.Registry, call
 			p.name, d.Name, p.text, p.op.Witness()))
 	}
 	return out
+}
+
+// lookupProps resolves an identifier to a proof-carrying dependent
+// function, when it names one.
+func lookupProps(file *ast.File, pkgPath string, reg *registry.Registry, id *ast.Ident) (*registry.DepFn, []propParam) {
+	d, ok := reg.LookupDepFn(pkgPath, id.Name)
+	if !ok {
+		return nil, nil
+	}
+	props := propParams(d)
+	if len(props) == 0 {
+		return nil, nil
+	}
+	return d, props
 }

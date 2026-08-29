@@ -547,3 +547,86 @@ Feature: Propositional equality
     Then the exit code is 0
     And the file "main_gp.go" is valid Go
     And the file "main_gp.go" contains "func Length[T any](v Vec[T]) int"
+
+  Scenario: A proof-carrying function cannot be taken as a value
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      func Claim(0 n nat, 0 m nat, 0 p Eq[n, m]) string {
+      	return "ok"
+      }
+
+      func Take() {
+      	f := Claim
+      	_ = f
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "Claim carries a proof obligation (p Eq[n, m]) and can only be used in a direct call"
+    And the file "main_gp.go" does not exist
+
+  Scenario: A proof-carrying function cannot be a pipeline stage
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      type Vec[T any, n nat] enum {
+      	Nil() Vec[T, 0]
+      	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+      }
+
+      func Cast[T any](0 n nat, 0 m nat, 0 p Eq[n, m], v Vec[T, n]) Vec[T, m] {
+      	return v
+      }
+
+      func P(v Vec[int, 2]) Vec[int, 2] {
+      	return v |> Cast(1+1, 2, refl)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "cannot be a pipeline stage"
+    And the file "main_gp.go" does not exist
+
+  Scenario: A proof-carrying function cannot be partially applied
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      func Claim(0 n nat, 0 m nat, 0 p Eq[n, m], tag string) string {
+      	return tag
+      }
+
+      func Partial() {
+      	_ = Claim(1+1, 2, refl, _)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "cannot be partially applied"
+    And the file "main_gp.go" does not exist
+
+  Scenario: A dependent function with no proposition may still be a value
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      type Vec[T any, n nat] enum {
+      	Nil() Vec[T, 0]
+      	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+      }
+
+      func Length[T any](0 n nat, v Vec[T, n]) int {
+      	return 0
+      }
+
+      func Use() int {
+      	f := Length[int]
+      	return f(Nil[int]())
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 0
+    And the file "main_gp.go" is valid Go

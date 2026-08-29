@@ -99,3 +99,59 @@ func TestUnknownCalleeIsIgnored(t *testing.T) {
 		t.Fatalf("unknown callee reported: %v", got)
 	}
 }
+
+// A proof can only be written at a call, so a proof-carrying function
+// used as a value could never discharge its obligation. Every route to
+// that — composition, piping, partial application, plain assignment —
+// is the same bypass wearing a different hat.
+func TestProofCarryingFunctionCannotBeAValue(t *testing.T) {
+	reg := registry.New()
+	depFn(t, reg, "p", "Cast[T any](0 n nat, 0 m nat, 0 p Eq[n, m], v Vec[T, n]) Vec[T, m]")
+
+	for _, src := range []string{
+		"package p\nfunc f() { g := Cast; _ = g }\n",
+		"package p\nfunc f() { _ = __gp_comp(h, Cast) }\n",
+		"package p\nfunc f() { _ = []any{Cast} }\n",
+	} {
+		got := scan(t, reg, src)
+		if len(got) != 1 || !strings.Contains(got[0], "can only be used in a direct call") {
+			t.Errorf("%q: want one value-use diagnostic, got: %v", src, got)
+		}
+	}
+	// The declaration's own name and a member selector are not value uses.
+	decl := "package p\nfunc Cast(v int) int { return v }\nfunc f(x struct{ Cast int }) int { return x.Cast }\n"
+	if got := scan(t, reg, decl); len(got) != 0 {
+		t.Errorf("a declaration name or selector must not be reported: %v", got)
+	}
+}
+
+// A placeholder defers the call into a closure built later, where no
+// proof argument can be supplied.
+func TestProofCarryingFunctionCannotBePartiallyApplied(t *testing.T) {
+	reg := registry.New()
+	depFn(t, reg, "p", "Cast[T any](0 n nat, 0 m nat, 0 p Eq[n, m], v Vec[T, n]) Vec[T, m]")
+	got := scan(t, reg, "package p\nfunc f() { _ = Cast(1+1, 2, refl, _) }\n")
+	if len(got) != 1 || !strings.Contains(got[0], "cannot be partially applied") {
+		t.Fatalf("want a partial-application diagnostic, got: %v", got)
+	}
+}
+
+// A pipeline reaches this check as its lowered carrier, and the piped
+// value would land in an erased index slot rather than the value one.
+func TestProofCarryingFunctionCannotBePiped(t *testing.T) {
+	reg := registry.New()
+	depFn(t, reg, "p", "Cast[T any](0 n nat, 0 m nat, 0 p Eq[n, m], v Vec[T, n]) Vec[T, m]")
+	got := scan(t, reg, "package p\nfunc f(v Vec[int]) { _ = __gp_bare_Cast(v, 1+1, 2, refl) }\n")
+	if len(got) != 1 || !strings.Contains(got[0], "cannot be a pipeline stage") {
+		t.Fatalf("want a pipeline diagnostic, got: %v", got)
+	}
+}
+
+// A function with no proposition parameter is unaffected by any of it.
+func TestPlainDependentFunctionMayBeAValue(t *testing.T) {
+	reg := registry.New()
+	depFn(t, reg, "p", "Length[T any](0 n nat, v Vec[T, n]) int")
+	if got := scan(t, reg, "package p\nfunc f() { g := Length; _ = g }\n"); len(got) != 0 {
+		t.Fatalf("a proof-free dependent function may be a value: %v", got)
+	}
+}
