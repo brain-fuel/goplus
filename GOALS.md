@@ -349,6 +349,19 @@ Go+ remains a strict source superset of Go by making every feature opt-in in
 Go plus boundary checks. Ordinary `.go` behavior and Go's type checker remain
 unchanged.
 
+**The shape.** A and B are shipped. C (matching), D (totality), and E
+(automation) make the surface language good; F (kernel) is the threshold
+for calling it dependently typed at all; G is interop and hardening; H is
+metaprogramming, which is what Lean4 parity needs beyond F. Running
+alongside them, and not a dependent-typing feature, is the effect-ordering
+workstream that adds `do_dag`.
+
+The dependencies that actually constrain the order: **D unblocks both F
+and `do_dag`** — the kernel needs a totality predicate it can trust, and
+`do_dag` needs one to know a binding is reorderable. Everything else is
+sequenced by value rather than necessity, and C carries the most, because
+its consumers (`std/vec`, `std/smt`) are already spelling around the gap.
+
 ### Stage A - decidable indexed programming (shipped foundation)
 
 Retain refinements, GADTs, natural-number/value indices, cross-package markers,
@@ -484,52 +497,80 @@ make it Idris2 or Lean4.
   productivity.
 - **Lean4 parity** needs all of that AND a metaprogramming layer —
   syntax quotation, macro expansion, elaborator reflection, and an
-  interactive tactic surface. Nothing in Stages A-G covers it, and it
-  should be named as its own stage rather than smuggled into F.
+  interactive tactic surface. That is **Stage H**, listed separately
+  rather than smuggled into F, because folding it into the kernel stage
+  is how the kernel stage never ships.
 
 Typed holes (v0.147.0) already supply the goal display both languages
 have; the gap is what you can DO at a goal, not seeing it.
 
-### Effect ordering - `do` and `doseq`
+### Effect ordering - `do_dag`
 
 A separate workstream from the dependent stages, and the one place the
-roadmap proposes a distinction neither Idris2 nor Lean4 draws.
+roadmap adds a distinction neither Idris2 nor Lean4 draws.
 
-goml today has `do { ... }`: an ordered block, the honest embedding of Go
-statements (`let mut`, assignment, `defer`, `go`, loops, `?`). Order is
-written order, because that is what Go means.
+**`do` is unchanged.** It stays the ordered block — the honest embedding
+of Go statements (`let mut`, assignment, `defer`, `go`, loops, `?`),
+executing in written order because that is what Go means and what every
+ML-family and Lean-family reader expects of the keyword. There is no
+rename and no `doseq`.
 
-The proposal splits that in two:
+**`do_dag ... end` is the addition.** Its contents are ordered ONLY by
+data dependency: the block is a DAG over its bindings, the compiler may
+emit any topological order, and independent subtrees are candidates for
+concurrent evaluation.
 
-- **`doseq ... end`** - ordered. Today's `do` block, renamed. Statements
-  execute in written order because their effects are observable.
-- **`do ... end`** - ordered ONLY by data dependency. The block is a DAG
-  over its bindings; the compiler may emit any topological order, and
-  independent subtrees are candidates for concurrent evaluation.
+```
+let Report (a Src, b Src) : Summary :=
+  do_dag
+    xs := Fetch a
+    ys := Fetch b
+    n  := Count xs        -- depends on xs, so it is scheduled after it
+  end
+  Merge n ys
+```
 
-The Haskell analogue is exact — `do ... end` is `ApplicativeDo` and
-`doseq ... end` is monadic `do` — but the naming inverts the convention
-every ML-family and Lean-family programmer carries, where `do` IS the
-sequenced one. **Open decision**: keep `do`/`doseq` as proposed, or spell
-the reorderable one `dopar`/`dodag` and leave `do` meaning what it means
-everywhere else. Recommendation is the latter, because the surface is
-already an ML surface and the cost of inverting `do` is paid by every
-reader forever; the cost of a new keyword is paid once.
+The Haskell analogue is exact — `do_dag` is `ApplicativeDo` and `do` is
+monadic `do`.
 
-**The soundness precondition is the interesting part.** Reordering is only
-sound if a statement's observable behaviour is exhausted by its bindings,
-so `do ... end` needs a purity predicate. Go+ has exactly one candidate —
-`total func` — and it is pure today only by accident: the v1 surface
-restricts it to `nat` parameters and a single `nat` result, so there is
-nothing it could do besides arithmetic. Widening `total` to general types
-is Stage D. **So `do ... end` depends on Stage D**, and building it before
-that means inventing a second effect discipline that Stage D would then
-have to reconcile.
+**The two blocks are not siblings, and that shapes the design.** An
+ordered block holds STATEMENTS: effects, mutation, `defer`, `go`. A
+dependency-ordered block cannot, because effects are precisely what
+ordering exists to pin down. What remains is BINDINGS. A bare non-binding
+statement inside `do_dag` is either an effect (rejected) or dead code
+(rejected), so `do_dag` admits bindings and a result expression, not the
+statement grammar `do` accepts.
 
-`doseq ... end` does not: it is a rename plus an `end`-delimiter spelling,
-and can land whenever the surface churn is acceptable. Doing the rename
-first — while `do` still means ordered — and introducing the reorderable
-`do` only after Stage D keeps every intermediate state honest.
+**What the keyword earns.** Pure bindings are already reorderable in every
+language and nobody marks them, so `do_dag` has to pay for itself twice
+over:
+
+1. a CHECKED assertion — everything in the block is independent, and being
+   wrong is a diagnostic rather than a silent misordering;
+2. a SCHEDULING permission — independent branches may be evaluated
+   concurrently, which is the wall-clock payoff and the reason the
+   construct is worth a keyword at all.
+
+(2) implies (1): nothing can be scheduled concurrently without first
+proving independence. It also sits cleanly beside what Go+ already has —
+`go` is explicit unstructured concurrency the author manages, `do_dag` is
+structured concurrency whose schedule is derived from the graph.
+
+**The soundness precondition, and the sequencing it forces.** Reordering
+is sound only if a binding's observable behaviour is exhausted by the
+value it binds, so `do_dag` needs a purity predicate. Go+ has exactly one
+candidate — `total func` — and it is pure today only by accident: the v1
+surface restricts it to `nat` parameters and a single `nat` result, so
+there is nothing it could do besides arithmetic. Widening `total` to
+general types is Stage D. **`do_dag` therefore depends on Stage D**;
+building it first means inventing a second effect discipline that Stage D
+would then have to reconcile.
+
+**Out of scope, and named so it is not assumed.** Effects that COMMUTE are
+not admitted. Reordering commuting effects needs an effect algebra that
+can prove two effects independent, which is a far larger commitment than a
+purity predicate and is not part of this workstream. `do_dag` admits pure
+bindings; anything effectful belongs in `do`.
 
 ### Stage F - total dependent core
 
@@ -540,6 +581,12 @@ must be small and deterministic; elaboration and automation remain outside the
 trusted core. `total func` supplies executable proofs, while ordinary Go
 functions remain partial and cannot reduce during type checking.
 
+Stage D is F's precondition, not a duplicate of it: D makes the SURFACE
+language's totality predicate real and general, which is what lets the
+kernel trust that a `total func` reduces. The kernel still owns its own
+positivity and productivity checks, because it must be checkable without
+trusting the elaborator that produced the term.
+
 ### Stage G - Go interoperability and production hardening
 
 Specify representation/erasure, dictionary and witness ABI stability, reflection
@@ -548,7 +595,21 @@ hashing, LSP goals/hover/completion, incremental checking, and resource limits.
 Every exported dependent API must define what plain Go sees and where runtime
 checks occur. Unsafe/foreign facts stay visibly labelled and auditable.
 
+### Stage H - metaprogramming
+
+Named as its own stage because Lean4 parity needs it and nothing in A-G
+covers it: syntax quotation and antiquotation, macro expansion, elaborator
+reflection, and an interactive surface for acting on a goal. Typed holes
+(v0.147.0) already supply the goal DISPLAY both comparators have; the gap
+is what an author can do once standing at one.
+
+It is listed last deliberately. Folding metaprogramming into Stage F is
+how Stage F never ships, and a macro layer over an unfinished kernel would
+encode the kernel's provisional shape into every macro written against it.
+
 The stopping point after Stage E is a useful refinement/indexed language. Stage
 F is the threshold for a genuine dependently typed language; claiming that term
 before a checked Pi/Sigma/equality/inductive/normalizing core would overstate the
-implementation.
+implementation. Idris2 parity is F plus codata and productivity; Lean4 parity is
+that plus Stage H. Stages C-E do not reach either comparator, and saying so is
+the point of listing them separately.
