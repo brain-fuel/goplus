@@ -1330,7 +1330,14 @@ func validWitness(op core.PropOp, name string) bool {
 // in that function's namespace, which is the caller's, so they compose
 // with the obligation directly — under `Lt[i, n]`, `Le[i, n]` follows.
 func (r *fileResolver) scopeHypotheses(call *ast.CallExpr) []core.Fact {
-	fn := r.enclosingFuncDecl(call)
+	return r.scopeHypothesesAt(call.Pos())
+}
+
+// scopeHypothesesAt gathers the propositions in scope at a position: the
+// enclosing function's own quantity-0 proof parameters, written in that
+// function's namespace.
+func (r *fileResolver) scopeHypothesesAt(pos token.Pos) []core.Fact {
+	fn := r.enclosingFuncDeclAt(pos)
 	if fn == nil || fn.Name == nil {
 		return nil
 	}
@@ -1354,4 +1361,16 @@ func (r *fileResolver) scopeHypotheses(call *ast.CallExpr) []core.Fact {
 		}
 	}
 	return hyps
+}
+
+// enclosingFuncDeclAt finds the declaration containing a position. The
+// parent-walk form needs a node; a match subject is reached by position.
+func (r *fileResolver) enclosingFuncDeclAt(pos token.Pos) *ast.FuncDecl {
+	for _, declaration := range r.file.Decls {
+		fn, ok := declaration.(*ast.FuncDecl)
+		if ok && fn.Pos() <= pos && pos < fn.End() {
+			return fn
+		}
+	}
+	return nil
 }

@@ -630,3 +630,97 @@ Feature: Propositional equality
     When I run goplus with arguments "gen ."
     Then the exit code is 0
     And the file "main_gp.go" is valid Go
+
+  Scenario: A bound in scope rules out an impossible variant
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      type Vec[T any, n nat] enum {
+      	Nil() Vec[T, 0]
+      	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+      }
+
+      func Head[T any](0 n nat, 0 p Lt[0, n], v Vec[T, n]) T {
+      	match v {
+      	case Cons(h, t):
+      		_ = t
+      		return h
+      	}
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 0
+    And the file "main_gp.go" is valid Go
+    # The boundary guard agrees with the check: a plain-Go caller passing
+    # Nil panics by name rather than computing garbage.
+    And the file "main_gp.go" contains:
+      """
+      panic("goplus: Head: v with index n cannot be Nil")
+      """
+
+  Scenario: Without a bound the same match is non-exhaustive
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      type Vec[T any, n nat] enum {
+      	Nil() Vec[T, 0]
+      	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+      }
+
+      func Head[T any](0 n nat, v Vec[T, n]) T {
+      	match v {
+      	case Cons(h, t):
+      		_ = t
+      		return h
+      	}
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "non-exhaustive match on Vec[T]: missing Nil"
+
+  Scenario: A bound too weak to exclude zero does not prune
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      type Vec[T any, n nat] enum {
+      	Nil() Vec[T, 0]
+      	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+      }
+
+      func Head[T any](0 n nat, 0 p Le[0, n], v Vec[T, n]) T {
+      	match v {
+      	case Cons(h, t):
+      		_ = t
+      		return h
+      	}
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "non-exhaustive match on Vec[T]: missing Nil"
+
+  Scenario: A bound on an unrelated index proves nothing
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      type Vec[T any, n nat] enum {
+      	Nil() Vec[T, 0]
+      	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+      }
+
+      func Head[T any](0 n nat, 0 m nat, 0 p Lt[0, m], v Vec[T, n]) T {
+      	match v {
+      	case Cons(h, t):
+      		_ = t
+      		return h
+      	}
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "non-exhaustive match on Vec[T]: missing Nil"

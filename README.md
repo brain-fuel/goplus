@@ -19,6 +19,34 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.154.0 — a bound refines a match
+
+A proposition in scope became a hypothesis for the decider in v0.152.0,
+so bounds compose at a call. It was still inert for **matching**:
+`Lt[0, n]` did not tell an exhaustiveness check that `n` is non-zero, so
+`Vec[T, n]` demanded a `Nil` arm that could never be taken.
+
+```go
+func Head[T any](0 n nat, 0 p Lt[0, n], v Vec[T, n]) T {
+	match v {
+	case Cons(h, t):   // Nil is impossible: the bound says n is positive
+		_ = t
+		return h
+	}
+}
+```
+
+For the third time in this sequence, the decider needed no new power.
+Impossibility was decided by sign analysis over the index difference,
+which cannot use facts; it now falls back to proving a strict inequality
+in either direction, which is exactly what a hypothesis enables.
+
+The generated boundary guard agrees, so a plain-Go caller passing the
+impossible variant panics by name rather than computing garbage. And it
+stays conservative: `Le[0, n]` does not prune (a natural may be zero), a
+bound on an unrelated index proves nothing, and with no proposition in
+scope nothing changes.
+
 ## v0.153.0 — a proof can no longer be skipped
 
 **`Cast(v)` was accepted.** A call to a function with a proof parameter,
@@ -1230,6 +1258,7 @@ The spec is executable: the Godog/Cucumber feature suite under
 | v0.25.0 | Goals 01–08 dependent rewrite foundations: indexed decimal, collections, config, HTTP routes, expressions, JSON paths, validation, and schedules — shipped |
 | v0.27.0 | Goal 10 foundations: consistent inferred indices across all imported runtime arguments — shipped |
 | v0.26.0 | Goal 09 foundations: inferred preserved indices across linear calls and shared overflow-safe retry primitives — shipped |
+| v0.154.0 | A proposition in scope refines a match, pruning variants its bound excludes — shipped |
 | v0.153.0 | Proof arguments are mandatory, closing a bypass that predated v0.146.0; a proof-carrying function may only be used in a direct call — shipped |
 | v0.152.0 | Propositions in scope act as hypotheses; erased indices may be forwarded to calls — shipped |
 | v0.151.0 | `Le`/`Lt` propositions and the general `decide` witness: bounds are statable — shipped |

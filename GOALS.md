@@ -365,8 +365,10 @@ functions. Equality witnesses shipped in v0.7.0 and ordering propositions
 the decider already settled inequalities, so this made them statable
 rather than adding power. A proposition in scope became a HYPOTHESIS in
 v0.152.0, which also allows an erased index to be forwarded to a call, so
-bounds compose. It is still not a hypothesis for MATCH refinement: one in
-scope does not refine a match the way a constructor index does.
+bounds compose. As of v0.154.0 it is a hypothesis for MATCH
+refinement too: a bound prunes a variant it excludes, and the generated
+boundary guard agrees. Remaining in this stage: named predicate
+parameters and conjunction.
 
 The omitted-proof unsoundness found while building v0.152.0 is FIXED in
 v0.153.0: obligations are settled on the first resolve iteration, before

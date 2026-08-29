@@ -107,7 +107,10 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 		}
 	}
 	idxTerms := r.scrutineeIndexTerms(e, subj)
-	rootCol := patCol{enum: e, targs: targTexts, idxTerms: idxTerms, pos: subj.Pos()}
+	rootCol := patCol{
+		enum: e, targs: targTexts, idxTerms: idxTerms, pos: subj.Pos(),
+		hyps: r.scopeHypothesesAt(subj.Pos()),
+	}
 
 	possible := map[string]bool{}
 	idxOut := map[string]bool{}

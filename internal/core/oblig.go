@@ -153,6 +153,14 @@ func obligLin(t Term) VLin {
 // either ground constructor tags differ or the difference is a linear
 // form with no root.
 func IndexClash(useTerm, variantTerm string, tagOf func(string) (string, bool)) bool {
+	return IndexClashUnder(nil, useTerm, variantTerm, tagOf)
+}
+
+// IndexClashUnder decides the same question given facts already known. A
+// proposition in scope can rule out a variant that sign analysis alone
+// cannot: `Vec[T, n]` may be `Nil : Vec[T, 0]` for all the shape of `n`
+// says, but under `Lt[0, n]` it never can.
+func IndexClashUnder(hyps []Fact, useTerm, variantTerm string, tagOf func(string) (string, bool)) bool {
 	ct, err1 := ParseIndexTerm(useTerm, permissiveResolver)
 	vt, err2 := ParseIndexTerm(variantTerm, permissiveResolver)
 	if err1 != nil || err2 != nil {
@@ -175,7 +183,24 @@ func IndexClash(useTerm, variantTerm string, tagOf func(string) (string, bool)) 
 		}
 		return false
 	}
-	return LinNeverZero(cv, vv)
+	if LinNeverZero(cv, vv) {
+		return true
+	}
+	return neverEqualUnder(hyps, cv, vv)
+}
+
+// neverEqualUnder asks the decider whether the hypotheses force the two
+// values apart, by proving a strict inequality in either direction.
+// Indices are naturals, so "differs" is "differs by at least one".
+func neverEqualUnder(hyps []Fact, a, b Value) bool {
+	if len(hyps) == 0 {
+		return false
+	}
+	one := linConst(big.NewInt(1))
+	// a - b >= 1, or b - a >= 1.
+	above := Fact{Op: FactGe, L: linAdd(linAdd(asLin(a), asLin(b), -1), one, -1)}
+	below := Fact{Op: FactGe, L: linAdd(linAdd(asLin(b), asLin(a), -1), one, -1)}
+	return Decide(above, hyps) || Decide(below, hyps)
 }
 
 func permissiveResolver(fun ast.Expr) (string, bool) {

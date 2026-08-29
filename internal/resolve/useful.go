@@ -24,6 +24,9 @@ type patCol struct {
 	targs    []string
 	idxTerms []string  // scrutinee index terms when known (v0.7.0); nil otherwise
 	pos      token.Pos // diagnostic anchor (the match subject / parent pattern)
+	// hyps are the propositions in scope at the match. A bound can rule
+	// out a variant that the index shape alone cannot.
+	hyps []core.Fact
 }
 
 // usefulCtx carries the per-match context the engine needs.
@@ -303,7 +306,7 @@ func indexRulesOut(reg *registry.Registry, col patCol, v *registry.EnumVariant) 
 	}
 	tagOf := registryTagOf(reg, col.enum)
 	for i := range col.idxTerms {
-		if core.IndexClash(col.idxTerms[i], v.IndexArgs[i], tagOf) {
+		if core.IndexClashUnder(col.hyps, col.idxTerms[i], v.IndexArgs[i], tagOf) {
 			return true
 		}
 	}

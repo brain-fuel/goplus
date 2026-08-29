@@ -274,13 +274,24 @@ func processDeps(f *sourceFile, pkgPath string, totals map[*ast.FuncDecl]bool, p
 		}
 		if ast.IsExported(fd.Name.Name) && fd.Body != nil {
 			var gps []guardParam
+			var hyps []core.Fact
 			for _, p := range params {
 				if p.quantity == "0" {
-					continue // erased: not present at runtime
+					// Erased, so absent at runtime — but a proposition
+					// among them is a fact the guard may rely on, since a
+					// caller cannot reach the body without discharging it.
+					if base, terms := instantiationOf(p.typeText); len(terms) == 2 {
+						if op, isProp := core.PropFor(base); isProp {
+							if f, built := core.PropFact(op, terms[0], terms[1], nil, nil); built {
+								hyps = append(hyps, f)
+							}
+						}
+					}
+					continue
 				}
 				gps = append(gps, guardParam{name: p.name.Name, typeText: p.typeText, linear: p.quantity == "1"})
 			}
-			edits = append(edits, guardEdits(f, fd, gps, plan)...)
+			edits = append(edits, guardEdits(f, fd, gps, hyps, plan)...)
 		}
 		for _, id := range natIdents {
 			inDropped := false
@@ -337,7 +348,12 @@ type guardParam struct {
 // whose index makes a variant IMPOSSIBLE gets a fail-fast type check —
 // goplus callers proved the index statically; plain-Go callers panic with a
 // precise message instead of computing garbage.
-func guardEdits(f *sourceFile, fd *ast.FuncDecl, params []guardParam, plan *enumPlan) []lower.Edit {
+//
+// hyps carries the propositions the signature declares. They hold at every
+// call by construction — a caller cannot reach the body without
+// discharging them — so a bound may rule out a variant the index shape
+// alone admits, and the guard agrees with the check the .gp side makes.
+func guardEdits(f *sourceFile, fd *ast.FuncDecl, params []guardParam, hyps []core.Fact, plan *enumPlan) []lower.Edit {
 	src := f.gp
 	var guards []string
 	for _, p := range params {
@@ -380,7 +396,7 @@ func guardEdits(f *sourceFile, fd *ast.FuncDecl, params []guardParam, plan *enum
 			}
 			impossible := false
 			for i := range idxTerms {
-				if core.IndexClash(idxTerms[i], v.IndexArgs[i], tagOf) {
+				if core.IndexClashUnder(hyps, idxTerms[i], v.IndexArgs[i], tagOf) {
 					impossible = true
 				}
 			}

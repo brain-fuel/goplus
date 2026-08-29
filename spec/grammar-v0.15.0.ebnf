@@ -1,0 +1,29 @@
+(* Go+ v0.15.0 grammar delta: propositions refine a match.
+
+   The complete base grammar is Go plus the declarations and expressions in
+   grammar-v0.14.0.ebnf. No new syntax: this file records that an existing
+   form now MEANS more.
+*)
+
+(*
+  A proposition in scope became a hypothesis for the arithmetic decider in
+  v0.152.0, so bounds compose at a call. It was still inert for MATCHING:
+  `Lt[0, n]` did not tell an exhaustiveness check that `n` is non-zero, so
+  `Vec[T, n]` still demanded a `Nil` arm that could never be taken.
+
+  - A proposition parameter is now a hypothesis when deciding whether a
+    variant is possible. Under `Lt[0, n]`, `Vec[T, n]` cannot be
+    `Nil : Vec[T, 0]`, so the arm is neither required nor reachable — the
+    same conclusion `Vec[T, n+1]` already reached by shape.
+  - The decider needed no new power AGAIN: impossibility was decided by
+    sign analysis over the index difference, which cannot use facts. It
+    now falls back to proving a strict inequality in either direction,
+    which is what the hypotheses make possible.
+  - The generated boundary guard agrees. An exported function whose bound
+    excludes a variant gets the same fail-fast check that an excluding
+    index shape already produced, so a plain-Go caller passing the
+    impossible variant panics by name rather than computing garbage.
+  - It stays conservative. `Le[0, n]` does not prune, because a natural
+    may be zero; a bound on an unrelated index proves nothing; and with no
+    proposition in scope the behaviour is exactly as before.
+*)
