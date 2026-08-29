@@ -1,0 +1,43 @@
+(* Go+ v0.14.0 grammar delta: proof arguments are mandatory.
+
+   The complete base grammar is Go plus the declarations and expressions in
+   grammar-v0.13.0.ebnf. No new syntax: this file records a change in what
+   an existing form REQUIRES, and closes the unsoundness that
+   grammar-v0.13.0.ebnf documented.
+*)
+
+(*
+  An erased argument may be omitted and inferred — that is what makes
+  `Length(t)` readable where the index `n` is recoverable from `t`. A
+  PROOF argument may not.
+
+  - A call to a function with a proposition parameter (`Eq`, `Le`, `Lt`)
+    must supply that argument: `refl`/`decide` to have the decider prove
+    it, or `assume` to assert it. Omitting it is an error naming the
+    parameter, the proposition, and both remedies.
+  - This is the fix for the unsoundness recorded in grammar-v0.13.0.ebnf.
+    A proof argument is deleted by the same pass that discharges it, so a
+    call that never had one is textually identical to one already erased,
+    and the checker assumed the second. The obligation is now settled on
+    the first resolve iteration — before any erasure exists — where the
+    text is still exactly what the author wrote, so the two cases are
+    distinguishable with certainty rather than by heuristic.
+  - The check needs no type information, which is what lets it run that
+    early: callees resolve through the file's imports and propositions are
+    classified from marker text. On the first iteration a match arm's
+    binders do not exist yet, so a type-directed check would give up in
+    precisely the place recursive dependent code lives.
+  - Ordinary erased indices are untouched. Inference remains for every
+    parameter that does not carry a proposition.
+  - **A proof-carrying function may only be used in a direct call.** It
+    cannot be composed (`>>>`, `>=>`), piped, partially applied, or bound
+    to a variable, because a proof can only be written at a call and each
+    of those routes reaches generated Go without one. A piped stage is
+    refused specifically: the piped value becomes the first argument,
+    which is an erased parameter, so the form could never place the proof
+    correctly. A dependent function with no proposition is unaffected.
+  - REMAINING LIMIT, inherent rather than open: a plain Go caller of the
+    generated artifact sees the erased signature and can call it with no
+    proof. Obligations are enforced at the `.gp` boundary; generated Go
+    rechecks exported inputs, not proofs.
+*)
