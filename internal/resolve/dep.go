@@ -123,7 +123,7 @@ func (r *fileResolver) dependentCallResult(call *ast.CallExpr) (string, string, 
 		return r.dependentConstructorResult(call)
 	}
 	d = r.expandVariadicDependentCall(call, d)
-	aligned, full, ok := alignDependentCallArgs(call.Args, d)
+	aligned, full, ok := alignDependentCallArgs(call.Args, d, r.propTest(d))
 	if !ok || d.Result == "" {
 		return "", "", false
 	}
@@ -176,7 +176,7 @@ func (r *fileResolver) dependentCallResult(call *ast.CallExpr) (string, string, 
 				}
 			}
 			if actual != "" {
-				unifyDependentInstantiation(p.Type, actual, variables, sub)
+				unifyDependentInstantiationPartial(p.Type, actual, variables, sub)
 			}
 		}
 	}
@@ -265,7 +265,7 @@ func (r *fileResolver) dependentConstructorResult(call *ast.CallExpr) (string, s
 				}
 			}
 			if actual != "" {
-				unifyDependentInstantiation(parameter.RawType, actual, variables, bind)
+				unifyDependentInstantiationPartial(parameter.RawType, actual, variables, bind)
 			}
 		}
 		resultArgs := make([]string, len(use.enum.TParams)+len(use.enum.Indices))
@@ -458,21 +458,37 @@ func indexTextUsesName(text, name string) bool {
 // positions. Go+ permits inferable quantity-0 indices to be omitted, so a call
 // may already have erased arity even though it still needs dependent checking
 // and quantity-1 wrapping.
-func alignDependentCallArgs(args []ast.Expr, d *registry.DepFn) (aligned []ast.Expr, full bool, ok bool) {
+func alignDependentCallArgs(args []ast.Expr, d *registry.DepFn, isProp func(typeText string) bool) (aligned []ast.Expr, full bool, ok bool) {
 	if len(args) == len(d.Params) {
 		return append([]ast.Expr(nil), args...), true, true
 	}
-	if len(args) != len(d.Params)-len(d.Dropped) {
-		return nil, false, false
-	}
-	dropped := map[int]bool{}
+	// An index can be inferred; a proof cannot, and must be written. So a
+	// call may omit exactly the inferable erased arguments and still name
+	// its proofs — otherwise supplying one proof would force spelling
+	// every index beside it.
+	omitted := map[int]bool{}
 	for _, position := range d.Dropped {
-		dropped[position] = true
+		if isProp != nil && position < len(d.Params) && isProp(d.Params[position].Type) {
+			continue // a proof argument is never omitted
+		}
+		omitted[position] = true
+	}
+	if len(args) != len(d.Params)-len(omitted) {
+		// Fall back to the older shape: every erased argument omitted.
+		// A callee with no proposition parameter has the same two shapes
+		// either way, so this only matters when a proof is in play.
+		if len(args) != len(d.Params)-len(d.Dropped) {
+			return nil, false, false
+		}
+		omitted = map[int]bool{}
+		for _, position := range d.Dropped {
+			omitted[position] = true
+		}
 	}
 	aligned = make([]ast.Expr, len(d.Params))
 	next := 0
 	for position := range d.Params {
-		if dropped[position] {
+		if omitted[position] {
 			continue
 		}
 		aligned[position] = args[next]
@@ -539,7 +555,7 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 		return
 	}
 	d = r.expandVariadicDependentCall(call, d)
-	aligned, full, shapeOK := alignDependentCallArgs(call.Args, d)
+	aligned, full, shapeOK := alignDependentCallArgs(call.Args, d, r.propTest(d))
 	if !shapeOK {
 		return
 	}
@@ -553,6 +569,7 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 	// call from a later fixpoint. Validate both shapes: indexed runtime
 	// arguments still carry enough marker information to infer the witness,
 	// and the !full branch below prevents a second erasure edit.
+	var outer map[string]string
 	if full {
 		indicesArePure := true
 		for _, position := range d.Dropped {
@@ -560,11 +577,17 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 				indicesArePure = false
 			}
 		}
-		if indicesArePure && !r.validateDependentIndexedArgs(call, d, pkgPath, aligned) {
+		if indicesArePure {
+			var valid bool
+			if valid, outer = r.validateDependentIndexedArgsSub(call, d, pkgPath, aligned); !valid {
+				return
+			}
+		}
+	} else {
+		var valid bool
+		if valid, outer = r.validateDependentIndexedArgsSub(call, d, pkgPath, aligned); !valid {
 			return
 		}
-	} else if !r.validateDependentIndexedArgs(call, d, pkgPath, aligned) {
-		return
 	}
 	if len(d.Dropped) == 0 && !hasLinear {
 		return
@@ -588,7 +611,16 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 	if len(d.Dropped) == 0 {
 		return
 	}
-	if !full {
+	// A call may spell its proofs while letting its indices be inferred,
+	// so "not full" no longer means "nothing left to erase" — erase
+	// whatever erased arguments ARE present, by parameter position.
+	presentDropped := map[int]bool{}
+	for _, position := range d.Dropped {
+		if position < len(aligned) && aligned[position] != nil {
+			presentDropped[position] = true
+		}
+	}
+	if !full && len(presentDropped) == 0 {
 		// Erased parameters were inferred and are already absent. This
 		// is now provably "already erased" rather than "never supplied":
 		// proof.go settles obligations on the first iteration, before any
@@ -599,8 +631,9 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 	for _, i := range d.Dropped {
 		dropped[i] = true
 	}
-	for i, a := range call.Args {
-		if !dropped[i] {
+	for i := range d.Params {
+		a := alignedAt(aligned, i)
+		if !dropped[i] || a == nil || isPropTypeIn(r.reg, d.PkgPath, d.Params[i].Type) {
 			continue
 		}
 		if !pureIndexArg(a) {
@@ -614,8 +647,9 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 	// Proof parameters (Eq[a, b]) discharge by refl through the decider
 	// BEFORE anything drops: an unprovable equality leaves the call
 	// intact for the audit pass to report.
-	for i, a := range call.Args {
-		if !dropped[i] {
+	for i := range d.Params {
+		a := alignedAt(aligned, i)
+		if !dropped[i] || a == nil {
 			continue
 		}
 		base, eqArgs := instantiationBase(d.Params[i].Type)
@@ -649,14 +683,28 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 			}
 			return resolveKey(fun)
 		}
+		// Substitute by PARAMETER position through the alignment: an
+		// argument's place in the call no longer matches its parameter
+		// once some erased arguments are spelled and others inferred.
 		sub := map[string]core.Term{}
 		for j, p := range d.Params {
-			if j == i || j >= len(call.Args) {
+			arg := alignedAt(aligned, j)
+			if j == i || arg == nil {
 				continue
 			}
-			argText := string(r.src[r.off(call.Args[j].Pos()):r.off(call.Args[j].End())])
+			argText := r.text(arg.Pos(), arg.End())
 			if t, err := core.ParseIndexTerm(argText, resolveKey); err == nil {
 				sub[p.Name] = t
+			}
+		}
+		// An index the caller left out is recovered from the runtime
+		// arguments, so a spelled proof still reads against real values.
+		for name, text := range outer {
+			if _, have := sub[name]; have {
+				continue
+			}
+			if t, err := core.ParseIndexTerm(text, resolveKey); err == nil {
+				sub[name] = t
 			}
 		}
 		// `assume` asserts the proposition instead of proving it. It is
@@ -686,13 +734,24 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 			return
 		}
 	}
+	// Which SURFACE arguments to delete: those the alignment put at an
+	// erased position. Deriving this from the alignment rather than from
+	// parameter indices is what lets a partially spelled call erase.
+	deleteArg := make([]bool, len(call.Args))
+	for position := range presentDropped {
+		for idx, a := range call.Args {
+			if a == aligned[position] {
+				deleteArg[idx] = true
+			}
+		}
+	}
 	for i, a := range call.Args {
-		if !dropped[i] {
+		if !deleteArg[i] {
 			continue
 		}
 		if i+1 < len(call.Args) {
 			r.edits = append(r.edits, lower.Edit{Start: r.off(a.Pos()), End: r.off(call.Args[i+1].Pos()), New: ""})
-		} else if i > 0 && !dropped[i-1] {
+		} else if i > 0 && !deleteArg[i-1] {
 			// Last argument: consume the preceding comma — unless the
 			// previous argument's own edit already did.
 			r.edits = append(r.edits, lower.Edit{Start: r.off(call.Args[i-1].End()), End: r.off(a.End()), New: ""})
@@ -711,6 +770,15 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 // rejected because an erased Go interface cannot carry a flow-insensitive
 // static index safely.
 func (r *fileResolver) validateDependentIndexedArgs(call *ast.CallExpr, d *registry.DepFn, pkgPath string, args []ast.Expr) bool {
+	valid, _ := r.validateDependentIndexedArgsSub(call, d, pkgPath, args)
+	return valid
+}
+
+// validateDependentIndexedArgsSub also reports the substitution from the
+// callee's parameter names to caller-side texts, inferred where an erased
+// argument was omitted. A proof written beside inferred indices needs
+// exactly that map to read against real values.
+func (r *fileResolver) validateDependentIndexedArgsSub(call *ast.CallExpr, d *registry.DepFn, pkgPath string, args []ast.Expr) (bool, map[string]string) {
 	valid := true
 	outer := map[string]string{}
 	variables := map[string]bool{}
@@ -749,7 +817,7 @@ func (r *fileResolver) validateDependentIndexedArgs(call *ast.CallExpr, d *regis
 				}
 			}
 			if actual != "" {
-				unifyDependentInstantiation(p.Type, actual, variables, outer)
+				unifyDependentInstantiationPartial(p.Type, actual, variables, outer)
 			}
 		}
 	}
@@ -919,7 +987,7 @@ func (r *fileResolver) validateDependentIndexedArgs(call *ast.CallExpr, d *regis
 			valid = false
 		}
 	}
-	return valid
+	return valid, outer
 }
 
 func dependentTypeTextsEqual(left, right string, totals core.Defs) bool {
@@ -1411,4 +1479,36 @@ func (r *fileResolver) decideProp(call *ast.CallExpr, named bool, typeText strin
 		return true, nil
 	}
 	return core.DecidePropNamed(r.reg.PropDefs(), hyps, op, terms[0], terms[1], sub, r.reg.TotalDefs(), calleeResolve)
+}
+
+// propTest reports whether a parameter's declared type is a proposition
+// — builtin or named. A named one is resolved in the CALLEE's package,
+// which is where its declaration lives.
+func (r *fileResolver) propTest(d *registry.DepFn) func(string) bool {
+	return func(typeText string) bool { return isPropTypeIn(r.reg, d.PkgPath, typeText) }
+}
+
+// isPropTypeIn reports whether typeText names a proposition declared in
+// pkgPath, or one of the builtin relations.
+func isPropTypeIn(reg *registry.Registry, pkgPath, typeText string) bool {
+	base, args := instantiationBase(typeText)
+	if base == "" || len(args) != 2 {
+		return false
+	}
+	if core.IsProp(base) {
+		return true
+	}
+	if reg == nil {
+		return false
+	}
+	_, named := reg.LookupPropDef(pkgPath, base)
+	return named
+}
+
+// alignedAt reads one aligned argument, tolerating a short alignment.
+func alignedAt(aligned []ast.Expr, i int) ast.Expr {
+	if i < 0 || i >= len(aligned) {
+		return nil
+	}
+	return aligned[i]
 }

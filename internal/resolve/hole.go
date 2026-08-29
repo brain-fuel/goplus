@@ -121,7 +121,7 @@ func (r *fileResolver) holeDepArgGoal(call *ast.CallExpr) string {
 	if !ok {
 		return ""
 	}
-	aligned, _, shapeOK := alignDependentCallArgs(parent.Args, d)
+	aligned, _, shapeOK := alignDependentCallArgs(parent.Args, d, r.propTest(d))
 	if !shapeOK {
 		return ""
 	}

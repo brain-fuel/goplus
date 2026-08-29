@@ -116,7 +116,7 @@ func AtIndex[T any](i nat, 0 n nat, 0 p Lt[i, n], values Vec[T, n]) T {
 		if i == 0 {
 			return h
 		}
-		return AtIndex(i-1, n-1, decide, t)
+		return AtIndex(i-1, decide, t)
 	}
 }
 
@@ -128,6 +128,6 @@ func Set[T any](i nat, 0 n nat, 0 p Lt[i, n], x T, values Vec[T, n]) Vec[T, n] {
 		if i == 0 {
 			return Cons(x, t)
 		}
-		return Cons(h, Set(i-1, n-1, decide, x, t))
+		return Cons(h, Set(i-1, decide, x, t))
 	}
 }

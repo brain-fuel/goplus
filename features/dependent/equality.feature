@@ -918,3 +918,155 @@ Feature: Propositional equality
     When I run goplus with arguments "gen ."
     Then the exit code is 2
     And stderr contains "cannot prove 7 < 3 at this call to AtIndex"
+
+  # v0.157.0. An index can be inferred; a proof cannot, and must be written.
+  # Before this the erased arguments were omitted as a GROUP, so naming the
+  # mandatory proof forced spelling every index beside it.
+  Scenario: A spelled proof does not force spelling the indices beside it
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      type Vec[T any, n nat] enum {
+      	Nil() Vec[T, 0]
+      	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+      }
+
+      func AtIndex[T any](i nat, 0 n nat, 0 p Lt[i, n], v Vec[T, n]) T {
+      	match v {
+      	case Cons(h, t):
+      		if i == 0 {
+      			return h
+      		}
+      		return AtIndex(i-1, decide, t)
+      	}
+      }
+
+      func Use(v Vec[int, 3]) int {
+      	return AtIndex(2, decide, v)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 0
+    And the file "main_gp.go" is valid Go
+    # Both the recursive step and the call site name the proof alone; the
+    # index is recovered from the argument's own dependent type.
+    And the file "main_gp.go" contains "return AtIndex(i-1, t)"
+    And the file "main_gp.go" contains "return AtIndex(2, v)"
+
+  Scenario: An inferred index is still checked, not waved through
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      type Vec[T any, n nat] enum {
+      	Nil() Vec[T, 0]
+      	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+      }
+
+      func AtIndex[T any](i nat, 0 n nat, 0 p Lt[i, n], v Vec[T, n]) T {
+      	match v {
+      	case Cons(h, t):
+      		if i == 0 {
+      			return h
+      		}
+      		return AtIndex(i-1, decide, t)
+      	}
+      }
+
+      func Use(v Vec[int, 3]) int {
+      	return AtIndex(7, decide, v)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "cannot prove 7 < 3 at this call to AtIndex"
+
+  Scenario: The proof still cannot be omitted when the indices are inferred
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      type Vec[T any, n nat] enum {
+      	Nil() Vec[T, 0]
+      	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+      }
+
+      func AtIndex[T any](i nat, 0 n nat, 0 p Lt[i, n], v Vec[T, n]) T {
+      	match v {
+      	case Cons(h, t):
+      		if i == 0 {
+      			return h
+      		}
+      		return AtIndex(i-1, decide, t)
+      	}
+      }
+
+      func Use(v Vec[int, 3]) int {
+      	return AtIndex(2, v)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "the proof argument for p of AtIndex cannot be omitted"
+
+  Scenario: A named proposition infers its indices the same way
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      type Vec[T any, n nat] enum {
+      	Nil() Vec[T, 0]
+      	Cons(head T, tail Vec[T, n]) Vec[T, n+1]
+      }
+
+      type Bounded[i nat, n nat] prop { Lt[i, n] }
+
+      func At[T any](i nat, 0 n nat, 0 p Bounded[i, n], v Vec[T, n]) T {
+      	match v {
+      	case Cons(h, t):
+      		if i == 0 {
+      			return h
+      		}
+      		return At(i-1, decide, t)
+      	}
+      }
+
+      func Use(v Vec[int, 3]) int {
+      	return At(1, decide, v)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 0
+    And the file "main_gp.go" is valid Go
+    And the file "main_gp.go" contains "return At(1, v)"
+
+  Scenario: std/vec reads with the proof alone, across packages
+    Given a module "example.com/demo" using the goplus standard library
+    And a Go+ file "main.gp":
+      """
+      package main
+
+      import "goforge.dev/goplus/std/vec"
+
+      func Good(v vec.Vec[int, 3]) int {
+      	return vec.AtIndex(2, decide, v)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 0
+    And the file "main_gp.go" is valid Go
+    And the file "main_gp.go" contains "vec.AtIndex(2, v)"
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      import "goforge.dev/goplus/std/vec"
+
+      func Bad(v vec.Vec[int, 3]) int {
+      	return vec.AtIndex(7, decide, v)
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "cannot prove 7 < 3 at this call to AtIndex"

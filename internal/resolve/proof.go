@@ -44,16 +44,27 @@ type propParam struct {
 // propParams lists the proposition-carrying parameters of a dependent
 // signature. Only erased parameters are considered, which is complete:
 // generation already refuses a proposition parameter that is not erased.
-func propParams(d *registry.DepFn) []propParam {
+func propParams(reg *registry.Registry, d *registry.DepFn) []propParam {
 	var out []propParam
 	for _, p := range d.Params {
 		if p.Quantity != "0" {
 			continue
 		}
 		base, terms := instantiationBase(p.Type)
-		op, isProp := core.PropFor(base)
-		if !isProp || len(terms) != 2 {
+		if len(terms) != 2 {
 			continue
+		}
+		op, builtin := core.PropFor(base)
+		if !builtin {
+			// A named proposition is a proposition: omitting it is just
+			// as unprovable, and `decide` is its witness.
+			if reg == nil {
+				continue
+			}
+			if _, named := reg.LookupPropDef(d.PkgPath, base); !named {
+				continue
+			}
+			op = core.PropLe
 		}
 		out = append(out, propParam{name: p.Name, text: p.Type, op: op})
 	}
@@ -158,7 +169,7 @@ func callProofDiags(pkgPath string, file *ast.File, reg *registry.Registry, call
 	if !ok {
 		return nil
 	}
-	props := propParams(d)
+	props := propParams(reg, d)
 	if len(props) == 0 {
 		return nil
 	}
@@ -179,6 +190,17 @@ func callProofDiags(pkgPath string, file *ast.File, reg *registry.Registry, call
 	if len(call.Args) == len(d.Params) {
 		return nil // every argument is present; the call site is checked as usual
 	}
+	// An index may be inferred, so a call may omit exactly the inferable
+	// erased arguments and still name its proofs. That shape is complete.
+	inferable := 0
+	for _, position := range d.Dropped {
+		if position < len(d.Params) && !isPropTypeIn(reg, d.PkgPath, d.Params[position].Type) {
+			inferable++
+		}
+	}
+	if len(call.Args) == len(d.Params)-inferable {
+		return nil
+	}
 	var out []diag.Diagnostic
 	for _, p := range props {
 		out = append(out, diag.At(at(call.Lparen),
@@ -195,7 +217,7 @@ func lookupProps(file *ast.File, pkgPath string, reg *registry.Registry, id *ast
 	if !ok {
 		return nil, nil
 	}
-	props := propParams(d)
+	props := propParams(reg, d)
 	if len(props) == 0 {
 		return nil, nil
 	}

@@ -18,6 +18,25 @@ import (
 // TEXT-level unifier (both sides rendered in the enum package's terms);
 // match.go adds the type-level refinement capture on top.
 
+// unifyDependentInstantiationPartial binds what it can and ignores what it
+// cannot. It exists for INFERENCE, where the pattern is a parameter's
+// declared type and the argument is the caller's concrete type, so the two
+// disagree on every position the caller instantiated: unifying `Vec[T, n]`
+// against `Vec[int, 3]` clashes at T (a type parameter, not a dependent
+// variable) and would abandon `n` — the one position inference wanted.
+// Correctness is unaffected, because the caller only reads bindings for the
+// variables it declared, and every binding still had to unify to be made.
+func unifyDependentInstantiationPartial(pattern, actual string, variables map[string]bool, bind map[string]string) {
+	patternBase, patternArgs := instantiationBase(pattern)
+	actualBase, actualArgs := instantiationBase(actual)
+	if patternBase == "" || patternBase != actualBase || len(patternArgs) != len(actualArgs) {
+		return
+	}
+	for i := range patternArgs {
+		unifyText(patternArgs[i], actualArgs[i], variables, bind)
+	}
+}
+
 // unifyText unifies a result-arg pattern text against a type-argument
 // text, binding the pattern's type parameters (names in tparams) into
 // bind. Idents on the ARGUMENT side that are not bindable pattern
