@@ -1,0 +1,47 @@
+(* Go+ v0.11.0 grammar delta: assume.
+
+   The complete base grammar is Go plus the declarations and expressions in
+   grammar-v0.10.0.ebnf. This file specifies the assume addition — the
+   first piece of the propositions stage.
+*)
+
+ProofArg        = "refl" | "assume" .
+
+(*
+  A proof parameter (`0 p Eq[a, b]`) is discharged by an argument that
+  says how the proposition is known. `refl` means the decider proved it;
+  `assume` means the author asserts it.
+
+  - Both are ordinary identifiers in a proof-argument position; neither is
+    a keyword, and neither changes the meaning of any valid Go program.
+    A `refl` or `assume` elsewhere stays an ordinary identifier.
+  - `assume` performs NO check. Where `refl` runs the arithmetic decider
+    and fails the build if the proposition cannot be discharged, `assume`
+    accepts it. The guarantee then rests on the author, not the compiler.
+  - It exists because the decider is sound but incomplete: a true
+    proposition outside its fragment previously had no discharge at all,
+    which made the surrounding program unwritable. An escape hatch that is
+    explicit and reviewable is preferable to a checker that cannot be
+    argued with.
+  - `assume` erases exactly as `refl` does — it is a quantity-0 argument
+    and never appears in generated Go.
+  - Every use is RECORDED. `goplus assumptions [packages]` lists them with
+    position, callee, parameter, and the proposition with call arguments
+    substituted. An assumption is not a diagnostic: it does not stop
+    generation and does not appear in ordinary output, because it is a
+    deliberate choice rather than a mistake. It is discoverable the way a
+    Go reviewer finds `unsafe` — by asking for it.
+  - The unprovable-equality diagnostic names `assume` as one of its
+    remedies, so the escape hatch is discovered exactly where it is needed.
+  - What a FALSE assumption costs is bounded, and worth stating plainly:
+    it surfaces as a panic at the erasure boundary, not as a wrong answer.
+    A quantity-0 index can never be used at runtime — the compiler
+    rejects that outright — so a false index cannot flow into any computed
+    value. Every impossible-variant conclusion it enables is backed by a
+    generated guard: a named panic on exported entry points, and the
+    `default:` arm every lowered match retains. So `assume` can cost you a
+    crash at a known place; it cannot silently corrupt a result.
+  - An assumption is currently recorded from source. Carrying it into a
+    DISTRIBUTED artifact — so a consumer of generated Go can audit what
+    its dependencies assumed — is the next increment and wants a marker.
+*)

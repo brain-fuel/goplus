@@ -57,6 +57,9 @@ type Result struct {
 	// Holes are the typed holes that stopped this run, positioned in
 	// their .gp sources. Each has a matching KindHole diagnostic.
 	Holes []diag.HoleInfo
+	// Assumptions are propositions accepted via `assume` rather than
+	// proved. They are not diagnostics; they are the audit surface.
+	Assumptions []diag.Assumption
 	// Reg is the resolved registry, available even when diagnostics
 	// stopped the run so callers can still report un-erased signatures.
 	Reg *registry.Registry
@@ -218,6 +221,7 @@ func Run(opts Options) (*Result, error) {
 			return nil, err
 		}
 		res.Reg = out.Reg
+		res.Assumptions = out.Assumptions
 		if len(out.Diags) > 0 {
 			if opts.DryRun {
 				res.Outputs = out.Texts
@@ -232,6 +236,8 @@ func Run(opts Options) (*Result, error) {
 			// follow the same correction, keyed by the carrier position
 			// they were reported at.
 			holeFix := map[token.Position]token.Position{}
+			remapAssumptions(res.Assumptions, maps, goplusSources)
+			res.Assumptions = diag.SortAssumptions(res.Assumptions)
 			for _, h := range out.Holes {
 				exact, found := holePos[h.Pos.Filename][h.Name]
 				if !found {
@@ -271,6 +277,8 @@ func Run(opts Options) (*Result, error) {
 		for path, text := range outputs {
 			maps[path] = sourcemap.Build(goplusPaths[path], goplusSources[path], text)
 		}
+		remapAssumptions(res.Assumptions, maps, goplusSources)
+		res.Assumptions = diag.SortAssumptions(res.Assumptions)
 		in.Texts = outputs
 		bdiags, err := resolve.Backstop(in, maps)
 		if err != nil {
@@ -905,4 +913,110 @@ func reportedHoles(holes []diag.HoleInfo) map[holeKey]bool {
 		out[holeKey{h.Pos.Filename, h.Name}] = true
 	}
 	return out
+}
+
+// remapAssumptions brings assumption positions back from the generated
+// text to the .gp source they were written in, in place.
+//
+// The line-diff map only approximates here — the lowered call has lost
+// the `assume` argument, so neither its line nor its column can be
+// trusted once the line's content changed — and an audit record pointing
+// at code that does not contain the assumption is worse than useless.
+// The source's own `assume` tokens are the ground truth: when a file has
+// exactly as many as were recorded they pair off in source order, and
+// otherwise each falls back to the nearest token by line.
+func remapAssumptions(as []diag.Assumption, maps map[string]*sourcemap.Map, sources map[string][]byte) {
+	byFile := map[string][]int{} // generated path -> indices into as
+	for i, a := range as {
+		if _, ok := maps[a.Pos.Filename]; !ok {
+			continue
+		}
+		byFile[a.Pos.Filename] = append(byFile[a.Pos.Filename], i)
+	}
+	for genPath, idxs := range byFile {
+		m := maps[genPath]
+		mapped := make(map[int]token.Position, len(idxs))
+		for _, i := range idxs {
+			pos, ok := m.Map(as[i].Pos)
+			if !ok {
+				pos = as[i].Pos
+			}
+			mapped[i] = pos
+		}
+		// Source order makes a pairwise assignment meaningful.
+		sort.SliceStable(idxs, func(x, y int) bool {
+			a, b := mapped[idxs[x]], mapped[idxs[y]]
+			if a.Line != b.Line {
+				return a.Line < b.Line
+			}
+			return a.Column < b.Column
+		})
+		tokens := assumeTokens(sources[genPath])
+		for k, i := range idxs {
+			pos := mapped[i]
+			switch {
+			case len(tokens) == len(idxs):
+				pos.Line, pos.Column = tokens[k].line, tokens[k].col
+			default:
+				// Match on line proximity only: a changed line moves the
+				// column too, so requiring it to match finds nothing.
+				if t, found := nearestAssumeToken(tokens, pos.Line); found {
+					pos.Line, pos.Column = t.line, t.col
+				}
+			}
+			as[i].Pos = pos
+		}
+	}
+}
+
+type assumeToken struct{ line, col int }
+
+// nearestAssumeToken picks the token closest to want by line.
+func nearestAssumeToken(tokens []assumeToken, want int) (assumeToken, bool) {
+	best, found := assumeToken{}, false
+	for _, t := range tokens {
+		d := t.line - want
+		if d < 0 {
+			d = -d
+		}
+		bd := best.line - want
+		if bd < 0 {
+			bd = -bd
+		}
+		if !found || d < bd {
+			best, found = t, true
+		}
+	}
+	return best, found
+}
+
+// assumeTokens lists every `assume` written as a whole identifier in
+// src, in source order.
+func assumeTokens(src []byte) []assumeToken {
+	if len(src) == 0 {
+		return nil
+	}
+	var out []assumeToken
+	for n, text := range strings.Split(string(src), "\n") {
+		for at := 0; ; {
+			j := strings.Index(text[at:], "assume")
+			if j < 0 {
+				break
+			}
+			j += at
+			at = j + len("assume")
+			if j > 0 && isIdentByte(text[j-1]) {
+				continue
+			}
+			if at < len(text) && isIdentByte(text[at]) {
+				continue
+			}
+			out = append(out, assumeToken{line: n + 1, col: j + 1})
+		}
+	}
+	return out
+}
+
+func isIdentByte(b byte) bool {
+	return b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
 }

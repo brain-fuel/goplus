@@ -30,6 +30,8 @@ Commands:
 	test     generate and test selected targets
 	run      generate and run one selected target
 	vet      validate selected targets
+	assumptions
+	         list propositions accepted with assume rather than proved
 	version  print goplus version
 	help     print this help
 
@@ -52,6 +54,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runGen(rest, stdout, stderr)
 	case "init":
 		return runInit(rest, stdout, stderr)
+	case "assumptions":
+		return runAssumptions(rest, stdout, stderr)
 	case "lsp":
 		if err := lsp.Serve(os.Stdin, stdout); err != nil {
 			fmt.Fprintf(stderr, "goplus lsp: %v\n", err)

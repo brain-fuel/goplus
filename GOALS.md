@@ -360,8 +360,13 @@ forcing consumers.
 ### Stage B - propositions and validated witnesses
 
 Add an opt-in proposition kind, named predicate parameters, conjunction,
-equality witnesses, proof-preserving functions, and explicit `assume` only at
-foreign boundaries. Proof terms erase; generated Go rechecks exported inputs.
+equality witnesses, and proof-preserving functions. Explicit `assume` shipped
+first, in v0.149.0: at a proof parameter it stands where `refl` would and
+asserts the proposition instead of proving it, erasing identically and
+recorded for review by `goplus assumptions`. It is currently accepted
+anywhere a proof parameter appears rather than only at foreign boundaries;
+narrowing it, and carrying assumptions into distributed artifacts via a
+marker, are the next increments. Proof terms erase; generated Go rechecks exported inputs.
 Keep inference decidable by limiting automatic discharge to constants, path
 conditions, registered total functions, and an SMT-free arithmetic fragment.
 Goal 02 is the primary acceptance test.

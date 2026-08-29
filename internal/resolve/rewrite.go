@@ -32,6 +32,7 @@ type fileResolver struct {
 	dependentBlocked  map[*ast.CallExpr]bool
 	diags             []diag.Diagnostic
 	holes             []diag.HoleInfo
+	assumptions       []diag.Assumption
 	edits             []lower.Edit
 
 	// report enables give-up diagnostics. It is set only on the audit

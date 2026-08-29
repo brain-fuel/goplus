@@ -107,6 +107,45 @@ func (h HoleInfo) String() string {
 	return b.String()
 }
 
+// Assumption is one `assume` — a proposition accepted on the author's
+// authority rather than discharged by the decider. It is not an error,
+// but it is the one place a dependent guarantee rests on a claim instead
+// of a proof, so every use is recorded for review.
+type Assumption struct {
+	Pos         token.Position
+	Callee      string // the function whose proof parameter was assumed
+	Param       string // that parameter's name
+	Proposition string // the proposition assumed, with call arguments substituted
+}
+
+func (a Assumption) String() string {
+	return fmt.Sprintf("%s: assumed %s for %s of %s", a.Pos, a.Proposition, a.Param, a.Callee)
+}
+
+// SortAssumptions orders assumptions by position and removes duplicates.
+func SortAssumptions(as []Assumption) []Assumption {
+	sort.Slice(as, func(i, j int) bool {
+		a, b := as[i], as[j]
+		if a.Pos.Filename != b.Pos.Filename {
+			return a.Pos.Filename < b.Pos.Filename
+		}
+		if a.Pos.Line != b.Pos.Line {
+			return a.Pos.Line < b.Pos.Line
+		}
+		if a.Pos.Column != b.Pos.Column {
+			return a.Pos.Column < b.Pos.Column
+		}
+		return a.Proposition < b.Proposition
+	})
+	out := as[:0]
+	for i, a := range as {
+		if i == 0 || a != as[i-1] {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
 // Sort orders diagnostics by file, line, column, then message, and removes
 // exact duplicates.
 func Sort(ds []Diagnostic) []Diagnostic {

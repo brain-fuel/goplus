@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"goforge.dev/goplus/internal/core"
+	"goforge.dev/goplus/internal/diag"
 	"goforge.dev/goplus/internal/lower"
 	"goforge.dev/goplus/internal/registry"
 )
@@ -618,9 +619,9 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 			continue
 		}
 		id, isIdent := a.(*ast.Ident)
-		if !isIdent || id.Name != "refl" {
+		if !isIdent || (id.Name != "refl" && id.Name != "assume") {
 			if r.report {
-				r.errorf(a.Pos(), "the proof argument for %s of %s must be refl in v0.7.0", d.Params[i].Name, d.Name)
+				r.errorf(a.Pos(), "the proof argument for %s of %s must be refl (proved by the decider) or assume (asserted on your authority)", d.Params[i].Name, d.Name)
 			}
 			return
 		}
@@ -643,10 +644,25 @@ func (r *fileResolver) depCallCandidate(call *ast.CallExpr) {
 				sub[p.Name] = t
 			}
 		}
+		// `assume` asserts the proposition instead of proving it. It is
+		// recorded rather than checked: the guarantee now rests on the
+		// author, and the record is what makes that reviewable.
+		if id.Name == "assume" {
+			// Recorded on the pass that SEES it, not the audit pass: this
+			// same pass erases the argument, so by the audit the evidence
+			// of the assumption is gone from the text.
+			r.assumptions = append(r.assumptions, diag.Assumption{
+				Pos:         posOf(r.pkg.Fset, a.Pos()),
+				Callee:      d.Name,
+				Param:       d.Params[i].Name,
+				Proposition: substText(eqArgs[0], sub) + " = " + substText(eqArgs[1], sub),
+			})
+			continue
+		}
 		ok, err := core.DecideEqTexts(eqArgs[0], eqArgs[1], sub, r.reg.TotalDefs(), calleeResolve)
 		if err != nil || !ok {
 			if r.report {
-				r.errorf(a.Pos(), "cannot prove %s = %s at this call to %s; the arithmetic decider could not discharge refl (rephrase the indices or pass values that make the equality manifest)",
+				r.errorf(a.Pos(), "cannot prove %s = %s at this call to %s; the arithmetic decider could not discharge refl (rephrase the indices, pass values that make the equality manifest, or assert it with assume)",
 					substText(eqArgs[0], sub), substText(eqArgs[1], sub), d.Name)
 			}
 			return

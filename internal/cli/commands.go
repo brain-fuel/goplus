@@ -27,6 +27,54 @@ func (t *targetFlags) Set(value string) error {
 	return nil
 }
 
+// runAssumptions lists every `assume` in the selected packages. An
+// assumption is not an error, so it never appears in ordinary output —
+// but it is the one place a dependent guarantee rests on a claim rather
+// than a proof, which is exactly what a reviewer needs to be able to
+// find.
+func runAssumptions(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("goplus assumptions", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(stderr, "goplus: %v\n", err)
+		return 2
+	}
+	res, err := gen.Run(gen.Options{Dir: cwd, Patterns: fs.Args(), DryRun: true})
+	if err != nil {
+		fmt.Fprintf(stderr, "goplus: %v\n", err)
+		return 2
+	}
+	// Diagnostics do not withhold the list. Code is most often in flux
+	// exactly when someone wants to know what it assumes, and the
+	// assumptions are already collected by then — they are just possibly
+	// incomplete, which is said rather than hidden.
+	if !res.Ok() {
+		diag.Render(stderr, res.Diags)
+		if len(res.Assumptions) > 0 {
+			fmt.Fprintln(stderr, "(the package has diagnostics; the list below may be incomplete)")
+		}
+	}
+	if len(res.Assumptions) == 0 {
+		if !res.Ok() {
+			return 2
+		}
+		fmt.Fprintln(stdout, "no assumptions")
+		return 0
+	}
+	for _, a := range res.Assumptions {
+		fmt.Fprintln(stdout, a.String())
+	}
+	fmt.Fprintf(stdout, "\n%d assumption(s): each is accepted on the author's authority, not proved.\n", len(res.Assumptions))
+	if !res.Ok() {
+		return 2
+	}
+	return 0
+}
+
 func runGen(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("goplus gen", flag.ContinueOnError)
 	fs.SetOutput(stderr)

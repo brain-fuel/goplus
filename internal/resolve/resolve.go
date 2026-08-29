@@ -57,6 +57,9 @@ type Output struct {
 	// Holes are the typed holes found on the audit pass, in the same order
 	// as their diagnostics.
 	Holes []diag.HoleInfo
+	// Assumptions are the propositions accepted via `assume` rather than
+	// discharged by the decider.
+	Assumptions []diag.Assumption
 	// Reg is the fully-populated registry (local + dependency markers);
 	// law-test generation consumes it after the fixpoint.
 	Reg *registry.Registry
@@ -72,6 +75,7 @@ func Fixpoint(in *Input) (*Output, error) {
 	regReady := false
 	var diags []diag.Diagnostic
 	var holes []diag.HoleInfo
+	var assumptions []diag.Assumption
 
 	for iter := 0; ; iter++ {
 		if iter == maxIterations {
@@ -102,7 +106,7 @@ func Fixpoint(in *Input) (*Output, error) {
 		runPass := func(report bool) (int, []diag.Diagnostic, error) {
 			var passDiags []diag.Diagnostic
 			if report {
-				holes = nil
+				holes = nil // re-found on the audit pass
 			}
 			editCount := 0
 			// With Tests on, a file appears both in the plain package and
@@ -132,6 +136,7 @@ func Fixpoint(in *Input) (*Output, error) {
 					edits, fdiags := r.resolve()
 					passDiags = append(passDiags, fdiags...)
 					holes = append(holes, r.holes...)
+					assumptions = append(assumptions, r.assumptions...)
 					if !report && len(edits) > 0 {
 						applied, err := lower.Apply(src, edits)
 						if err != nil {
@@ -209,7 +214,7 @@ func Fixpoint(in *Input) (*Output, error) {
 			}
 		}
 	}
-	return &Output{Texts: texts, Diags: diags, Holes: holes, Reg: reg}, nil
+	return &Output{Texts: texts, Diags: diags, Holes: holes, Assumptions: assumptions, Reg: reg}, nil
 }
 
 // buildRegistry registers local methods and enums under their real package
