@@ -203,6 +203,18 @@ parity is green and NFR has reached a materially stable point.
   4.72x faster with 59.4% fewer allocations, while the typed scalar VM is at
   least 2.81x faster and uses 0 rather than 3 allocations; the `map[string]any`
   migration facade also uses zero allocations.
+- **Remaining, and why this is not `(complete)`:** the work is done but
+  **unreleased**. Unlike every completed goal, `goforge.dev/expr` has no
+  repository, no proxy entry (`go list -m goforge.dev/expr` is a 404), no
+  vanity import path, and no goforge.dev page — it exists only as a local
+  directory. Completion is therefore a RELEASE task, not an engineering
+  one: publish the repository, serve the vanity path, tag, add the tool
+  page, and name the real GoForge consumer that workflow step 6 requires
+  (the status above records fixtures and gates but no consumer, which the
+  completed goals each name).
+  Code state as of goplus v0.157.0: build, vet, tests, and `gen -check`
+  all pass; `typed/typed_gp.go` was regenerated to vintage v0.28.0, a
+  header-only change with the generated Go byte-identical.
 
 ### `/goals/07-gjson` - `tidwall/gjson` -> schema-aware GoForge JSON paths
 
@@ -235,7 +247,30 @@ parity is green and NFR has reached a materially stable point.
   malformed fuzzing, zero-copy lifetime/ownership, race, generation, root/std,
   and allocation gates pass. In the recorded five-run gate the schema-typed
   borrowed-string query is at least 2.31x faster than GJSON v1.19.0 and uses
-  0 rather than 1 allocation (100% fewer).
+  0 rather than 1 allocation (100% fewer). The shipped module is
+  `goforge.dev/gpgjson` (repository `brain-fuel/gpgjson`, released through
+  v1.0.3), not `goforge.dev/gjson` as this entry previously implied.
+- **Remaining, and why this is not `(complete)`:** `FuzzDynamicPathDifferential`
+  still finds real divergences on MALFORMED paths — two distinct ones inside
+  three minutes of fuzzing. Both escape the declared out-of-scope filter
+  `dynamicMalformedContainerLiteral`; the corpus records their exact bytes.
+  Two repairs were attempted and REJECTED rather than shipped, because each
+  would have weakened the gate:
+  1. Excluding the failing shape by an instance-specific predicate. It
+     excluded exactly 1 of 2412 corpus entries, but the fuzzer produced
+     another divergence immediately — filter accretion, not a fix.
+  2. Characterizing the class structurally (a container literal holding a
+     quoted metacharacter). It swept up 2149 of 2412 corpus entries,
+     surrendering most of the differential coverage.
+  The finding that actually scopes the work: **upstream has no defined
+  behaviour on these paths and returns invalid JSON for some of them** — one
+  failing path yields a Raw array literal containing an unbalanced quote.
+  Byte-for-byte parity against undefined behaviour is not a meaningful
+  target, so the remaining task is not "fix the evaluator" but RE-SCOPE the
+  gate: assert the differential over a stated well-formed path grammar, and
+  over the malformed remainder assert the stronger invariant upstream does
+  not satisfy — that our own result is valid JSON. That is a bounded,
+  specified piece of work; the case-by-case hardening it replaces is not.
 
 ### `/goals/08-cron` - `robfig/cron` -> `std/schedule` (complete)
 
