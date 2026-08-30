@@ -113,7 +113,8 @@ Quantity     = "0" | "1" | identifier .                          (* QTT; ident n
 
 TypeDecl     = "type" identifier { Binder } [ ":" IndexArrow "Type" ]
                ( ":=" SumBody | "where" CtorSigs | ":=" RecordBody
-               | ":=" RefineBody | ":=" PropBody | ":=" Type )
+               | ":=" RefineBody | ":=" PropBody | ":=" IfaceBody
+               | ":=" Type )
                [ "deriving" identifier { "," identifier } ] .
 IndexArrow   = { AtomicType "->" } .                             (* Nat -> State -> *)
 SumBody      = [ "|" ] Ctor { "|" Ctor } .
@@ -127,6 +128,8 @@ Field        = identifier ":" Type { Attr } .
                 struct tags `json:"port" yaml:"port"` *)
 RefineBody   = "{" identifier ":" Type "|" Expr "}" .            (* subset type *)
 PropBody     = "prop" "{" Type "}" .                             (* named proposition *)
+IfaceBody    = "interface" "{" [ IfaceMember { ";" IfaceMember } ] "}" .
+IfaceMember  = identifier ":" Type | QualIdent .                 (* method / embedding *)
 
 ClassDecl    = "class" identifier Binder [ "extends" Type { "," Type } ]
                "where" { ClassMember } .
@@ -693,12 +696,13 @@ list literals (not in the `.gp` core), unannotated lambdas (Go func
 literals require types), Lean-style layout (two blunt rules instead:
 application arguments start on the same line as the token before them,
 and sums need a leading `|`), namespaces admit method lets only,
-`goml fmt`, reverse conversion (`.gp → .goml`), a dedicated goml grammar
-for editors (the clients currently reuse the `.gp` one), and
-**interface declarations** (goml has no interface
-form; declare them in a `.gp` or `.go` file of the same package — a
-mixed package is the intended route, and `@[delegate]` consumes such an
-interface normally). `total`, `law`, and the other goml keywords are
+`goml fmt`, reverse conversion (`.gp → .goml`), and a dedicated goml
+grammar for editors (the clients currently reuse the `.gp` one).
+**Interface declarations shipped 2026-08-30** under the gap program
+(`type Clock := interface { Now : Unit -> time.Time; io.Closer }` — a
+curried member flattens to a Go method signature, a lone `Unit`
+parameter to `()`, a `Unit` result is dropped, and a bare qualified
+name embeds; multi-result methods still want a mixed package). `total`, `law`, and the other goml keywords are
 reserved words (unlike `.gp`'s contextual claims) — `total` is not a
 variable name.
 

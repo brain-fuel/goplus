@@ -79,6 +79,26 @@ Feature: goml, the ML-family surface
       panic("goplus: At: v with index n cannot be Nil")
       """
 
+  Scenario: A goml interface declares natively and feeds delegation
+    Given a file "store.goml":
+      """
+      module store
+
+      type Store := interface {
+        Get : String -> Int;
+        Len : Unit -> Int
+      }
+
+      type Cache := { inner : Store @[delegate]; hits : Int }
+      """
+    When I run goml with arguments "gen ."
+    Then the exit code is 0
+    And the file "store_gml.go" is valid Go
+    And the file "store_gml.go" contains "type Store interface {"
+    And the file "store_gml.go" contains "//goplus:delegate Cache.inner"
+    And the file "store_gml.go" contains "func (c Cache) Get(p0 string) int { return c.inner.Get(p0) }"
+    And the file "store_gml.go" contains "func (c Cache) Len() int { return c.inner.Len() }"
+
   Scenario: do blocks and select lower to native Go statements
     Given a file "worker.goml":
       """

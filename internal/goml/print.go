@@ -515,18 +515,9 @@ func (c *converter) printType(d *TypeDecl) {
 		fmt.Fprintf(c.b, "type %s refine(%s %s) { %s }\n",
 			d.Name, d.Refine.Binder, c.typeString(d.Refine.Base), c.exprString(d.Refine.Pred, 0))
 	case d.Prop != nil:
-		var parts []string
-		for _, b := range d.Binders {
-			sort := c.binderSort(b)
-			for _, n := range b.Names {
-				parts = append(parts, n+" "+sort)
-			}
-		}
-		tparams := ""
-		if len(parts) > 0 {
-			tparams = "[" + strings.Join(parts, ", ") + "]"
-		}
-		fmt.Fprintf(c.b, "type %s%s prop { %s }\n", d.Name, tparams, c.fullTypeString(d.Prop))
+		fmt.Fprintf(c.b, "type %s%s prop { %s }\n", d.Name, c.binderTParams(d), c.fullTypeString(d.Prop))
+	case d.Iface != nil:
+		c.printIface(d)
 	case d.Alias != nil:
 		fmt.Fprintf(c.b, "type %s = %s\n", d.Name, c.typeString(d.Alias))
 	default:
@@ -577,19 +568,24 @@ func (c *converter) printEnum(d *TypeDecl) {
 	c.b.WriteString("}\n")
 }
 
-func (c *converter) printRecord(d *TypeDecl) {
-	tparams := ""
-	if len(d.Binders) > 0 {
-		var parts []string
-		for _, b := range d.Binders {
-			sort := c.binderSort(b)
-			for _, n := range b.Names {
-				parts = append(parts, n+" "+sort)
-			}
-		}
-		tparams = "[" + strings.Join(parts, ", ") + "]"
+// binderTParams renders a declaration's binders as a Go type-parameter
+// list ("" when there are none).
+func (c *converter) binderTParams(d *TypeDecl) string {
+	if len(d.Binders) == 0 {
+		return ""
 	}
-	fmt.Fprintf(c.b, "type %s%s struct {\n", d.Name, tparams)
+	var parts []string
+	for _, b := range d.Binders {
+		sort := c.binderSort(b)
+		for _, n := range b.Names {
+			parts = append(parts, n+" "+sort)
+		}
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+func (c *converter) printRecord(d *TypeDecl) {
+	fmt.Fprintf(c.b, "type %s%s struct {\n", d.Name, c.binderTParams(d))
 	for _, f := range d.Record {
 		line := "\t" + f.Name + " " + c.typeString(f.Type)
 		var tags []string
@@ -609,6 +605,50 @@ func (c *converter) printRecord(d *TypeDecl) {
 		c.b.WriteString(line + "\n")
 	}
 	c.b.WriteString("}\n")
+}
+
+func (c *converter) printIface(d *TypeDecl) {
+	fmt.Fprintf(c.b, "type %s%s interface {\n", d.Name, c.binderTParams(d))
+	for _, m := range d.Iface.Members {
+		c.printDoc(m.Doc, "\t")
+		if m.Name == "" {
+			fmt.Fprintf(c.b, "\t%s\n", c.typeString(m.Sig))
+			continue
+		}
+		fmt.Fprintf(c.b, "\t%s%s\n", m.Name, c.methodSigString(m))
+	}
+	c.b.WriteString("}\n")
+}
+
+// methodSigString flattens a curried arrow type into a Go method
+// signature: `A -> B -> R` becomes `(A, B) R`, a lone `Unit` parameter
+// becomes `()`, and a `Unit` result is dropped.
+func (c *converter) methodSigString(m *IfaceMember) string {
+	arrow, ok := m.Sig.(*TypeArrow)
+	if !ok {
+		c.failf(m.Pos, "interface member %s needs a function type (`A -> B`)", m.Name)
+	}
+	var params []string
+	var t Type = arrow
+	for {
+		a, ok := t.(*TypeArrow)
+		if !ok {
+			break
+		}
+		if n, isName := a.From.(*TypeName); isName && n.Pkg == "" && n.Name == "Unit" {
+			if _, more := a.To.(*TypeArrow); more || len(params) > 0 {
+				c.failf(m.Pos, "a Unit parameter must stand alone in interface member %s", m.Name)
+			}
+		} else {
+			params = append(params, c.typeString(a.From))
+		}
+		t = a.To
+	}
+	sig := "(" + strings.Join(params, ", ") + ")"
+	if res := c.resultString(t); res != "" {
+		sig += " " + res
+	}
+	return sig
 }
 
 // --------------------------------------------------------------- classes

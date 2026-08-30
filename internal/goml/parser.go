@@ -471,6 +471,12 @@ func (p *parser) parseTypeDecl(doc []string, attrs []Attr) *TypeDecl {
 		d.Sum = p.parseCtors(false)
 	case LBrace:
 		p.parseRecordOrRefine(d)
+	case KwInterface:
+		p.i++
+		if len(d.Kind) > 0 {
+			p.fail(d.Pos, "an interface declaration takes binders, not a kind")
+		}
+		d.Iface = p.parseIfaceBody()
 	case KwProp:
 		p.i++
 		if len(d.Kind) > 0 {
@@ -491,7 +497,36 @@ func (p *parser) parseTypeDecl(doc []string, attrs []Attr) *TypeDecl {
 	if d.Prop != nil && len(d.Deriving) > 0 {
 		p.fail(d.Pos, "a prop declaration names facts, not values; it cannot derive")
 	}
+	if d.Iface != nil && len(d.Deriving) > 0 {
+		p.fail(d.Pos, "an interface declaration cannot derive")
+	}
 	return d
+}
+
+// parseIfaceBody parses `{ Name : Sig; …; Embedded }`. A member that is
+// a bare (possibly qualified) type name is an embedded interface.
+func (p *parser) parseIfaceBody() *IfaceBody {
+	p.expect(LBrace, "`{` opening the interface")
+	body := &IfaceBody{}
+	for !p.at(RBrace) {
+		name := p.expect(IDENT, "interface member")
+		m := &IfaceMember{Pos: name.Pos, Doc: p.docFor(name.Pos.Line)}
+		if _, ok := p.accept(Colon); ok {
+			m.Name = name.Text
+			m.Sig = p.parseType()
+		} else if _, ok := p.accept(Dot); ok {
+			sel := p.expect(IDENT, "embedded interface name")
+			m.Sig = &TypeName{Pkg: name.Text, Name: sel.Text, Pos: name.Pos}
+		} else {
+			m.Sig = &TypeName{Name: name.Text, Pos: name.Pos}
+		}
+		body.Members = append(body.Members, m)
+		if _, ok := p.accept(Semi); !ok {
+			break
+		}
+	}
+	p.expect(RBrace, "`}` closing the interface")
+	return body
 }
 
 func (p *parser) parseDeriving() []string {

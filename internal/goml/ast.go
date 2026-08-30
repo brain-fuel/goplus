@@ -94,10 +94,25 @@ type TypeDecl struct {
 	Where    bool // GADT where-form
 	Record   []*Field
 	Refine   *Refine
-	Prop     Type // named proposition body: := prop { P }
+	Prop     Type       // named proposition body: := prop { P }
+	Iface    *IfaceBody // interface body: := interface { … }
 	Alias    Type
 	Deriving []string
 	Pos      Pos
+}
+
+// IfaceBody is an interface type body.
+type IfaceBody struct {
+	Members []*IfaceMember
+}
+
+// IfaceMember is one interface member: a method signature (curried
+// arrow type, flattened to a Go method) or an embedded interface.
+type IfaceMember struct {
+	Doc  []string
+	Name string // method name; "" for an embedded interface
+	Sig  Type   // method arrow type, or the embedded type
+	Pos  Pos
 }
 
 func (d *TypeDecl) declPos() Pos { return d.Pos }

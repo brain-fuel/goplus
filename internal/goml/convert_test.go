@@ -172,6 +172,55 @@ func Pick(v Vec[int, 3]) int {
 	}
 }
 
+func TestConvertInterfaceDecl(t *testing.T) {
+	src := `module clock
+
+import "time"
+import "io"
+
+-- Clock abstracts the wall clock.
+type Clock := interface {
+  Now : Unit -> time.Time;
+  After : time.Duration -> Chan time.Time;
+  io.Closer
+}
+
+type Sink (a : Type) := interface {
+  Put : a -> Bool;
+  Flush : Unit -> Unit
+}
+
+let Tick (c : Clock) : time.Time := c.Now ()
+`
+	got := convertOK(t, src)
+	want := `package clock
+
+import (
+	"time"
+	"io"
+)
+
+// Clock abstracts the wall clock.
+type Clock interface {
+	Now() time.Time
+	After(time.Duration) chan time.Time
+	io.Closer
+}
+
+type Sink[a any] interface {
+	Put(a) bool
+	Flush()
+}
+
+func Tick(c Clock) time.Time {
+	return c.Now()
+}
+`
+	if got != want {
+		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
 func TestConvertTailAndIf(t *testing.T) {
 	src := `module sums
 
@@ -284,6 +333,9 @@ func TestConvertErrors(t *testing.T) {
 		{"propDeriving", "module m\ntype P (n : Nat) := prop { Lt 0 n } deriving Eq", "cannot derive"},
 		{"propImplicitBinder", "module m\ntype P {n : Nat} := prop { Lt 0 n }", "prop parameters are explicit"},
 		{"propKind", "module m\ntype P : Nat -> Type := prop { Lt 0 n }", "takes binders, not a kind"},
+		{"ifaceValueMember", "module m\nimport \"time\"\ntype I := interface { Now : time.Time }", "needs a function type"},
+		{"ifaceUnitMixed", "module m\ntype I := interface { Put : Unit -> Int -> Bool }", "must stand alone"},
+		{"ifaceDeriving", "module m\ntype I := interface { Len : Unit -> Int } deriving Eq", "cannot derive"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
