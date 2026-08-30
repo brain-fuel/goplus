@@ -142,6 +142,27 @@ Feature: goml, the ML-family surface
     And the file "railway_gml.go" is valid Go
     And the file "railway_gml.go" contains "result.Ok[int, error]{Value: Merge(Merge(a, b), c)}"
 
+  Scenario: Option pipelines lift from goml too
+    Given a module "example.com/demo" using the goplus standard library
+    And a file "maybe.goml":
+      """
+      module maybe
+
+      import "goforge.dev/goplus/std/option"
+      open option exposing (Option, Some)
+
+      let Half (n : Int) : Option Int :=
+        if n % 2 == 0 then Some (n / 2) else option.Of 0 false
+
+      let Walk (n : Int) : Int :=
+        Some n |> Half |> Half |> .UnwrapOr 0
+      """
+    When I run goml with arguments "gen ."
+    Then the exit code is 0
+    And the file "maybe_gml.go" is valid Go
+    And the file "maybe_gml.go" contains "option.Bind"
+    And the file "maybe_gml.go" contains "option.UnwrapOr"
+
   Scenario: do blocks and select lower to native Go statements
     Given a file "worker.goml":
       """

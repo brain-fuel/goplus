@@ -41,6 +41,10 @@ func (r *fileResolver) segCandidate(call *ast.CallExpr) {
 		}
 		// A stage that accepts the Result itself (or a non-function
 		// callee) collapses to the direct call.
+	} else if T, isOpt := r.isOption(tv.Type); isOpt {
+		if r.optionSeg(call, insertAt, T) {
+			return
+		}
 	}
 
 	// Non-Result head: direct v0.3-shaped call.
@@ -112,4 +116,30 @@ func (r *fileResolver) isResult(t types.Type) (T, E types.Type, ok bool) {
 const (
 	resultPkgPath  = "goforge.dev/goplus/std/result"
 	resultTypeName = "Result"
+	optionPkgPath  = "goforge.dev/goplus/std/option"
+	optionTypeName = "Option"
 )
+
+// isOption reports whether t is a std/option Option instance — the
+// single-track sibling of the Result railway. A variant struct type
+// (Some[T], None[T] — a constructor literal's static type) counts as
+// the Option it constructs.
+func (r *fileResolver) isOption(t types.Type) (T types.Type, ok bool) {
+	named, _ := asNamed(t)
+	if named == nil || named.Obj().Pkg() == nil {
+		return nil, false
+	}
+	if named.Obj().Pkg().Path() != optionPkgPath {
+		return nil, false
+	}
+	switch named.Obj().Name() {
+	case optionTypeName, "Some", "None":
+	default:
+		return nil, false
+	}
+	ta := named.TypeArgs()
+	if ta == nil || ta.Len() != 1 {
+		return nil, false
+	}
+	return ta.At(0), true
+}

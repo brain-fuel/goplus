@@ -138,9 +138,11 @@ func (r *fileResolver) pipeCandidate(call *ast.CallExpr) {
 		insertion := text + "." + name + brackets + "(" + segArgsText + ")"
 		r.edits = append(r.edits, lower.Edit{Start: r.off(call.Pos()), End: r.off(call.End()), New: insertion})
 	case fn && !ctor && func() bool {
-		// Railway: a plain-function stage on a Result head lifts by shape.
+		// Railway: a plain-function stage on a Result or Option head
+		// lifts by shape.
 		T, E, isRes := r.isResult(tv.Type)
-		if !isRes {
+		optT, isOpt := r.isOption(tv.Type)
+		if !isRes && !isOpt {
 			return false
 		}
 		var sig *types.Signature
@@ -153,7 +155,10 @@ func (r *fileResolver) pipeCandidate(call *ast.CallExpr) {
 		if sig == nil {
 			return false // builtin or conversion: direct
 		}
-		return r.railwayBare(call, name, brackets, T, E, sig)
+		if isRes {
+			return r.railwayBare(call, name, brackets, T, E, sig)
+		}
+		return r.optionBare(call, name, brackets, optT, sig)
 	}():
 		// handled by railwayBare (edit or diagnostic already recorded)
 	case fn || ctor:

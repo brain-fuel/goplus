@@ -73,13 +73,21 @@ T0 → T1a → T1b → T1c → T1.5
   call-form `.gp`, preserving the differential gate. Full
   notation/mixfix stays in H1.
 
-### T1.5 — monad-generic railway (core)
+### T1.5 — monad-generic railway (core) — SHIPPED 2026-08-30, rescoped
 
-Generalize the railway/kleisli/try machinery from the hardwired
-`std/result.Result` recognition (`internal/resolve/seg.go`) to a
-structural Bind/Map/Of shape test. `std/option` gains pipes; goml's
-`let*` (unchanged, `?`-desugared) becomes monad-generic. A higher-kinded
-`Monad` class is explicitly deferred to a post-F decision.
+Landed as a **rail table, not a structural test**: `std/option.Option`
+joined `std/result.Result` as a recognized rail
+(`internal/resolve/seg.go isOption`, `railway.go optionLift`), with its
+own single-track stage table — Bind for `T → Option[U]`, comma-ok
+adapt through `option.Of` for `T → (value, ok)`, Map for `T → U`, no
+Tee (hard error), dot segments raw, constructor-literal heads
+(`option.Some(16)`, variant struct types) on the rail. Structural
+recognition ("anything with Bind/Map/Of") was rejected deliberately:
+it grants railway semantics by coincidence of method names; a
+per-type opt-in (a registry marker, or the post-F `Monad` class) is
+the sound generalization and stays deferred. Also deferred, each
+wanting a semantics decision of its own: Kleisli `>=>` over Option and
+postfix `?` in Option-returning functions.
 
 ### T2 — Stage C: dependent matching
 

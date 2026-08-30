@@ -40,6 +40,9 @@ type fileResolver struct {
 	// states never surface to the user.
 	report bool
 
+	// optionImportName mirrors resultImportName for std/option.
+	optionImportName string
+
 	// resultImportName is set when this iteration already emitted the
 	// std/result import edit, so one file adds it at most once.
 	resultImportName string

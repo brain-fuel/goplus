@@ -180,6 +180,176 @@ func (r *fileResolver) railwayLift(call *ast.CallExpr, head ast.Expr, T, E types
 	return true
 }
 
+// Option pipes (gap program T1.5). Option[T] is the single-track
+// sibling of the railway: same stage table, no error track —
+//
+//  1. dot segments receive the RAW Option (members like .UnwrapOr)
+//  2. a stage accepting the Option directly → direct call
+//  3. T → Option[U]   → Bind
+//  4. T → (U, bool)   → Bind + Of adapter (Go's comma-ok shape)
+//  5. T → U           → Map
+//  6. other shapes    → hard error (Option has no Tee)
+
+// optionSeg lifts a __gp_seg<k> carrier whose head is Option[T].
+func (r *fileResolver) optionSeg(call *ast.CallExpr, insertAt int, T types.Type) bool {
+	info := r.pkg.TypesInfo
+	callee := call.Args[1]
+	ctv, typed := info.Types[callee]
+	if !typed || ctv.Type == nil || ctv.Type == types.Typ[types.Invalid] {
+		if r.report {
+			r.errorf(call.Pos(), "cannot resolve this pipeline segment: the type of the stage is unknown")
+		}
+		return true // wait
+	}
+	sig, isSig := types.Unalias(ctv.Type).(*types.Signature)
+	if !isSig {
+		return false // conversion or other non-function callee: direct
+	}
+	var fixed []string
+	for i, a := range call.Args[2:] {
+		text := r.text(a.Pos(), a.End())
+		if i == len(call.Args[2:])-1 && call.Ellipsis.IsValid() {
+			text += "..."
+		}
+		fixed = append(fixed, text)
+	}
+	calleeText := r.text(callee.Pos(), callee.End())
+	return r.optionLift(call, call.Args[0], T, calleeText, fixed, insertAt, sig)
+}
+
+// optionBare lifts a __gp_bare_ carrier (function reading) whose head
+// is Option[T].
+func (r *fileResolver) optionBare(call *ast.CallExpr, name, brackets string, T types.Type, sig *types.Signature) bool {
+	var fixed []string
+	for i, a := range call.Args[1:] {
+		text := r.text(a.Pos(), a.End())
+		if i == len(call.Args[1:])-1 && call.Ellipsis.IsValid() {
+			text += "..."
+		}
+		fixed = append(fixed, text)
+	}
+	return r.optionLift(call, call.Args[0], T, name+brackets, fixed, 0, sig)
+}
+
+// optionLift applies the single-track stage table and emits the
+// std/option combinator call.
+func (r *fileResolver) optionLift(call *ast.CallExpr, head ast.Expr, T types.Type, calleeText string, fixed []string, insertAt int, sig *types.Signature) bool {
+	// Rule 2: a stage that accepts the Option itself stays a direct call.
+	params := sig.Params()
+	if insertAt < params.Len() {
+		pt := params.At(insertAt).Type()
+		if _, isOpt := r.isOption(pt); isOpt || types.AssignableTo(headOptionType(T, r), pt) {
+			return false
+		}
+	}
+
+	generic := sig.TypeParams() != nil
+	res := sig.Results()
+
+	type liftKind int
+	const (
+		liftBind liftKind = iota
+		liftAdapt
+		liftMap
+	)
+	var kind liftKind
+	var bindRes types.Type // Bind: the stage's Option return type
+	var adaptU types.Type  // adapt: the stage's value return type
+	switch {
+	case res.Len() == 1:
+		if _, isOpt := r.isOption(res.At(0).Type()); isOpt {
+			kind, bindRes = liftBind, res.At(0).Type()
+		} else {
+			kind = liftMap
+		}
+	case res.Len() == 2 && types.Identical(res.At(1).Type(), types.Typ[types.Bool]):
+		kind, adaptU = liftAdapt, res.At(0).Type()
+	default:
+		r.errorf(call.Pos(), "cannot lift this stage onto an Option pipeline: it returns %d values; Option stages return an Option, a single value, or (value, ok) — Option has no Tee",
+			res.Len())
+		return true
+	}
+
+	optPkg, impOK := r.ensureOptionImport()
+	if !impOK {
+		return true
+	}
+	headText := r.text(head.Pos(), head.End())
+
+	needClosure := len(fixed) > 0 || kind == liftAdapt
+	stage := calleeText
+	if needClosure {
+		if generic {
+			r.errorf(call.Pos(), "cannot lift a generic stage with extra arguments onto an Option pipeline; instantiate it explicitly (e.g. %s[int])", calleeText)
+			return true
+		}
+		tText, tErr := r.typeText(T)
+		if tErr != nil {
+			r.errorf(call.Pos(), "%v", tErr)
+			return true
+		}
+		args := make([]string, 0, len(fixed)+1)
+		args = append(args, fixed[:insertAt]...)
+		args = append(args, "__gp_p")
+		args = append(args, fixed[insertAt:]...)
+		callText := calleeText + "(" + strings.Join(args, ", ") + ")"
+		switch kind {
+		case liftAdapt:
+			uText, uErr := r.typeText(adaptU)
+			if uErr != nil {
+				r.errorf(call.Pos(), "%v", uErr)
+				return true
+			}
+			stage = fmt.Sprintf("func(__gp_p %s) %s.Option[%s] { return %s.Of(%s) }",
+				tText, optPkg, uText, optPkg, callText)
+		case liftBind:
+			retText, retErr := r.typeText(bindRes)
+			if retErr != nil {
+				r.errorf(call.Pos(), "%v", retErr)
+				return true
+			}
+			stage = fmt.Sprintf("func(__gp_p %s) %s { return %s }", tText, retText, callText)
+		case liftMap:
+			uText, uErr := r.typeText(res.At(0).Type())
+			if uErr != nil {
+				r.errorf(call.Pos(), "%v", uErr)
+				return true
+			}
+			stage = fmt.Sprintf("func(__gp_p %s) %s { return %s }", tText, uText, callText)
+		}
+	}
+
+	comb := map[liftKind]string{liftBind: "Bind", liftAdapt: "Bind", liftMap: "Map"}[kind]
+	r.edits = append(r.edits, lower.Edit{
+		Start: r.off(call.Pos()),
+		End:   r.off(call.End()),
+		New:   fmt.Sprintf("%s.%s(%s, %s)", optPkg, comb, headText, stage),
+	})
+	return true
+}
+
+// headOptionType reconstructs the head's Option type for assignability
+// checks against stage parameters.
+func headOptionType(T types.Type, r *fileResolver) types.Type {
+	pkg := r.typesByPath[optionPkgPath]
+	if pkg == nil {
+		return types.Typ[types.Invalid]
+	}
+	obj, _ := pkg.Scope().Lookup(optionTypeName).(*types.TypeName)
+	if obj == nil {
+		return types.Typ[types.Invalid]
+	}
+	named, _ := obj.Type().(*types.Named)
+	if named == nil {
+		return types.Typ[types.Invalid]
+	}
+	inst, err := types.Instantiate(nil, named, []types.Type{T}, true)
+	if err != nil {
+		return types.Typ[types.Invalid]
+	}
+	return inst
+}
+
 // headResultType reconstructs the head's Result type for assignability
 // checks against stage parameters.
 func headResultType(T, E types.Type, r *fileResolver) types.Type {

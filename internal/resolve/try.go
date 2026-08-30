@@ -501,6 +501,43 @@ func (r *fileResolver) ensureResultImport() (string, bool) {
 
 const resultPkgName = "result"
 
+// ensureOptionImport mirrors ensureResultImport for std/option.
+func (r *fileResolver) ensureOptionImport() (string, bool) {
+	for _, imp := range r.file.Imports {
+		path, err := strconv.Unquote(imp.Path.Value)
+		if err != nil || path != optionPkgPath {
+			continue
+		}
+		if imp.Name != nil {
+			if imp.Name.Name == "_" || imp.Name.Name == "." {
+				continue
+			}
+			return imp.Name.Name, true
+		}
+		return optionPkgName, true
+	}
+	if r.optionImportName != "" {
+		return r.optionImportName, true
+	}
+	name := optionPkgName
+	if identNamedInFile(r.file, name) {
+		name = "__gp_option"
+	}
+	r.optionImportName = name
+	alias := ""
+	if name != optionPkgName {
+		alias = name + " "
+	}
+	at := r.off(r.file.Name.End())
+	r.edits = append(r.edits, lower.Edit{
+		Start: at, End: at,
+		New: fmt.Sprintf("\n\nimport %s%q", alias, optionPkgPath),
+	})
+	return name, true
+}
+
+const optionPkgName = "option"
+
 // identNamedInFile reports whether an identifier with this name appears
 // anywhere in the file (conservative shadow check for the import name).
 func identNamedInFile(f *ast.File, name string) bool {
