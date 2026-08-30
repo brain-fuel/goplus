@@ -556,3 +556,13 @@ type FieldVal struct {
 	Val  Expr
 	Pos  Pos
 }
+
+// RecordUpdate is a functional field update: { r with Port = p }. It
+// lowers to a hoisted copy-then-assign, so the base is untouched.
+type RecordUpdate struct {
+	Base   Expr
+	Fields []*FieldVal
+	Pos    Pos
+}
+
+func (e *RecordUpdate) exprPos() Pos { return e.Pos }

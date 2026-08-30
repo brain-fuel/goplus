@@ -237,6 +237,8 @@ func (c *converter) checkValueBody(d *LetDecl, e Expr) {
 		form = "`select`"
 	case *DoBlock:
 		form = "a `do` block"
+	case *RecordUpdate:
+		form = "a record update"
 	case *App:
 		c.checkValueBody(d, e.Fn)
 		for _, a := range e.Args {
@@ -836,6 +838,11 @@ func usedNames(e Expr, out map[string]bool) {
 		for _, f := range e.Fields {
 			usedNames(f.Val, out)
 		}
+	case *RecordUpdate:
+		usedNames(e.Base, out)
+		for _, f := range e.Fields {
+			usedNames(f.Val, out)
+		}
 	case *DoBlock:
 		for _, st := range e.Stmts {
 			usedInStmt(st, out)
@@ -934,6 +941,22 @@ func (c *converter) exprString(e Expr, prec int) string {
 			parts[i] = f.Name + ": " + c.exprString(f.Val, 0)
 		}
 		return c.exprString(e.Type, atomPrec) + "{" + strings.Join(parts, ", ") + "}"
+	case *RecordUpdate:
+		// Hoist a copy-then-assign before the enclosing statement; the
+		// update's value is the copy, and the base is untouched.
+		if c.fw == nil || c.fw.curIndent == "" {
+			c.failf(e.Pos, "a record update needs a statement to hoist before")
+		}
+		c.fw.temps++
+		tmp := fmt.Sprintf("u%d", c.fw.temps)
+		ind := c.fw.curIndent
+		var b strings.Builder
+		fmt.Fprintf(&b, "%s%s := %s\n", ind, tmp, c.exprString(e.Base, atomPrec))
+		for _, f := range e.Fields {
+			fmt.Fprintf(&b, "%s%s.%s = %s\n", ind, tmp, f.Name, c.exprString(f.Val, 0))
+		}
+		c.fw.hoist = append(c.fw.hoist, b.String())
+		return tmp
 	case *Match:
 		// Hoist to a temporary assigned before the enclosing statement.
 		if c.fw == nil || c.fw.curIndent == "" {
@@ -979,6 +1002,12 @@ func (c *converter) appString(e *App) string {
 		// A saturated constructor call prints as-is; the head lookup in
 		// exprString would have added () to a pinned nullary ctor.
 		head = id.Name
+		// A user constructor shadows the builtin reading of its name.
+		if c.ctorOf(id.Name) == nil {
+			if s := c.builtinAppString(e, id); s != "" {
+				return s
+			}
+		}
 	}
 	if len(e.Args) == 1 {
 		if _, unit := e.Args[0].(*Unit); unit {
@@ -993,6 +1022,77 @@ func (c *converter) appString(e *App) string {
 		parts[i] = c.exprString(a, 0)
 	}
 	return head + "(" + strings.Join(parts, ", ") + ")"
+}
+
+// convertibleScalars are builtin type names usable as Go conversions in
+// expression position (Int64 x lowers to int64(x)).
+var convertibleScalars = map[string]bool{
+	"Int": true, "Int8": true, "Int16": true, "Int32": true, "Int64": true,
+	"UInt": true, "UInt8": true, "UInt16": true, "UInt32": true,
+	"UInt64": true, "Float32": true, "Float64": true, "Bool": true,
+	"String": true, "Byte": true, "Rune": true,
+}
+
+// builtinAppString renders make and type-conversion applications; ""
+// means e is neither.
+func (c *converter) builtinAppString(e *App, id *Ident) string {
+	switch {
+	case id.Name == "make":
+		if len(e.Args) == 0 {
+			c.failf(e.Pos, "make takes a type: make (Slice Int) n, make (Map String Int), make (Chan Int) 4")
+		}
+		t := c.exprAsType(e.Args[0])
+		if _, bad := t.(*TypeNat); bad {
+			c.failf(e.Args[0].exprPos(), "make takes a type first: make (Slice Int) n, make (Chan Int) 4")
+		}
+		parts := []string{c.typeString(t)}
+		for _, a := range e.Args[1:] {
+			parts = append(parts, c.exprString(a, 0))
+		}
+		return "make(" + strings.Join(parts, ", ") + ")"
+	case convertibleScalars[id.Name]:
+		if len(e.Args) != 1 {
+			c.failf(e.Pos, "a %s conversion takes exactly one value", id.Name)
+		}
+		return gomlBuiltins[id.Name] + "(" + c.exprString(e.Args[0], 0) + ")"
+	case id.Name == "Slice":
+		if len(e.Args) != 2 {
+			c.failf(e.Pos, "as an expression, Slice converts: `Slice Byte s`; to allocate, use `make (Slice t) n`")
+		}
+		return "[]" + c.typeString(c.exprAsType(e.Args[0])) + "(" + c.exprString(e.Args[1], 0) + ")"
+	case id.Name == "Ptr" || id.Name == "Map" || id.Name == "Chan" || id.Name == "Array":
+		c.failf(e.Pos, "%s is a type former; in expression position only `make (%s …)` allocates one", id.Name, id.Name)
+	}
+	return ""
+}
+
+// exprAsType reinterprets an expression as the type it spells (make's
+// first argument, a conversion's element type).
+func (c *converter) exprAsType(e Expr) Type {
+	switch e := e.(type) {
+	case *Ident:
+		return &TypeName{Name: e.Name, Pos: e.Pos}
+	case *Selector:
+		if x, ok := e.X.(*Ident); ok {
+			return &TypeName{Pkg: x.Name, Name: e.Name, Pos: e.Pos}
+		}
+	case *Lit:
+		if e.Kind == INT {
+			return &TypeNat{Lit: e.Text, Pos: e.Pos}
+		}
+	case *App:
+		head, ok := c.exprAsType(e.Fn).(*TypeName)
+		if !ok {
+			break
+		}
+		args := make([]Type, len(e.Args))
+		for i, a := range e.Args {
+			args[i] = c.exprAsType(a)
+		}
+		return &TypeApp{Head: head, Args: args, Pos: e.Pos}
+	}
+	c.failf(e.exprPos(), "expected a type here (Slice Int, Map String Int, Chan Int)")
+	return nil
 }
 
 func (c *converter) argList(args []Expr) string {

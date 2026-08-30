@@ -221,6 +221,125 @@ func Tick(c Clock) time.Time {
 	}
 }
 
+func TestConvertMakeAndConversions(t *testing.T) {
+	src := `module conv
+
+import "strings"
+
+let Widen (n : Int) : Int64 := Int64 n
+
+let Bytes (s : String) : Slice Byte := Slice Byte s
+
+let Upper (bs : Slice Byte) : String := strings.ToUpper (String bs)
+
+let Buffer (n : Int) : Chan Int := make (Chan Int) n
+
+let Table () : Map String Int := make (Map String Int)
+
+let Grow (n : Int) : Slice Int := make (Slice Int) n (n * 2)
+`
+	got := convertOK(t, src)
+	want := `package conv
+
+import (
+	"strings"
+)
+
+func Widen(n int) int64 {
+	return int64(n)
+}
+
+func Bytes(s string) []byte {
+	return []byte(s)
+}
+
+func Upper(bs []byte) string {
+	return strings.ToUpper(string(bs))
+}
+
+func Buffer(n int) chan int {
+	return make(chan int, n)
+}
+
+func Table() map[string]int {
+	return make(map[string]int)
+}
+
+func Grow(n int) []int {
+	return make([]int, n, n * 2)
+}
+`
+	if got != want {
+		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+func TestConvertRecordUpdate(t *testing.T) {
+	src := `module cfg
+
+type Settings := { Port : Int; Host : String }
+
+let WithPort (s : Settings) (p : Int) : Settings :=
+  { s with Port = p }
+
+let Local (s : Settings) : Settings := do {
+  let base := { s with Host = "localhost", Port = 8080 };
+  base
+}
+`
+	got := convertOK(t, src)
+	want := `package cfg
+
+type Settings struct {
+	Port int
+	Host string
+}
+
+func WithPort(s Settings, p int) Settings {
+	u1 := s
+	u1.Port = p
+	return u1
+}
+
+func Local(s Settings) Settings {
+	u1 := s
+	u1.Host = "localhost"
+	u1.Port = 8080
+	base := u1
+	return base
+}
+`
+	if got != want {
+		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+func TestConvertCtorShadowsBuiltin(t *testing.T) {
+	src := `module msg
+
+type Msg :=
+  | String (value : Int)
+  | Empty
+
+let Wrap (n : Int) : Msg := String n
+`
+	got := convertOK(t, src)
+	want := `package msg
+
+type Msg enum {
+	String(value int)
+	Empty
+}
+
+func Wrap(n int) Msg {
+	return String(n)
+}
+`
+	if got != want {
+		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
 func TestConvertTailAndIf(t *testing.T) {
 	src := `module sums
 
@@ -336,6 +455,12 @@ func TestConvertErrors(t *testing.T) {
 		{"ifaceValueMember", "module m\nimport \"time\"\ntype I := interface { Now : time.Time }", "needs a function type"},
 		{"ifaceUnitMixed", "module m\ntype I := interface { Put : Unit -> Int -> Bool }", "must stand alone"},
 		{"ifaceDeriving", "module m\ntype I := interface { Len : Unit -> Int } deriving Eq", "cannot derive"},
+		{"convArity", "module m\nlet F (a b : Int) : Int64 := Int64 a b", "exactly one value"},
+		{"updateNoFields", "module m\ntype S := { A : Int }\nlet F (s : S) : S := { s with }", "at least one field"},
+		{"updateValue", "module m\ntype S := { A : Int }\nlet Base : S := S { A = 1 }\nlet X : S := { Base with A = 2 }", "cannot hoist at package level"},
+		{"sliceExprBare", "module m\nlet F (s : String) : Slice Byte := Slice Byte", "Slice converts"},
+		{"ptrExpr", "module m\nlet F (n : Int) : Ptr Int := Ptr n", "type former"},
+		{"makeNoType", "module m\nlet F () : Int := make 4", "make takes a type first"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

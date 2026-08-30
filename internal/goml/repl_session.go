@@ -280,6 +280,11 @@ func looksEffectful(e Expr) bool {
 			for _, f := range e.Fields {
 				walk(f.Val)
 			}
+		case *RecordUpdate:
+			walk(e.Base)
+			for _, f := range e.Fields {
+				walk(f.Val)
+			}
 		}
 	}
 	walk(e)

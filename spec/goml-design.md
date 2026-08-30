@@ -151,7 +151,9 @@ Expr         = "fun" { Binder } "=>" Expr
              | "if" Expr "then" Expr "else" Expr
              | "let" Pattern [ ":" Type ] ":=" Expr ";" Expr     (* let-in *)
              | "let*" Pattern [ ":" Type ] "=" Expr "in" Expr    (* monadic bind *)
+             | "{" Expr "with" FieldInit { "," FieldInit } "}"    (* record update *)
              | SelectExpr | DoExpr | OpExpr .
+FieldInit    = identifier "=" Expr .
 SelectExpr   = "select" "with" { "|" CommClause } .
 CommClause   = Pattern "<-" "recv" Expr "=>" Expr
              | "_" "<-" "send" Expr Expr "=>" Expr
@@ -658,7 +660,10 @@ pipeline. There is no second elaborator.
   hoisting forms or be generic; each case is a guided error.
 - Data construction: **record literals** (`Settings { Port = p, Host = h }`,
   including the empty and package-qualified forms) lower to Go composite
-  literals; `!` is logical negation. GADT headers accept type-sorted
+  literals; **record updates** (`{ s with Port = p }`, added 2026-08-30
+  under the gap program) lower to a hoisted copy-then-assign, leaving
+  the base untouched — hoisting means they live inside functions, not
+  package-level values; `!` is logical negation. GADT headers accept type-sorted
   slots (`type Expr : Type -> Type where`) as well as nat-indexed ones,
   and a slot whose constructors pin every position concretely gets a
   synthesized name in its own sort (`Expr[a any]`).
@@ -769,11 +774,17 @@ refusing, both now fixed and regression-tested: a void function's
 `if/else` fell through and ran both arms, and a match binder used only
 inside a record literal or `do` block was blanked to `_`.
 
-Deliberately still absent, because each wants syntax rather than a
-guess: type conversions (`[]byte(s)`), `make`, and slice literals. Mixed
-packages cover them — a `.go` file beside the `.goml` ones — which is the
-documented escape hatch, and the example uses exactly three such
-helpers. Reserved words now include `send`, `recv`, and `in`.
+Type conversions and `make` shipped 2026-08-30 under the gap program:
+a builtin scalar name applies as a conversion (`Int64 n` → `int64(n)`,
+`String bs` → `string(bs)`), `Slice t v` converts a slice
+(`Slice Byte s` → `[]byte(s)`), and `make (Slice Int) n`,
+`make (Map String Int)`, `make (Chan Int) 4` allocate — the
+parenthesized argument is read as a type. A user constructor shadows
+the builtin reading of its name. Slice *literals* wait for the
+expected-type threading that unannotated lambdas need (gap program
+T1b). Mixed packages remain the escape hatch for anything else.
+Reserved words now include `send`, `recv`, `in`, `prop`, and
+`interface`.
 
 ## 13. Typed holes (v0.147.0)
 

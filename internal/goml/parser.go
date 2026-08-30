@@ -1126,6 +1126,24 @@ func (p *parser) parseAtom() Expr {
 		inner := p.parseExpr()
 		p.expect(RParen, "`)` closing expression")
 		return inner
+	case LBrace:
+		p.i++
+		base := p.parseExpr()
+		p.expect(KwWith, "`with` in a record update ({ r with Field = v })")
+		u := &RecordUpdate{Base: base, Pos: t.Pos}
+		for !p.at(RBrace) {
+			name := p.expect(IDENT, "field name")
+			p.expect(Eq, "`=` in record update")
+			u.Fields = append(u.Fields, &FieldVal{Name: name.Text, Val: p.parseExpr(), Pos: name.Pos})
+			if _, ok := p.accept(Comma); !ok {
+				break
+			}
+		}
+		if len(u.Fields) == 0 {
+			p.fail(t.Pos, "a record update names at least one field")
+		}
+		p.expect(RBrace, "`}` closing record update")
+		return u
 	case At:
 		p.i++
 		name := p.expect(IDENT, "instance name after `@`")
