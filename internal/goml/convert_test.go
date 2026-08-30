@@ -274,6 +274,155 @@ func Grow(n int) []int {
 	}
 }
 
+func TestConvertExpectedTypes(t *testing.T) {
+	src := `module lists
+
+type Option (a : Type) :=
+  | Some (value : a)
+  | None
+
+type Pair := { Tags : Slice String; Count : Int }
+
+let Sum (xs : Slice Int) : Int := do {
+  let mut t := 0;
+  for _, x in xs do { t := t + x };
+  t
+}
+
+let Total () : Int := Sum [2, 3, 4]
+
+let Nested : Slice (Slice Int) := [[1], [2, 3]]
+
+let Apply (f : Int -> String) (n : Int) : String := f n
+
+let Render (n : Int) : String := Apply (fun x => "num") n
+
+let Empty () : Slice Int := []
+
+let Tagged () : Pair := Pair { Tags = ["a", "b"], Count = 2 }
+
+let Pick (xs : Slice Int) (i : Int) : Int := xs[i]
+`
+	got := convertOK(t, src)
+	want := `package lists
+
+type Option[a any] enum {
+	Some(value a)
+	None
+}
+
+type Pair struct {
+	Tags []string
+	Count int
+}
+
+func Sum(xs []int) int {
+	t := 0
+	for _, x := range xs {
+		t = t + x
+	}
+	return t
+}
+
+func Total() int {
+	return Sum([]int{2, 3, 4})
+}
+
+var Nested [][]int = [][]int{[]int{1}, []int{2, 3}}
+
+func Apply(f func(int) string, n int) string {
+	return f(n)
+}
+
+func Render(n int) string {
+	return Apply(func(x int) string { return "num" }, n)
+}
+
+func Empty() []int {
+	return []int{}
+}
+
+func Tagged() Pair {
+	return Pair{Tags: []string{"a", "b"}, Count: 2}
+}
+
+func Pick(xs []int, i int) int {
+	return xs[i]
+}
+`
+	if got != want {
+		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+func TestConvertWhereHelpers(t *testing.T) {
+	src := `module fact
+
+let Factorial (n : UInt64) : UInt64 :=
+  loop n 1
+  where loop (k : UInt64) (acc : UInt64) : UInt64 :=
+    if k == 0 then acc else loop (k - 1) (acc * k)
+
+let Fib (n : Int) : Int :=
+  even n
+  where even (k : Int) : Int := if k == 0 then 1 else odd (k - 1);
+        odd (k : Int) : Int := if k == 0 then 0 else even (k - 1)
+
+let rec Ping (n : Int) : Int := if n == 0 then 0 else Pong (n - 1)
+
+let rec Pong (n : Int) : Int := if n == 0 then 1 else Ping (n - 1)
+`
+	got := convertOK(t, src)
+	want := `package fact
+
+func Factorial(n uint64) uint64 {
+	return loop(n, 1)
+}
+
+func loop(k uint64, acc uint64) uint64 {
+	if k == 0 {
+		return acc
+	}
+	return loop(k - 1, acc * k)
+}
+
+func Fib(n int) int {
+	return even(n)
+}
+
+func even(k int) int {
+	if k == 0 {
+		return 1
+	}
+	return odd(k - 1)
+}
+
+func odd(k int) int {
+	if k == 0 {
+		return 0
+	}
+	return even(k - 1)
+}
+
+func Ping(n int) int {
+	if n == 0 {
+		return 0
+	}
+	return Pong(n - 1)
+}
+
+func Pong(n int) int {
+	if n == 0 {
+		return 1
+	}
+	return Ping(n - 1)
+}
+`
+	if got != want {
+		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
 func TestConvertRecordUpdate(t *testing.T) {
 	src := `module cfg
 
@@ -457,6 +606,12 @@ func TestConvertErrors(t *testing.T) {
 		{"ifaceDeriving", "module m\ntype I := interface { Len : Unit -> Int } deriving Eq", "cannot derive"},
 		{"convArity", "module m\nlet F (a b : Int) : Int64 := Int64 a b", "exactly one value"},
 		{"updateNoFields", "module m\ntype S := { A : Int }\nlet F (s : S) : S := { s with }", "at least one field"},
+		{"listUnknownWant", "module m\nlet F (x : Int) : Int := Len [1, 2]", "position whose type is known"},
+		{"listNonSlice", "module m\nlet F () : Int := [1]", "expects int, not a list literal"},
+		{"lambdaUnknownWant", "module m\nlet F (g : Int) : Int := Use (fun x => x)", "binder x needs a type"},
+		{"whereCapture", "module m\nlet F (n : Int) : Int := g 1\n  where g (k : Int) : Int := k + n", "cannot capture n"},
+		{"whereDuplicate", "module m\nlet F (n : Int) : Int := g n\n  where g (k : Int) : Int := k\nlet H (n : Int) : Int := g n\n  where g (k : Int) : Int := k + 1", "file-unique"},
+		{"whereUpper", "module m\nlet F (n : Int) : Int := G n\n  where G (k : Int) : Int := k", "must be lowercase"},
 		{"updateValue", "module m\ntype S := { A : Int }\nlet Base : S := S { A = 1 }\nlet X : S := { Base with A = 2 }", "cannot hoist at package level"},
 		{"sliceExprBare", "module m\nlet F (s : String) : Slice Byte := Slice Byte", "Slice converts"},
 		{"ptrExpr", "module m\nlet F (n : Int) : Ptr Int := Ptr n", "type former"},

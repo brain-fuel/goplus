@@ -60,6 +60,7 @@ type LetDecl struct {
 	Sig     Type // clausal form: the full signature type
 	Body    Expr // ":= form" body; nil for clausal form
 	Clauses []*Clause
+	Where   []*LetDecl // where-helpers: closed, package-private lets
 	Pos     Pos
 }
 
@@ -556,6 +557,15 @@ type FieldVal struct {
 	Val  Expr
 	Pos  Pos
 }
+
+// ListLit is a list literal [e1, e2], lowered to a Go slice literal.
+// Its element type comes from the expected type at its position.
+type ListLit struct {
+	Elems []Expr
+	Pos   Pos
+}
+
+func (e *ListLit) exprPos() Pos { return e.Pos }
 
 // RecordUpdate is a functional field update: { r with Port = p }. It
 // lowers to a hoisted copy-then-assign, so the base is untouched.

@@ -99,6 +99,28 @@ Feature: goml, the ML-family surface
     And the file "store_gml.go" contains "func (c Cache) Get(p0 string) int { return c.inner.Get(p0) }"
     And the file "store_gml.go" contains "func (c Cache) Len() int { return c.inner.Len() }"
 
+  Scenario: Expected types flow to lambdas, list literals, and where-helpers lower privately
+    Given a file "pipeline.goml":
+      """
+      module pipeline
+
+      let Apply (f : Int -> Int) (xs : Slice Int) : Int :=
+        sum xs (f 1)
+        where sum (ys : Slice Int) (seed : Int) : Int := do {
+          let mut t := seed;
+          for _, y in ys do { t := t + y };
+          t
+        }
+
+      let Run () : Int := Apply (fun x => x * 2) [3, 4, 5]
+      """
+    When I run goml with arguments "gen ."
+    Then the exit code is 0
+    And the file "pipeline_gml.go" is valid Go
+    And the file "pipeline_gml.go" contains "func Run() int {"
+    And the file "pipeline_gml.go" contains "Apply(func(x int) int { return x * 2 }, []int{3, 4, 5})"
+    And the file "pipeline_gml.go" contains "func sum(ys []int, seed int) int {"
+
   Scenario: do blocks and select lower to native Go statements
     Given a file "worker.goml":
       """

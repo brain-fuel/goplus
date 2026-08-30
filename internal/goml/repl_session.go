@@ -285,6 +285,10 @@ func looksEffectful(e Expr) bool {
 			for _, f := range e.Fields {
 				walk(f.Val)
 			}
+		case *ListLit:
+			for _, el := range e.Elems {
+				walk(el)
+			}
 		}
 	}
 	walk(e)

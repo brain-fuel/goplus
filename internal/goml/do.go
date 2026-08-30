@@ -38,7 +38,7 @@ func (w *fnWriter) writeDoStmt(st DoStmt, ind string) {
 			return
 		}
 		w.prep(ind)
-		v := c.exprString(st.Val, 0)
+		v := c.exprWant(st.Val, 0, st.Type)
 		w.flush()
 		if allWild(st.Names) {
 			fmt.Fprintf(c.b, "%s%s = %s\n", ind, lhs, v)
@@ -93,7 +93,7 @@ func (w *fnWriter) writeDoStmt(st DoStmt, ind string) {
 			return
 		}
 		w.prep(ind)
-		v := c.exprString(st.Val, 0)
+		v := c.exprWant(st.Val, 0, c.retWant)
 		w.flush()
 		fmt.Fprintf(c.b, "%sreturn %s\n", ind, v)
 	case *DoExprStmt:

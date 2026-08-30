@@ -130,6 +130,7 @@ type Token struct {
 	Kind Kind
 	Text string
 	Pos  Pos
+	Adj  bool // glued to the previous token (no whitespace between)
 }
 
 // Error is a positioned goml front-end error.
@@ -190,18 +191,23 @@ func (l *lexer) pos() Pos { return Pos{Line: l.line, Col: l.col} }
 func (l *lexer) tokens() ([]Token, *Error) {
 	var out []Token
 	for {
-		// Skip whitespace.
+		// Skip whitespace, remembering whether any separated this token
+		// from the previous one (adjacency distinguishes xs[i] from a
+		// list-literal argument f [1, 2]).
+		skipped := l.off == 0
 		for {
 			r, w := l.peekRune()
 			if w == 0 || !unicode.IsSpace(r) {
 				break
 			}
+			skipped = true
 			l.advance(w)
 		}
+		adj := !skipped
 		start := l.pos()
 		r, w := l.peekRune()
 		if w == 0 {
-			out = append(out, Token{Kind: EOF, Pos: start})
+			out = append(out, Token{Kind: EOF, Pos: start, Adj: adj})
 			return out, nil
 		}
 		rest := l.src[l.off:]
@@ -213,7 +219,7 @@ func (l *lexer) tokens() ([]Token, *Error) {
 			}
 			text := strings.TrimRight(rest[2:end], " \t")
 			l.advance(end)
-			out = append(out, Token{Kind: COMMENT, Text: text, Pos: start})
+			out = append(out, Token{Kind: COMMENT, Text: text, Pos: start, Adj: adj})
 			continue
 		case strings.HasPrefix(rest, "(*"):
 			depth := 1
@@ -254,7 +260,7 @@ func (l *lexer) tokens() ([]Token, *Error) {
 				i += rw
 			}
 			l.advance(i)
-			out = append(out, Token{Kind: STRING, Text: rest[:i], Pos: start})
+			out = append(out, Token{Kind: STRING, Text: rest[:i], Pos: start, Adj: adj})
 			continue
 		case unicode.IsDigit(r):
 			i := 0
@@ -270,7 +276,7 @@ func (l *lexer) tokens() ([]Token, *Error) {
 				}
 			}
 			l.advance(i)
-			out = append(out, Token{Kind: kind, Text: rest[:i], Pos: start})
+			out = append(out, Token{Kind: kind, Text: rest[:i], Pos: start, Adj: adj})
 			continue
 		case unicode.IsLetter(r) || r == '_':
 			i := 0
@@ -285,13 +291,13 @@ func (l *lexer) tokens() ([]Token, *Error) {
 			l.advance(i)
 			if word == "let" && strings.HasPrefix(l.src[l.off:], "*") {
 				l.advance(1)
-				out = append(out, Token{Kind: KwLetStar, Text: "let*", Pos: start})
+				out = append(out, Token{Kind: KwLetStar, Text: "let*", Pos: start, Adj: adj})
 				continue
 			}
 			if k, ok := keywords[word]; ok {
-				out = append(out, Token{Kind: k, Text: word, Pos: start})
+				out = append(out, Token{Kind: k, Text: word, Pos: start, Adj: adj})
 			} else {
-				out = append(out, Token{Kind: IDENT, Text: word, Pos: start})
+				out = append(out, Token{Kind: IDENT, Text: word, Pos: start, Adj: adj})
 			}
 			continue
 		}
@@ -315,7 +321,7 @@ func (l *lexer) tokens() ([]Token, *Error) {
 		for _, op := range ops {
 			if strings.HasPrefix(rest, op.text) && op.kind != EOF {
 				l.advance(len(op.text))
-				out = append(out, Token{Kind: op.kind, Text: op.text, Pos: start})
+				out = append(out, Token{Kind: op.kind, Text: op.text, Pos: start, Adj: adj})
 				matched = true
 				break
 			}

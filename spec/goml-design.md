@@ -101,8 +101,14 @@ AttrItem     = identifier { identifier | literal } .
                 @[laws off] @[laws Int, String] @[gen Name] *)
 
 LetDecl      = [ "total" ] "let" [ "rec" ] identifier { Binder }
-               [ ":" Type ] ":=" Expr
-             | [ "total" ] "let" [ "rec" ] identifier ":" Type Clauses .
+               [ ":" Type ] ":=" Expr [ WhereBlock ]
+             | [ "total" ] "let" [ "rec" ] identifier ":" Type Clauses
+               [ WhereBlock ] .
+WhereBlock   = "where" Helper { ";" Helper } .
+Helper       = identifier { Binder } [ ":" Type ] ":=" Expr .
+             (* lowercase; lowers to a package-private declaration;
+                closed — parent binders must be passed as parameters;
+                helper names are file-unique *)
 Clauses      = { "|" PatternList [ Guard ] "=>" Expr } .        (* clausal defs *)
 Guard        = "if" Expr .                                       (* reserved *)
 Binder       = identifier
@@ -146,7 +152,8 @@ AtomicType   = QualIdent | "(" Type ")" | "(" Type { "," Type } ")" | nat_lit .
 IndexTerm    = nat_lit | identifier | QualIdent { AtomicIndex }
              | IndexTerm ( "+" | "-" | "*" ) IndexTerm | TotalCall .
 
-Expr         = "fun" { Binder } "=>" Expr
+Expr         = "fun" { Binder | identifier } "=>" Expr             (* bare binders typed by position *)
+             | "[" [ Expr { "," Expr } ] "]"                       (* list literal; element type from position *)
              | "match" Expr { "," Expr } "with" Clauses
              | "if" Expr "then" Expr "else" Expr
              | "let" Pattern [ ":" Type ] ":=" Expr ";" Expr     (* let-in *)
@@ -667,6 +674,19 @@ pipeline. There is no second elaborator.
   slots (`type Expr : Type -> Type where`) as well as nat-indexed ones,
   and a slot whose constructors pin every position concretely gets a
   synthesized name in its own sort (`Expr[a any]`).
+- Expected types (added 2026-08-30 under the gap program): the type a
+  position expects — a local let's or constructor's parameter, a record
+  field, a `let`/`let mut` annotation, the declared result at `return`
+  position — flows to **unannotated lambdas** (`fun x => x * 2`, bare
+  binders typed by position) and **list literals** (`[2, 3, 4]` →
+  `[]int{2, 3, 4}`; a spaced `[` opens a literal, a glued `[` indexes:
+  `xs[i]`). Only closed expectations thread — a callee's generic
+  parameter is not a usable expectation. **Where-helpers**
+  (`… where loop (k : Int) : Int := …; other …`) lower to
+  package-private declarations: closed (parent binders are passed as
+  parameters, a guided error otherwise), file-unique names, mutual
+  reference between helpers allowed. Top-level lets are naturally
+  mutually recursive (Go scoping), so no `and` form is needed.
 - Expressions and clauses: `match with` (or-patterns, `as`-binding,
   unused binders print `_`), **multi-column clausal definitions**
   (comma rows, one constructor column), `if/then/else`, `let … ;`
@@ -696,9 +716,9 @@ pipeline. There is no second elaborator.
 
 **Deliberate deferrals (parse errors or absences today):** guards and
 literal patterns (core-first, per §9 — both surfaces gain them from one
-shared-core milestone), `open` (needs export knowledge), tuples and
-list literals (not in the `.gp` core), unannotated lambdas (Go func
-literals require types), Lean-style layout (two blunt rules instead:
+shared-core milestone), `open` (needs export knowledge), tuples
+(deferred to the Stage F kernel's Sigma per the gap program),
+Lean-style layout (two blunt rules instead:
 application arguments start on the same line as the token before them,
 and sums need a leading `|`), namespaces admit method lets only,
 `goml fmt`, reverse conversion (`.gp → .goml`), and a dedicated goml

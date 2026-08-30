@@ -29,7 +29,8 @@ var goPredeclared = map[string]bool{
 
 type ctorInfo struct {
 	arity  int
-	parens bool // print Name() for nullary uses (pinned-result ctors)
+	parens bool   // print Name() for nullary uses (pinned-result ctors)
+	fields []Type // field types, for expected-type threading at calls
 }
 
 type enumInfo struct {
@@ -63,6 +64,14 @@ type converter struct {
 	fw         *fnWriter       // active function writer (for hoisting)
 	lines      map[int]int     // emitted .gp line → source .goml line
 	holes      map[string]Pos  // hole name → position of its `?`
+
+	// Expected-type indexes: local let value-parameter types and record
+	// field types, threaded to unannotated lambdas and list literals.
+	letSigs map[string][]Type
+	records map[string]map[string]Type
+	retWant Type // result type of the let body being rendered
+
+	whereOwner map[string]string // where-helper name → owning let
 }
 
 // mark records that output emitted from here on originates at pos. The
@@ -128,7 +137,9 @@ func ConvertWithInfo(path string, src []byte) (out []byte, info *ConvertInfo, er
 		path: path, file: file, b: &strings.Builder{},
 		enums: map[string]*enumInfo{}, classes: map[string]*classInfo{},
 		nullaryOps: map[string]bool{}, lines: map[int]int{},
-		holes: map[string]Pos{},
+		holes:   map[string]Pos{},
+		letSigs: map[string][]Type{}, records: map[string]map[string]Type{},
+		whereOwner: map[string]string{},
 	}
 	defer func() {
 		if r := recover(); r != nil {
@@ -184,8 +195,30 @@ func (c *converter) indexEnums() {
 			c.classes[cd.Name] = info
 			continue
 		}
+		if ld, ok := d.(*LetDecl); ok {
+			c.indexLetSig(ld)
+			for _, h := range ld.Where {
+				if owner, dup := c.whereOwner[h.Name]; dup {
+					c.failf(h.Pos, "where-helper %s already defined under %s; helper names are file-unique (they lower to package-private functions)", h.Name, owner)
+				}
+				c.whereOwner[h.Name] = ld.Name
+				c.indexLetSig(h)
+			}
+			continue
+		}
 		td, ok := d.(*TypeDecl)
-		if !ok || len(td.Sum) == 0 {
+		if !ok {
+			continue
+		}
+		if len(td.Record) > 0 {
+			fields := map[string]Type{}
+			for _, f := range td.Record {
+				fields[f.Name] = f.Type
+			}
+			c.records[td.Name] = fields
+			continue
+		}
+		if len(td.Sum) == 0 {
 			continue
 		}
 		info := &enumInfo{ctors: map[string]*ctorInfo{}}
@@ -203,7 +236,11 @@ func (c *converter) indexEnums() {
 			info.sorts = append(info.sorts, sort)
 		}
 		for _, ct := range td.Sum {
-			info.ctors[ct.Name] = &ctorInfo{arity: len(ct.Fields), parens: ct.Result != nil}
+			ci := &ctorInfo{arity: len(ct.Fields), parens: ct.Result != nil}
+			for _, f := range ct.Fields {
+				ci.fields = append(ci.fields, f.Type)
+			}
+			info.ctors[ct.Name] = ci
 		}
 		c.enums[td.Name] = info
 	}
@@ -566,6 +603,23 @@ func (c *converter) printEnum(d *TypeDecl) {
 		c.b.WriteString(line + "\n")
 	}
 	c.b.WriteString("}\n")
+}
+
+// indexLetSig records a let's value-parameter types for expected-type
+// threading at its call sites.
+func (c *converter) indexLetSig(ld *LetDecl) {
+	var sig []Type
+	for _, b := range ld.Binders {
+		if b.Implicit || b.Instance {
+			continue // not passed at goml call sites
+		}
+		for range b.Names {
+			sig = append(sig, b.Type)
+		}
+	}
+	if len(sig) > 0 {
+		c.letSigs[ld.Name] = sig
+	}
 }
 
 // binderTParams renders a declaration's binders as a Go type-parameter

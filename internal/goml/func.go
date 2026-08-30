@@ -117,6 +117,7 @@ func (c *converter) printLet(d *LetDecl, ns *NamespaceDecl) {
 	// `()` is the unit binder, so a nullary function stays spellable.
 	if isValueLet(d, ns) {
 		c.printValueLet(d, sig, tailRec)
+		c.printWhereHelpers(d)
 		return
 	}
 	kw := "func"
@@ -159,9 +160,44 @@ func (c *converter) printLet(d *LetDecl, ns *NamespaceDecl) {
 	}
 	fw := &fnWriter{c: c, fnName: d.Name, tailRec: tailRec, returns: sig.result != ""}
 	c.fw = fw
+	c.retWant = d.Result // nil for clausal/signature forms
 	fw.writeTail(body, "\t")
+	c.retWant = nil
 	c.fw = nil
 	c.b.WriteString("}\n")
+	c.printWhereHelpers(d)
+}
+
+// printWhereHelpers emits a let's where-helpers as package-private
+// declarations. Helpers are closed: a parent binder they mention must
+// be passed as a parameter instead.
+func (c *converter) printWhereHelpers(d *LetDecl) {
+	if len(d.Where) == 0 {
+		return
+	}
+	parent := map[string]bool{}
+	for _, b := range d.Binders {
+		for _, n := range b.Names {
+			parent[n] = true
+		}
+	}
+	for _, h := range d.Where {
+		used := map[string]bool{}
+		usedNames(h.Body, used)
+		own := map[string]bool{}
+		for _, b := range h.Binders {
+			for _, n := range b.Names {
+				own[n] = true
+			}
+		}
+		for n := range used {
+			if parent[n] && !own[n] {
+				c.failf(h.Pos, "where-helper %s is closed and cannot capture %s from %s; pass it as a parameter", h.Name, n, d.Name)
+			}
+		}
+		c.b.WriteString("\n")
+		c.printLet(h, nil)
+	}
 }
 
 // isValueLet reports whether a declaration binds a package-level value:
@@ -194,9 +230,9 @@ func (c *converter) printValueLet(d *LetDecl, sig fnSig, tailRec bool) {
 
 	body := ""
 	if fn, ok := d.Body.(*Fun); ok {
-		body = c.funStringTyped(fn, d.Result)
+		body = c.funStringWant(fn, d.Result)
 	} else {
-		body = c.exprString(d.Body, 0)
+		body = c.exprWant(d.Body, 0, d.Result)
 	}
 	if d.Result == nil {
 		fmt.Fprintf(c.b, "var %s = %s\n", d.Name, body)
@@ -264,6 +300,11 @@ func (c *converter) checkValueBody(d *LetDecl, e Expr) {
 			c.checkValueBody(d, f.Val)
 		}
 		return
+	case *ListLit:
+		for _, el := range e.Elems {
+			c.checkValueBody(d, el)
+		}
+		return
 	default:
 		return
 	}
@@ -272,30 +313,101 @@ func (c *converter) checkValueBody(d *LetDecl, e Expr) {
 		form, d.Name, d.Name)
 }
 
-// funStringTyped renders a lambda, taking its result type from the
-// declaration's annotation when the lambda omits one.
-func (c *converter) funStringTyped(e *Fun, want Type) string {
-	if e.Result != nil {
-		return c.funString(e)
+// exprWant renders e, using want — the type its position expects — to
+// type unannotated lambdas and list literals. A nil want falls back to
+// exprString.
+func (c *converter) exprWant(e Expr, prec int, want Type) string {
+	// An open type (a callee's generic parameter, a generic result) is
+	// not a usable expectation in the caller's scope.
+	if want == nil || !closedType(want) {
+		return c.exprString(e, prec)
 	}
-	if want == nil {
+	switch e := e.(type) {
+	case *Fun:
+		return c.funStringWant(e, want)
+	case *ListLit:
+		return c.listString(e, want)
+	}
+	return c.exprString(e, prec)
+}
+
+// closedType reports whether t names no free type or index variable (a
+// lowercase unqualified name that is not Go-predeclared).
+func closedType(t Type) bool {
+	switch t := t.(type) {
+	case *TypeName:
+		return t.Pkg != "" || isUpperName(t.Name) || goPredeclared[t.Name]
+	case *TypeApp:
+		for _, a := range t.Args {
+			if !closedType(a) {
+				return false
+			}
+		}
+		return true
+	case *TypeArrow:
+		return closedType(t.From) && closedType(t.To)
+	case *TypeNat:
+		return true
+	case *TypeIndexOp:
+		return closedType(t.L) && closedType(t.R)
+	case *TypeEq:
+		return closedType(t.L) && closedType(t.R)
+	}
+	return false
+}
+
+// listString renders a list literal at a position expecting a slice.
+func (c *converter) listString(e *ListLit, want Type) string {
+	app, ok := want.(*TypeApp)
+	if !ok || app.Head.Pkg != "" || app.Head.Name != "Slice" || len(app.Args) != 1 {
+		c.failf(e.Pos, "this position expects %s, not a list literal", c.fullTypeString(want))
+	}
+	elem := app.Args[0]
+	parts := make([]string, len(e.Elems))
+	for i, el := range e.Elems {
+		parts[i] = c.exprWant(el, 0, elem)
+	}
+	return "[]" + c.typeString(elem) + "{" + strings.Join(parts, ", ") + "}"
+}
+
+// funStringWant renders a lambda, filling unannotated binders and the
+// missing result type from want, the arrow type its position expects.
+func (c *converter) funStringWant(e *Fun, want Type) string {
+	var params []string
+	t := want // walked down the arrow chain, one step per binder name
+	for _, b := range e.Binders {
+		if b.Implicit || b.Instance || b.Quantity != "" {
+			c.failf(b.Pos, "lambdas take plain typed binders in goml v0")
+		}
+		for _, n := range b.Names {
+			var from Type
+			if arrow, ok := t.(*TypeArrow); ok {
+				from, t = arrow.From, arrow.To
+			} else {
+				t = nil
+			}
+			bt := b.Type
+			if bt == nil {
+				bt = from
+			}
+			if bt == nil {
+				c.failf(b.Pos, "binder %s needs a type: annotate it `(%s : T)`, or use the lambda where its type is known", n, n)
+			}
+			params = append(params, n+" "+c.typeString(bt))
+		}
+	}
+	res := e.Result
+	if res == nil {
+		res = t
+	}
+	if res == nil {
 		c.failf(e.Pos, "this lambda needs a result type: `fun (x : Int) : Int => ...`, or annotate the binding")
 	}
-	n := 0
-	for _, b := range e.Binders {
-		n += len(b.Names)
+	body := c.exprWant(e.Body, 0, res)
+	if r := c.resultString(res); r != "" {
+		return "func(" + strings.Join(params, ", ") + ") " + r + " { return " + body + " }"
 	}
-	t := want
-	for i := 0; i < n; i++ {
-		arrow, ok := t.(*TypeArrow)
-		if !ok {
-			c.failf(e.Pos, "this lambda needs a result type: `fun (x : Int) : Int => ...`")
-		}
-		t = arrow.To
-	}
-	typed := *e
-	typed.Result = t
-	return c.funString(&typed)
+	return "func(" + strings.Join(params, ", ") + ") { " + body + " }"
 }
 
 func (c *converter) buildSig(d *LetDecl, ns *NamespaceDecl) fnSig {
@@ -635,7 +747,7 @@ func (w *fnWriter) writeTail(e Expr, ind string) {
 			w.writeMatchExprAssign(lhs, assign, val, ind)
 		default:
 			w.prep(ind)
-			v := c.exprString(e.Val, 0)
+			v := c.exprWant(e.Val, 0, e.Type)
 			w.flush()
 			fmt.Fprintf(c.b, "%s%s %s %s\n", ind, lhs, assign, v)
 		}
@@ -672,7 +784,12 @@ func (w *fnWriter) writeTail(e Expr, ind string) {
 			}
 		}
 		w.prep(ind)
-		s := c.exprString(e, 0)
+		var s string
+		if w.returns {
+			s = c.exprWant(e, 0, c.retWant)
+		} else {
+			s = c.exprString(e, 0)
+		}
 		w.flush()
 		if w.returns {
 			fmt.Fprintf(c.b, "%sreturn %s\n", ind, s)
@@ -843,6 +960,10 @@ func usedNames(e Expr, out map[string]bool) {
 		for _, f := range e.Fields {
 			usedNames(f.Val, out)
 		}
+	case *ListLit:
+		for _, el := range e.Elems {
+			usedNames(el, out)
+		}
 	case *DoBlock:
 		for _, st := range e.Stmts {
 			usedInStmt(st, out)
@@ -936,9 +1057,13 @@ func (c *converter) exprString(e Expr, prec int) string {
 	case *Fun:
 		return c.funString(e)
 	case *RecordLit:
+		var fieldTypes map[string]Type
+		if id, ok := e.Type.(*Ident); ok {
+			fieldTypes = c.records[id.Name]
+		}
 		parts := make([]string, len(e.Fields))
 		for i, f := range e.Fields {
-			parts[i] = f.Name + ": " + c.exprString(f.Val, 0)
+			parts[i] = f.Name + ": " + c.exprWant(f.Val, 0, fieldTypes[f.Name])
 		}
 		return c.exprString(e.Type, atomPrec) + "{" + strings.Join(parts, ", ") + "}"
 	case *RecordUpdate:
@@ -971,6 +1096,8 @@ func (c *converter) exprString(e Expr, prec int) string {
 		block := c.captured(func() { c.fw.writeMatchExprAssign(tmp, ":=", e, ind) })
 		c.fw.hoist = append(c.fw.hoist, block)
 		return tmp
+	case *ListLit:
+		c.failf(e.Pos, "a list literal needs a position whose type is known: annotate the binding (`let xs : Slice Int := [1, 2]`) or pass it to a locally declared function or constructor")
 	case *Unit:
 		c.failf(e.Pos, "() is a call argument or function result, not a value, in goml v0")
 	case *LetIn:
@@ -1014,12 +1141,32 @@ func (c *converter) appString(e *App) string {
 			return head + "()"
 		}
 	}
+	// Expected types for arguments of locally declared functions and
+	// constructors, threaded to unannotated lambdas and list literals.
+	var sig []Type
+	if id, ok := e.Fn.(*Ident); ok {
+		if s, ok := c.letSigs[id.Name]; ok {
+			sig = s
+		} else if ci := c.ctorOf(id.Name); ci != nil {
+			sig = ci.fields
+		}
+		for _, a := range e.Args {
+			if _, w := a.(*Witness); w {
+				sig = nil // an explicit witness shifts positions
+				break
+			}
+		}
+	}
 	parts := make([]string, len(e.Args))
 	for i, a := range e.Args {
 		if _, unit := a.(*Unit); unit {
 			c.failf(a.exprPos(), "() mixes with other arguments")
 		}
-		parts[i] = c.exprString(a, 0)
+		var want Type
+		if i < len(sig) {
+			want = sig[i]
+		}
+		parts[i] = c.exprWant(a, 0, want)
 	}
 	return head + "(" + strings.Join(parts, ", ") + ")"
 }
@@ -1113,6 +1260,10 @@ func (c *converter) funString(e *Fun) string {
 	for _, b := range e.Binders {
 		if b.Implicit || b.Instance || b.Quantity != "" {
 			c.failf(b.Pos, "lambdas take plain typed binders in goml v0")
+		}
+		if b.Type == nil {
+			c.failf(b.Pos, "binder %s needs a type: annotate it `(%s : T)`, or use the lambda where its type is known",
+				b.Names[0], b.Names[0])
 		}
 		params = append(params, strings.Join(b.Names, ", ")+" "+c.typeString(b.Type))
 	}

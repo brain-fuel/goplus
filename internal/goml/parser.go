@@ -200,13 +200,44 @@ func (p *parser) parseLet(doc []string, attrs []Attr, total bool) *LetDecl {
 			}
 			d.Sig = t
 			d.Clauses = p.parseClauses()
+			d.Where = p.parseWhereHelpers()
 			return d
 		}
 		d.Result = t
 	}
 	p.expect(Assign, "`:=`")
 	d.Body = p.parseExpr()
+	d.Where = p.parseWhereHelpers()
 	return d
+}
+
+// parseWhereHelpers parses an optional trailing helper block:
+// `where h (x : T) : R := e; g (y : T) : R := e`. Helpers are
+// package-private (lowercase) and closed over nothing.
+func (p *parser) parseWhereHelpers() []*LetDecl {
+	if _, ok := p.accept(KwWhere); !ok {
+		return nil
+	}
+	var out []*LetDecl
+	for {
+		name := p.expect(IDENT, "helper name after `where`")
+		if isUpperName(name.Text) {
+			p.fail(name.Pos, "where-helpers are package-private; %q must be lowercase", name.Text)
+		}
+		h := &LetDecl{Name: name.Text, Pos: name.Pos, Doc: p.docFor(name.Pos.Line)}
+		for p.at(LParen) || p.at(LBrace) || p.at(LBrack) {
+			h.Binders = append(h.Binders, p.parseBinder())
+		}
+		if _, ok := p.accept(Colon); ok {
+			h.Result = p.parseType()
+		}
+		p.expect(Assign, "`:=` in where-helper")
+		h.Body = p.parseExpr()
+		out = append(out, h)
+		if _, ok := p.accept(Semi); !ok {
+			return out
+		}
+	}
 }
 
 func (p *parser) parseBinder() *Binder {
@@ -738,7 +769,13 @@ func (p *parser) parseExpr() Expr {
 	case KwFun:
 		p.i++
 		f := &Fun{Pos: t.Pos}
-		for p.at(LParen) {
+		for p.at(LParen) || p.at(IDENT) {
+			if name, ok := p.accept(IDENT); ok {
+				// A bare binder; its type comes from the expected type at
+				// the lambda's position.
+				f.Binders = append(f.Binders, &Binder{Names: []string{name.Text}, Pos: name.Pos})
+				continue
+			}
 			f.Binders = append(f.Binders, p.parseBinder())
 		}
 		if _, ok := p.accept(Colon); ok {
@@ -1015,6 +1052,10 @@ func (p *parser) atOperandStart() bool {
 	switch p.tok().Kind {
 	case IDENT, INT, FLOAT, STRING, LParen, At, Amp:
 		return true
+	case LBrack:
+		// A spaced `[` opens a list-literal argument; an adjacent one
+		// indexes the operand before it and never reaches here.
+		return true
 	case Question:
 		return p.atHole()
 	}
@@ -1066,9 +1107,9 @@ func (p *parser) parsePostfix() Expr {
 			e = p.parseRecordLit(e)
 			continue
 		}
-		// An index: xs[i]. In expression position `[` can only mean
-		// this — instance binders and attributes live in declarations.
-		if p.at(LBrack) {
+		// An index: xs[i], with the `[` glued to the expression. A spaced
+		// `[` is a list-literal argument instead (f [1, 2]).
+		if p.at(LBrack) && p.tok().Adj {
 			lb := p.tok()
 			p.i++
 			idx := p.parseExpr()
@@ -1126,6 +1167,17 @@ func (p *parser) parseAtom() Expr {
 		inner := p.parseExpr()
 		p.expect(RParen, "`)` closing expression")
 		return inner
+	case LBrack:
+		p.i++
+		lit := &ListLit{Pos: t.Pos}
+		for !p.at(RBrack) {
+			lit.Elems = append(lit.Elems, p.parseExpr())
+			if _, ok := p.accept(Comma); !ok {
+				break
+			}
+		}
+		p.expect(RBrack, "`]` closing list literal")
+		return lit
 	case LBrace:
 		p.i++
 		base := p.parseExpr()
