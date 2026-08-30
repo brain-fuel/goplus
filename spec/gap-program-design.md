@@ -100,12 +100,14 @@ postfix `?` in Option-returning functions.
   statement is never valid Go); in goml it is a reserved word.
   `std/vec` First/Rest carry the arms. Wildcard/binder/multi-pattern
   impossible arms are guided errors.
-- **C1b** dot patterns — deferred behind a design spike: in Go+,
-  indices are type-level and constructor fields are runtime data, so
-  what a "forced position" *is* needs pinning before a sigil is chosen
-  (`.(expr)` vs `=(expr)`). The spike must name the forcing judgment
-  (unification-determined field values) and its checker
-  (`DecideEqTexts` under arm substitution).
+- **C1b — dot patterns: re-sequenced into the F4 tranche** (spike
+  finding, 2026-08-30). A dot pattern marks a position *forced* by
+  unification. In today's core no such position exists: constructor
+  fields are runtime data, indices are erased type-level nats, and
+  nothing links a field's value to an index — that linkage (values in
+  indices) is precisely F4's surface dependency. Until then a dot
+  pattern would have nothing to check. The sigil decision travels with
+  F4.
 - **C2** guards + literal patterns, both surfaces simultaneously (the
   reserved productions flip on). Coverage policy: nat literals count as
   exhaustive when the decider proves interval exhaustion under
