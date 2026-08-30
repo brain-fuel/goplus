@@ -72,6 +72,8 @@ type converter struct {
 	retWant Type // result type of the let body being rendered
 
 	whereOwner map[string]string // where-helper name → owning let
+	opens      map[string]string // opened member name → package qualifier
+	localNames map[string]bool   // file-local declaration names (win over opens)
 }
 
 // mark records that output emitted from here on originates at pos. The
@@ -140,6 +142,7 @@ func ConvertWithInfo(path string, src []byte) (out []byte, info *ConvertInfo, er
 		holes:   map[string]Pos{},
 		letSigs: map[string][]Type{}, records: map[string]map[string]Type{},
 		whereOwner: map[string]string{},
+		opens:      map[string]string{}, localNames: map[string]bool{},
 	}
 	defer func() {
 		if r := recover(); r != nil {
@@ -158,6 +161,34 @@ func ConvertWithInfo(path string, src []byte) (out []byte, info *ConvertInfo, er
 // indexEnums records local sum types: binder sorts (for nat/type
 // classification) and constructor shapes (for pattern/expr printing).
 func (c *converter) indexEnums() {
+	for _, o := range c.file.Opens {
+		for _, n := range o.Names {
+			if pkg, dup := c.opens[n]; dup && pkg != o.Pkg {
+				c.failf(o.Pos, "%s is exposed by both %s and %s; qualify its uses", n, pkg, o.Pkg)
+			}
+			c.opens[n] = o.Pkg
+		}
+	}
+	for _, d := range c.file.Decls {
+		switch d := d.(type) {
+		case *LetDecl:
+			c.localNames[d.Name] = true
+		case *TypeDecl:
+			c.localNames[d.Name] = true
+			for _, ct := range d.Sum {
+				c.localNames[ct.Name] = true
+			}
+		case *ClassDecl:
+			c.localNames[d.Name] = true
+			for _, op := range d.Ops {
+				c.localNames[op.Name] = true
+			}
+		case *InstanceDecl:
+			if d.Name != "" {
+				c.localNames[d.Name] = true
+			}
+		}
+	}
 	for _, d := range c.file.Decls {
 		if cd, ok := d.(*ClassDecl); ok {
 			info := &classInfo{binder: cd.Binder.Names[0], ops: map[string]opSig{}}
@@ -424,6 +455,9 @@ func (c *converter) typeString(t Type) string {
 		}
 		if t.Name == "Unit" {
 			c.failf(t.Pos, "Unit is only a function result in goml v0")
+		}
+		if pkg, ok := c.opens[t.Name]; ok && !c.localNames[t.Name] {
+			return pkg + "." + t.Name
 		}
 		return t.Name
 	case *TypeApp:

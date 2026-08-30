@@ -5,7 +5,17 @@ type File struct {
 	Attrs   []Attr // module-level attributes, e.g. @[laws "out=lawtest"]
 	Module  string
 	Imports []*Import
+	Opens   []*Open
 	Decls   []Decl
+}
+
+// Open is `open pkg exposing (A, B)`: the named Capitalized members of
+// an imported package become usable unqualified. Names are Capitalized
+// by rule, so an opened name can never collide with a binder.
+type Open struct {
+	Pkg   string
+	Names []string
+	Pos   Pos
 }
 
 // Import is one import declaration.

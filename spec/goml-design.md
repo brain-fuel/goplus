@@ -73,7 +73,7 @@ module vec
 
 import "goforge.dev/goplus/std/result" as result
 import "fmt"                        -- Go packages import directly
-open result                          -- optional unqualified access
+open result exposing (Ok, Err)       -- named unqualified access
 ```
 
 - Comments: `-- line` and `(* block *)`. Layout is significant the Lean
@@ -91,7 +91,14 @@ Deltas from this sketch would version exactly like `spec/grammar-*.ebnf`.
 
 ```ebnf
 SourceFile   = "module" identifier { ImportDecl } { TopDecl } .
-ImportDecl   = "import" string_lit [ "as" identifier ] | "open" identifier .
+ImportDecl   = "import" string_lit [ "as" identifier ]
+             | "open" identifier "exposing" "(" identifier { "," identifier } ")" .
+             (* exposed names are Capitalized — a binder is lowercase by
+                the ML rule, so an opened name can never be shadowed *)
+FixityDecl   = ( "infixl" | "infixr" ) nat_lit opsym ":=" QualIdent .
+             (* parse-time only: a <+> b rewrites to Fn(a, b); the
+                operator is declared before use; precedence 1-6 on the
+                shared table *)
 
 TopDecl      = { Attr } ( LetDecl | TypeDecl | ClassDecl | InstanceDecl
                         | NamespaceDecl ) .
@@ -674,6 +681,18 @@ pipeline. There is no second elaborator.
   slots (`type Expr : Type -> Type where`) as well as nat-indexed ones,
   and a slot whose constructors pin every position concretely gets a
   synthesized name in its own sort (`Expr[a any]`).
+- Unqualified access and user operators (added 2026-08-30 under the gap
+  program): **`open p exposing (A, B)`** makes the named Capitalized
+  members of an imported package usable unqualified — in expressions,
+  application heads, patterns, and types — rewritten to `p.A` at
+  transpile time. Names are Capitalized by rule (a binder is lowercase,
+  so shadowing is impossible); a file-local declaration of the same
+  name wins; two opens exposing one name is an error.
+  **`infixl 5 <+> := Combine`** (and `infixr`) declares a user
+  operator over the symbol alphabet `+ - * / < > = | & ^ % ! ~ $`,
+  rewritten at parse time to a plain call — the emitted `.gp` is always
+  call-form, so the differential gate is untouched. Declared before
+  use; precedence 1 (loosest) to 6 (tightest) on the shared table.
 - Expected types (added 2026-08-30 under the gap program): the type a
   position expects — a local let's or constructor's parameter, a record
   field, a `let`/`let mut` annotation, the declared result at `return`
@@ -716,7 +735,9 @@ pipeline. There is no second elaborator.
 
 **Deliberate deferrals (parse errors or absences today):** guards and
 literal patterns (core-first, per §9 — both surfaces gain them from one
-shared-core milestone), `open` (needs export knowledge), tuples
+shared-core milestone), bare `open` (auto-exposing needs export
+knowledge the syntactic converter does not have; the exposing form
+below covers the ergonomics), tuples
 (deferred to the Stage F kernel's Sigma per the gap program),
 Lean-style layout (two blunt rules instead:
 application arguments start on the same line as the token before them,

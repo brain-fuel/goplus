@@ -100,9 +100,10 @@ const (
 	GtEq
 	AndAnd
 	OrOr
-	Bang // !
-	Amp  // & (address-of)
-	At   // @
+	Bang  // !
+	Amp   // & (address-of)
+	At    // @
+	OpSym // a user-declarable operator symbol run, e.g. <+>
 )
 
 var keywords = map[string]Kind{
@@ -116,6 +117,24 @@ var keywords = map[string]Kind{
 	"for": KwFor, "return": KwReturn, "defer": KwDefer, "go": KwGo,
 	"select": KwSelect, "recv": KwRecv, "send": KwSend,
 	"default": KwDefault, "prop": KwProp, "interface": KwInterface,
+}
+
+// opSymAlphabet is the character set operator-symbol runs draw from.
+// `:`, `?`, `@`, and `.` are deliberately excluded: they glue to holes,
+// binders, witnesses, and selectors, and are never part of a user op.
+var opSymAlphabet = map[rune]bool{
+	'+': true, '-': true, '*': true, '/': true, '<': true, '>': true,
+	'=': true, '|': true, '&': true, '^': true, '%': true, '!': true,
+	'~': true, '$': true,
+}
+
+// fixedSymOps maps exact symbol runs to their fixed token kinds.
+var fixedSymOps = map[string]Kind{
+	">>>": Compose, ">=>": Kleisli, "==": EqEq, "!=": NotEq,
+	"<=": LtEq, ">=": GtEq, "&&": AndAnd, "||": OrOr, "|>": Pipe,
+	"->": Arrow, "=>": FatArrow, "<-": LArrow, "=": Eq, "|": Bar,
+	"!": Bang, "&": Amp, "+": Plus, "-": Minus, "*": Star, "/": Slash,
+	"%": Percent, "<": Lt, ">": Gt,
 }
 
 // Pos is a 1-based source position in the .goml file.
@@ -298,6 +317,23 @@ func (l *lexer) tokens() ([]Token, *Error) {
 				out = append(out, Token{Kind: k, Text: word, Pos: start, Adj: adj})
 			} else {
 				out = append(out, Token{Kind: IDENT, Text: word, Pos: start, Adj: adj})
+			}
+			continue
+		}
+		// A maximal run over the operator-symbol alphabet: an exact fixed
+		// operator keeps its kind; any other run is a user-declarable
+		// OpSym (validated against the file's fixity table at parse).
+		if opSymAlphabet[r] {
+			i := 0
+			for i < len(rest) && opSymAlphabet[rune(rest[i])] {
+				i++
+			}
+			run := rest[:i]
+			l.advance(i)
+			if k, ok := fixedSymOps[run]; ok {
+				out = append(out, Token{Kind: k, Text: run, Pos: start, Adj: adj})
+			} else {
+				out = append(out, Token{Kind: OpSym, Text: run, Pos: start, Adj: adj})
 			}
 			continue
 		}

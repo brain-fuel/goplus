@@ -121,6 +121,27 @@ Feature: goml, the ML-family surface
     And the file "pipeline_gml.go" contains "Apply(func(x int) int { return x * 2 }, []int{3, 4, 5})"
     And the file "pipeline_gml.go" contains "func sum(ys []int, seed int) int {"
 
+  Scenario: open exposing and user operators generate through the pipeline
+    Given a module "example.com/demo" using the goplus standard library
+    And a file "railway.goml":
+      """
+      module railway
+
+      import "goforge.dev/goplus/std/result"
+      open result exposing (Result, Ok, Err)
+
+      infixl 5 <+> := Merge
+
+      let Merge (a b : Int) : Int := a + b
+
+      let Sum (a b c : Int) : Result Int Error :=
+        Ok (a <+> b <+> c)
+      """
+    When I run goml with arguments "gen ."
+    Then the exit code is 0
+    And the file "railway_gml.go" is valid Go
+    And the file "railway_gml.go" contains "result.Ok[int, error]{Value: Merge(Merge(a, b), c)}"
+
   Scenario: do blocks and select lower to native Go statements
     Given a file "worker.goml":
       """

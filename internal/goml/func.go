@@ -871,6 +871,8 @@ func (c *converter) patString(p Pattern, used map[string]bool) string {
 		name := p.Name
 		if p.Pkg != "" {
 			name = p.Pkg + "." + name
+		} else if pkg, ok := c.opens[p.Name]; ok && !c.localNames[p.Name] {
+			name = pkg + "." + name
 		}
 		if p.As != "" {
 			if len(p.Args) > 0 {
@@ -1019,6 +1021,9 @@ func (c *converter) exprString(e Expr, prec int) string {
 		if c.nullaryOps[e.Name] {
 			return e.Name + "()"
 		}
+		if pkg, ok := c.opens[e.Name]; ok && !c.localNames[e.Name] {
+			return pkg + "." + e.Name
+		}
 		return e.Name
 	case *Lit:
 		return e.Text
@@ -1134,6 +1139,9 @@ func (c *converter) appString(e *App) string {
 			if s := c.builtinAppString(e, id); s != "" {
 				return s
 			}
+		}
+		if pkg, ok := c.opens[id.Name]; ok && !c.localNames[id.Name] {
+			head = pkg + "." + id.Name
 		}
 	}
 	if len(e.Args) == 1 {

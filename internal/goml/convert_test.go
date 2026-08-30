@@ -355,6 +355,92 @@ func Pick(xs []int, i int) int {
 	}
 }
 
+func TestConvertFixity(t *testing.T) {
+	src := `module ops
+
+infixl 5 <+> := Combine
+infixr 6 <^> := Power
+
+let Combine (a b : Int) : Int := a + b
+
+let Power (a b : Int) : Int := a * b
+
+let Demo (x y z : Int) : Int := x <+> y <+> z
+
+let Rassoc (x y z : Int) : Int := x <^> y <^> z
+
+let Mixed (x y z : Int) : Int := x <+> y * z
+`
+	got := convertOK(t, src)
+	want := `package ops
+
+func Combine(a, b int) int {
+	return a + b
+}
+
+func Power(a, b int) int {
+	return a * b
+}
+
+func Demo(x, y, z int) int {
+	return Combine(Combine(x, y), z)
+}
+
+func Rassoc(x, y, z int) int {
+	return Power(x, Power(y, z))
+}
+
+func Mixed(x, y, z int) int {
+	return Combine(x, y * z)
+}
+`
+	if got != want {
+		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+func TestConvertOpenExposing(t *testing.T) {
+	src := `module app
+
+import "goforge.dev/goplus/std/result"
+open result exposing (Result, Ok, Err)
+
+let Half (n : Int) : Result Int Error :=
+  if n == 0 then Err nil else Ok (n / 2)
+
+let Classify (r : Result Int Error) : Int :=
+  match r with
+  | Ok v => v
+  | Err _ => 0
+`
+	got := convertOK(t, src)
+	want := `package app
+
+import (
+	"goforge.dev/goplus/std/result"
+)
+
+func Half(n int) result.Result[int, error] {
+	if n == 0 {
+		return result.Err(nil)
+	}
+	return result.Ok(n / 2)
+}
+
+func Classify(r result.Result[int, error]) int {
+	match r {
+	case result.Ok(v):
+		return v
+	case result.Err(_):
+		return 0
+	}
+}
+`
+	if got != want {
+		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
 func TestConvertWhereHelpers(t *testing.T) {
 	src := `module fact
 
@@ -584,7 +670,13 @@ func TestConvertErrors(t *testing.T) {
 	cases := []struct {
 		name, src, wantErr string
 	}{
-		{"open", "module m\nopen foo\n", "`open` is not supported"},
+		{"openBare", "module m\nopen foo\n", "expected `exposing`"},
+		{"opUndeclared", "module m\nlet F (a b : Int) : Int := a <+> b", "is not declared"},
+		{"fixityPrec", "module m\ninfixl 9 <+> := F\n", "1 (loosest) to 6"},
+		{"fixityDup", "module m\ninfixl 5 <+> := F\ninfixl 5 <+> := G\n", "already declared"},
+		{"fixityInfix", "module m\ninfix 5 <+> := F\n", "pick infixl or infixr"},
+		{"openLower", "module m\nopen foo exposing (bar)\n", "exposed names are Capitalized"},
+		{"openClash", "module m\nopen foo exposing (Ok)\nopen bar exposing (Ok)\n", "exposed by both"},
 		{"literalPat", "module m\nlet F (x : Int) : Int := match x with | 0 => 1", "expected a pattern"},
 		{"guard", "module m\nlet F (x : Int) : Int := match x with | y if y => y", "expected `|` or `=>`"},
 		{"noModule", "let X := 1\n", "expected `module`"},

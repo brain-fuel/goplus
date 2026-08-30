@@ -2,6 +2,7 @@ package goml
 
 import (
 	"fmt"
+	"strconv"
 	"unicode"
 	"unicode/utf8"
 )
@@ -35,6 +36,17 @@ type parser struct {
 	// Trailing "--" comment block, for doc attachment.
 	docBlock []string
 	docEnd   int // line the block ends on
+
+	// User operator fixities, declared before use: infixl 5 <+> := Fn.
+	fixities map[string]fixity
+}
+
+// fixity is one declared user operator: precedence on the shared 1-6
+// scale, associativity, and the function its uses rewrite to.
+type fixity struct {
+	prec  int
+	right bool
+	fn    string
 }
 
 func (p *parser) fail(pos Pos, format string, args ...any) {
@@ -115,14 +127,64 @@ func (p *parser) parseFile() *File {
 			continue
 		}
 		if t, ok := p.accept(KwOpen); ok {
-			p.fail(t.Pos, "`open` is not supported in goml v0; use qualified names")
+			o := &Open{Pkg: p.expect(IDENT, "package name after `open`").Text, Pos: t.Pos}
+			kw := p.expect(IDENT, "`exposing` after the package name (bare `open` needs export knowledge goml does not have)")
+			if kw.Text != "exposing" {
+				p.fail(kw.Pos, "`open %s` names its members: open %s exposing (A, B)", o.Pkg, o.Pkg)
+			}
+			p.expect(LParen, "`(` opening the exposing list")
+			for {
+				n := p.expect(IDENT, "exposed name")
+				if !isUpperName(n.Text) {
+					p.fail(n.Pos, "exposed names are Capitalized (a lowercase name could shadow a binder); use %s.%s qualified", o.Pkg, n.Text)
+				}
+				o.Names = append(o.Names, n.Text)
+				if _, ok := p.accept(Comma); !ok {
+					break
+				}
+			}
+			p.expect(RParen, "`)` closing the exposing list")
+			f.Opens = append(f.Opens, o)
+			continue
 		}
 		break
 	}
 	for !p.at(EOF) {
+		if t := p.tok(); t.Kind == IDENT && (t.Text == "infixl" || t.Text == "infixr" || t.Text == "infix") {
+			p.parseFixity()
+			continue
+		}
 		f.Decls = append(f.Decls, p.parseDecl())
 	}
 	return f
+}
+
+// parseFixity registers a user operator: `infixl 5 <+> := Combine`.
+// Fixity is parse-time only — uses rewrite to plain calls — so nothing
+// is emitted and the operator must be declared before its first use.
+func (p *parser) parseFixity() {
+	kw := p.expect(IDENT, "fixity keyword")
+	if kw.Text == "infix" {
+		p.fail(kw.Pos, "non-associative `infix` is not supported; pick infixl or infixr")
+	}
+	prec := p.expect(INT, "precedence (1 loosest … 6 tightest)")
+	n, err := strconv.Atoi(prec.Text)
+	if err != nil || n < 1 || n > 6 {
+		p.fail(prec.Pos, "precedence is 1 (loosest) to 6 (tightest), found %q", prec.Text)
+	}
+	op := p.expect(OpSym, "an operator symbol (a run of + - * / < > = | & ^ % ! ~ $ that is not a built-in operator)")
+	if _, dup := p.fixities[op.Text]; dup {
+		p.fail(op.Pos, "operator %s is already declared", op.Text)
+	}
+	p.expect(Assign, "`:=` binding the operator to a function")
+	fn := p.expect(IDENT, "function name").Text
+	if _, ok := p.accept(Dot); ok {
+		fn += "." + p.expect(IDENT, "function name after `.`").Text
+	}
+	if p.fixities == nil {
+		p.fixities = map[string]fixity{}
+	}
+	p.fixities[op.Text] = fixity{prec: n, right: kw.Text == "infixr", fn: fn}
 }
 
 func (p *parser) parseDecl() Decl {
@@ -973,6 +1035,23 @@ func (p *parser) parseOp(minPrec int) Expr {
 	left := p.parseOperand()
 	for {
 		t := p.tok()
+		if t.Kind == OpSym {
+			fx, ok := p.fixities[t.Text]
+			if !ok {
+				p.fail(t.Pos, "operator %s is not declared; declare it before use: infixl 5 %s := Fn", t.Text, t.Text)
+			}
+			if fx.prec < minPrec {
+				return left
+			}
+			p.i++
+			next := fx.prec + 1
+			if fx.right {
+				next = fx.prec
+			}
+			right := p.parseOpRight(next)
+			left = &App{Fn: &Ident{Name: fx.fn, Pos: t.Pos}, Args: []Expr{left, right}, Pos: left.exprPos()}
+			continue
+		}
 		prec, ok := binopPrec[t.Kind]
 		if !ok || prec < minPrec {
 			return left
