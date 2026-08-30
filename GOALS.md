@@ -293,9 +293,14 @@ parity is green and NFR has reached a materially stable point.
   two. The next is `#(\*c*!=0)`: the query compiler refuses any query
   containing a backslash, where upstream strips it into the component and
   then pattern-matches, so the escaped `*` behaves as a wildcard and selects
-  `active`. Lifting the refusal fixes that case and regresses `#[*%*\ ]`,
-  where trimming interacts with a trailing escaped space — so the two need
-  separating rather than one guard flipped. That shape is typical of the
+  `active`. Lifting the refusal fixes that case and regresses `#[*%*\ ]`.
+  Four attempts to separate the two failed, and the reason is worth
+  recording: refusing only an operand backslash, which is exactly what the
+  blanket guard did for that query, does NOT restore its behaviour. Tracing
+  shows the compiler receives `*%*\` and splits it correctly, so the match
+  is produced by a second query-matching route that the blanket guard was
+  also suppressing — one this session did not locate. The guard is load
+  bearing for a reason other than the one it documents. That shape is typical of the
   residue: each case is a specific upstream quirk, exhaustively checkable,
   and closing one can open another until the operand and component scanners
   are reproduced rather than approximated. **The completion criterion is
