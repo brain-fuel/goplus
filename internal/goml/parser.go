@@ -1275,6 +1275,9 @@ func (p *parser) parseAtom() Expr {
 		}
 		p.expect(RBrace, "`}` closing record update")
 		return u
+	case KwImpossible:
+		p.i++
+		return &Impossible{Pos: t.Pos}
 	case At:
 		p.i++
 		name := p.expect(IDENT, "instance name after `@`")

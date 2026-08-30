@@ -706,6 +706,11 @@ pipeline. There is no second elaborator.
   parameters, a guided error otherwise), file-unique names, mutual
   reference between helpers allowed. Top-level lets are naturally
   mutually recursive (Go scoping), so no `and` form is needed.
+- **Impossible arms** (added 2026-08-30, grammar v0.19.0, gap program
+  C1a): `| Nil => impossible` asserts what pruning infers — the arm is
+  checked against the scrutinee's indices and dropped; a reachable arm
+  marked impossible is an error. `impossible` is a whole arm body, not
+  a value.
 - Expressions and clauses: `match with` (or-patterns, `as`-binding,
   unused binders print `_`), **multi-column clausal definitions**
   (comma rows, one constructor column), `if/then/else`, `let … ;`

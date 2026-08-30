@@ -83,7 +83,8 @@ func FinFold[R any](f Fin, cs FinCases[R]) R {
 	}
 }
 
-// First returns the head of a non-empty vector.
+// First returns the head of a non-empty vector. The Nil arm is
+// impossible — the index says so, and now the source does too.
 //
 //goplus:dep First[T any](0 n nat, v Vec[T, n+1]) T
 func First[T any](v Vec[T]) T {

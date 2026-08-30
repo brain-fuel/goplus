@@ -568,6 +568,12 @@ type FieldVal struct {
 	Pos  Pos
 }
 
+// Impossible is the `impossible` arm body: an assertion that the arm's
+// pattern is ruled out by the scrutinee's indices, checked and dropped.
+type Impossible struct{ Pos Pos }
+
+func (e *Impossible) exprPos() Pos { return e.Pos }
+
 // ListLit is a list literal [e1, e2], lowered to a Go slice literal.
 // Its element type comes from the expected type at its position.
 type ListLit struct {

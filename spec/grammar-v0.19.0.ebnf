@@ -1,0 +1,50 @@
+(* Go+ v0.19.0 grammar delta: explicit impossible arms.
+
+   The complete base grammar is Go plus the declarations and expressions
+   in grammar-v0.18.0.ebnf. One production is added to match arms, in
+   both surfaces (Stage C of the dependent-typing roadmap; gap program
+   C1a, spec/gap-program-design.md).
+*)
+
+ImpossibleArm = "case" Pattern ":" "impossible" .        (* .gp *)
+              (* goml: "|" Pattern "=>" "impossible" *)
+
+(*
+  ## Pruning becomes statable
+
+  Since v0.7.0 an arm whose variant clashes with the scrutinee's indices
+  is PRUNED by inference: `First(v Vec[T, n+1])` needs no Nil arm, and
+  writing one was the error "pattern Nil() can never match". What could
+  not be written was the author's own assertion of that fact. Idris2
+  spells it `impossible`; now both surfaces do:
+
+      match v {                        -- .gp
+      case Cons(h, t): return h
+      case Nil(): impossible
+      }
+
+      let First : Vec a (n + 1) -> a   -- goml
+        | Cons h _ => h
+        | Nil => impossible
+
+  An impossible arm is CHECKED, then DROPPED: the checker requires the
+  variant to be ruled out — by index clash under the hypotheses in
+  scope, or by GADT result incompatibility — and the arm emits nothing.
+  The generated Go is byte-identical to the omitted-arm form, boundary
+  guards included.
+
+  - A reachable arm marked impossible is an error naming what failed:
+    "this arm is not impossible: the scrutinee's index (n+1) does not
+    rule out Cons (its index is n+1)".
+  - `case _: impossible` is an error: a wildcard matches anything the
+    indices allow.
+  - An impossible arm takes a single pattern and cannot bind — there is
+    no value to name.
+
+  ## The spelling costs no grammar
+
+  In `.gp`, a bare `impossible` identifier statement is never valid Go
+  (an undefined name, and an unused expression even when defined), so
+  recognizing it in a case body preserves the strict-superset rule with
+  no parser change. In goml, `impossible` joins the reserved words.
+*)

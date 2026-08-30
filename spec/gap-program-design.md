@@ -91,10 +91,21 @@ postfix `?` in Option-returning functions.
 
 ### T2 — Stage C: dependent matching
 
-- **C1** explicit `impossible` arms + dot patterns — annotations over
-  existing pruning (`IndexClashUnder`) and GADT unification; checked at
-  both usefulness sites (flat and chain lowering). Forcing consumer:
-  `std/vec`. Open: the `.gp` dot-pattern sigil.
+- **C1a — SHIPPED 2026-08-30 (grammar v0.19.0)**: explicit `impossible`
+  arms in both surfaces (`case Nil(): impossible` / `| Nil =>
+  impossible`). Checked against the same pruning the checker already
+  infers (index clash under hypotheses, GADT incompatibility), then
+  dropped — generated Go is byte-identical to the omitted-arm form. In
+  `.gp` the spelling costs no parser change (a bare `impossible`
+  statement is never valid Go); in goml it is a reserved word.
+  `std/vec` First/Rest carry the arms. Wildcard/binder/multi-pattern
+  impossible arms are guided errors.
+- **C1b** dot patterns — deferred behind a design spike: in Go+,
+  indices are type-level and constructor fields are runtime data, so
+  what a "forced position" *is* needs pinning before a sigil is chosen
+  (`.(expr)` vs `=(expr)`). The spike must name the forcing judgment
+  (unification-determined field values) and its checker
+  (`DecideEqTexts` under arm substitution).
 - **C2** guards + literal patterns, both surfaces simultaneously (the
   reserved productions flip on). Coverage policy: nat literals count as
   exhaustive when the decider proves interval exhaustion under

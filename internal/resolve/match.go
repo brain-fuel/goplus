@@ -37,6 +37,21 @@ type armAnalysis struct {
 	refined    map[string]string // scrutinee tparam name -> ground type text
 }
 
+// impossibleArm reports whether a case body is exactly the `impossible`
+// assertion — a bare identifier statement, which is never valid Go, so
+// claiming it preserves the strict-superset rule without a parser edit.
+func impossibleArm(body []ast.Stmt) bool {
+	if len(body) != 1 {
+		return false
+	}
+	es, ok := body[0].(*ast.ExprStmt)
+	if !ok {
+		return false
+	}
+	id, ok := es.X.(*ast.Ident)
+	return ok && id.Name == "impossible"
+}
+
 // matchCandidate inspects a type switch produced by lower.MatchSkeleton.
 func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 	varName, subj, ok := skeletonGuard(sw)
@@ -130,6 +145,7 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 
 	// Analyze arms.
 	var arms []*armAnalysis
+	var dropped []*ast.CaseClause // checked impossible arms: emit nothing
 	sawWildcard := false
 	anyNested := false
 	for i, raw := range rawArms {
@@ -139,6 +155,40 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 		}
 		if bad := bareBreak(raw.clause.Body); bad != token.NoPos {
 			fail(bad, "break is not supported directly inside a match arm in v0.2.0; label the enclosing loop")
+		}
+		// An `impossible` arm asserts what pruning infers: the variant
+		// cannot occur for this scrutinee. It is checked, then dropped —
+		// an asserted arm emits nothing.
+		if impossibleArm(raw.clause.Body) {
+			if raw.pat.Root.Wild {
+				fail(raw.clause.Case, "'case _:' cannot be impossible: a wildcard matches anything the indices allow")
+				continue
+			}
+			if len(raw.pat.Alts) > 0 {
+				fail(raw.clause.Case, "an impossible arm takes a single pattern; split the alternatives")
+				continue
+			}
+			if raw.pat.Binder != "" {
+				fail(raw.clause.Case, "an impossible arm cannot bind: there is no value to name")
+				continue
+			}
+			rp, errMsg := r.resolveRPat(raw.pat.Root, rootCol, true, tparamNames)
+			if errMsg != "" {
+				fail(raw.clause.Case, "%s", errMsg)
+				continue
+			}
+			if possible[rp.variant.Name] {
+				if len(idxTerms) > 0 {
+					fail(raw.clause.Case, "this arm is not impossible: the scrutinee's index (%s) does not rule out %s (its index is %s); remove the impossible marker or strengthen the indices",
+						strings.Join(idxTerms, ", "), rp.variant.Name, strings.Join(rp.variant.IndexArgs, ", "))
+				} else {
+					fail(raw.clause.Case, "this arm is not impossible: %s can match a value of type %s; remove the impossible marker",
+						raw.pat.Root.String(), r.localTypeString(tv.Type))
+				}
+				continue
+			}
+			dropped = append(dropped, raw.clause)
+			continue
 		}
 		a := &armAnalysis{clause: raw.clause, carrier: raw.carrier, binderName: raw.pat.Binder}
 		a.body = r.armBodyText(sw, raw)
@@ -286,7 +336,20 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 		return
 	}
 
-	// Flat: in-place type-switch resolution.
+	// Flat: in-place type-switch resolution. A checked impossible arm is
+	// deleted whole — its assertion is discharged and it emits nothing.
+	// The deletion swallows the arm's leading indentation and newline so
+	// the output is byte-identical to the omitted-arm form.
+	for _, cl := range dropped {
+		start := r.off(cl.Pos())
+		for start > 0 && (r.src[start-1] == ' ' || r.src[start-1] == '\t') {
+			start--
+		}
+		if start > 0 && r.src[start-1] == '\n' {
+			start--
+		}
+		r.edits = append(r.edits, lower.Edit{Start: start, End: r.off(cl.End()), New: ""})
+	}
 	totalBindings := 0
 	type armPlan struct {
 		arm      *armAnalysis

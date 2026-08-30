@@ -19,12 +19,15 @@ type Fin[n nat] enum {
 	Succ(Prev Fin[n]) Fin[n+1]
 }
 
-// First returns the head of a non-empty vector.
+// First returns the head of a non-empty vector. The Nil arm is
+// impossible — the index says so, and now the source does too.
 func First[T any](0 n nat, v Vec[T, n+1]) T {
 	match v {
 	case Cons(h, t):
 		_ = t
 		return h
+	case Nil():
+		impossible
 	}
 }
 
@@ -34,6 +37,8 @@ func Rest[T any](0 n nat, v Vec[T, n+1]) Vec[T, n] {
 	case Cons(h, t):
 		_ = h
 		return t
+	case Nil():
+		impossible
 	}
 }
 

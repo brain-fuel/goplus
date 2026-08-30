@@ -163,6 +163,45 @@ Feature: goml, the ML-family surface
     And the file "maybe_gml.go" contains "option.Bind"
     And the file "maybe_gml.go" contains "option.UnwrapOr"
 
+  Scenario: An impossible arm asserts pruning from goml and emits nothing
+    Given a file "vec.goml":
+      """
+      module vec
+
+      type Vec (a : Type) : Nat -> Type where
+        | Nil : Vec a 0
+        | Cons (head : a) (tail : Vec a n) : Vec a (n + 1)
+
+      let First : Vec a (n + 1) -> a
+        | Cons h _ => h
+        | Nil => impossible
+      """
+    When I run goml with arguments "gen ."
+    Then the exit code is 0
+    And the file "vec_gml.go" is valid Go
+    And the file "vec_gml.go" contains:
+      """
+      panic("goplus: First: v with index n+1 cannot be Nil")
+      """
+
+  Scenario: A reachable impossible arm is refused with a goml position
+    Given a file "vec.goml":
+      """
+      module vec
+
+      type Vec (a : Type) : Nat -> Type where
+        | Nil : Vec a 0
+        | Cons (head : a) (tail : Vec a n) : Vec a (n + 1)
+
+      let Sum (v : Vec Int n) : Int :=
+        match v with
+        | Cons h _ => h
+        | Nil => impossible
+      """
+    When I run goml with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "this arm is not impossible"
+
   Scenario: do blocks and select lower to native Go statements
     Given a file "worker.goml":
       """

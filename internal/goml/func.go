@@ -769,6 +769,8 @@ func (w *fnWriter) writeTail(e Expr, ind string) {
 		w.writeDoBlockTail(e, ind)
 	case *SelectExpr:
 		w.writeSelect(e, ind)
+	case *Impossible:
+		fmt.Fprintf(c.b, "%simpossible\n", ind)
 	case *Unit:
 		fmt.Fprintf(c.b, "%sreturn\n", ind)
 	default:
@@ -1101,6 +1103,8 @@ func (c *converter) exprString(e Expr, prec int) string {
 		block := c.captured(func() { c.fw.writeMatchExprAssign(tmp, ":=", e, ind) })
 		c.fw.hoist = append(c.fw.hoist, block)
 		return tmp
+	case *Impossible:
+		c.failf(e.Pos, "impossible is a whole match arm (`| Nil => impossible`), not a value; in an expression-position match, bind the match with a clausal definition instead")
 	case *ListLit:
 		c.failf(e.Pos, "a list literal needs a position whose type is known: annotate the binding (`let xs : Slice Int := [1, 2]`) or pass it to a locally declared function or constructor")
 	case *Unit:

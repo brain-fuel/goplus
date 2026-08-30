@@ -355,6 +355,53 @@ func Pick(xs []int, i int) int {
 	}
 }
 
+func TestConvertImpossibleArm(t *testing.T) {
+	src := `module vec
+
+type Vec (a : Type) : Nat -> Type where
+  | Nil : Vec a 0
+  | Cons (head : a) (tail : Vec a n) : Vec a (n + 1)
+
+let First : Vec a (n + 1) -> a
+  | Cons h _ => h
+  | Nil => impossible
+
+let Rest (v : Vec a (n + 1)) : Vec a n :=
+  match v with
+  | Cons _ t => t
+  | Nil => impossible
+`
+	got := convertOK(t, src)
+	want := `package vec
+
+type Vec[a any, n nat] enum {
+	Nil() Vec[a, 0]
+	Cons(head a, tail Vec[a, n]) Vec[a, n+1]
+}
+
+func First[a any](0 n nat, v Vec[a, n+1]) a {
+	match v {
+	case Cons(h, _):
+		return h
+	case Nil():
+		impossible
+	}
+}
+
+func Rest[a any](0 n nat, v Vec[a, n+1]) Vec[a, n] {
+	match v {
+	case Cons(_, t):
+		return t
+	case Nil():
+		impossible
+	}
+}
+`
+	if got != want {
+		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
 func TestConvertFixity(t *testing.T) {
 	src := `module ops
 
@@ -675,6 +722,7 @@ func TestConvertErrors(t *testing.T) {
 		{"fixityPrec", "module m\ninfixl 9 <+> := F\n", "1 (loosest) to 6"},
 		{"fixityDup", "module m\ninfixl 5 <+> := F\ninfixl 5 <+> := G\n", "already declared"},
 		{"fixityInfix", "module m\ninfix 5 <+> := F\n", "pick infixl or infixr"},
+		{"impossibleValue", "module m\nlet X : Int := impossible", "whole match arm"},
 		{"openLower", "module m\nopen foo exposing (bar)\n", "exposed names are Capitalized"},
 		{"openClash", "module m\nopen foo exposing (Ok)\nopen bar exposing (Ok)\n", "exposed by both"},
 		{"literalPat", "module m\nlet F (x : Int) : Int := match x with | 0 => 1", "expected a pattern"},

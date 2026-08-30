@@ -65,6 +65,7 @@ const (
 	KwDefault
 	KwProp
 	KwInterface
+	KwImpossible
 
 	// Operators and punctuation.
 	Assign   // :=
@@ -117,6 +118,7 @@ var keywords = map[string]Kind{
 	"for": KwFor, "return": KwReturn, "defer": KwDefer, "go": KwGo,
 	"select": KwSelect, "recv": KwRecv, "send": KwSend,
 	"default": KwDefault, "prop": KwProp, "interface": KwInterface,
+	"impossible": KwImpossible,
 }
 
 // opSymAlphabet is the character set operator-symbol runs draw from.
