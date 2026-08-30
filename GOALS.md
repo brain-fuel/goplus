@@ -452,6 +452,13 @@ and `do_dag`** — the kernel needs a totality predicate it can trust, and
 sequenced by value rather than necessity, and C carries the most, because
 its consumers (`std/vec`, `std/smt`) are already spelling around the gap.
 
+**Execution program (2026-08-30):** the stages below, the goml surface
+gaps the roadmap does not cover (prop declarations, interfaces, `open`,
+literals, lambdas, fixity), and the monad-generic railway are sequenced
+into one dependency-ordered milestone program in
+`spec/gap-program-design.md`. That document is normative for ordering;
+this section remains normative for what each stage means.
+
 ### Stage A - decidable indexed programming (shipped foundation)
 
 Retain refinements, GADTs, natural-number/value indices, cross-package markers,
