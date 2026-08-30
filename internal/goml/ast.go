@@ -52,10 +52,11 @@ type Binder struct {
 // multi-column pattern row (clausal definitions over several
 // arguments). The two forms do not mix.
 type Clause struct {
-	Alts []Pattern // or-pattern alternatives (usually one)
-	Row  []Pattern // multi-column row; nil for single-column clauses
-	Body Expr
-	Pos  Pos
+	Alts  []Pattern // or-pattern alternatives (usually one)
+	Row   []Pattern // multi-column row; nil for single-column clauses
+	Guard Expr      // `if` guard; nil when unguarded (v0.20.0)
+	Body  Expr
+	Pos   Pos
 }
 
 // LetDecl is a top-level (or namespace-level) function/value binding.

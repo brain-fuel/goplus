@@ -364,13 +364,16 @@ func (p *parser) parseClauses() []*Clause {
 			}
 		} else {
 			c.Alts = []Pattern{first}
-			for !p.at(FatArrow) {
-				if !p.at(Bar) {
-					p.fail(p.tok().Pos, "expected `|` or `=>` in match clause, found %q", p.tok().Text)
-				}
+			for p.at(Bar) {
 				p.expect(Bar, "`|`")
 				c.Alts = append(c.Alts, p.parsePattern())
 			}
+		}
+		if _, ok := p.accept(KwIf); ok {
+			c.Guard = p.parseOp(1)
+		}
+		if !p.at(FatArrow) {
+			p.fail(p.tok().Pos, "expected `|`, `if`, or `=>` in match clause, found %q", p.tok().Text)
 		}
 		p.expect(FatArrow, "`=>`")
 		c.Body = p.parseExpr()

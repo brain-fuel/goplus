@@ -355,6 +355,62 @@ func Pick(xs []int, i int) int {
 	}
 }
 
+func TestConvertGuards(t *testing.T) {
+	src := `module shape
+
+type Shape :=
+  | Circle (r : Int)
+  | Rect (w : Int) (h : Int)
+
+let Classify (s : Shape) : String :=
+  match s with
+  | Circle r if r > 10 => "big circle"
+  | Circle _ => "circle"
+  | Rect w h if w == h => "square"
+  | Rect _ _ => "rect"
+
+let Grade : Shape -> Int
+  | Circle r if r > 10 => 2
+  | Circle _ => 1
+  | Rect _ _ => 0
+`
+	got := convertOK(t, src)
+	want := `package shape
+
+type Shape enum {
+	Circle(r int)
+	Rect(w int, h int)
+}
+
+func Classify(s Shape) string {
+	match s {
+	case Circle(r) if r > 10:
+		return "big circle"
+	case Circle(_):
+		return "circle"
+	case Rect(w, h) if w == h:
+		return "square"
+	case Rect(_, _):
+		return "rect"
+	}
+}
+
+func Grade(v Shape) int {
+	match v {
+	case Circle(r) if r > 10:
+		return 2
+	case Circle(_):
+		return 1
+	case Rect(_, _):
+		return 0
+	}
+}
+`
+	if got != want {
+		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
 func TestConvertImpossibleArm(t *testing.T) {
 	src := `module vec
 
@@ -726,7 +782,7 @@ func TestConvertErrors(t *testing.T) {
 		{"openLower", "module m\nopen foo exposing (bar)\n", "exposed names are Capitalized"},
 		{"openClash", "module m\nopen foo exposing (Ok)\nopen bar exposing (Ok)\n", "exposed by both"},
 		{"literalPat", "module m\nlet F (x : Int) : Int := match x with | 0 => 1", "expected a pattern"},
-		{"guard", "module m\nlet F (x : Int) : Int := match x with | y if y => y", "expected `|` or `=>`"},
+		{"guardAlts", "module m\ntype T := | A (n : Int) | B\nlet F (t : T) : Int := match t with | A _ | B if true => 1", "cannot take a guard"},
 		{"noModule", "let X := 1\n", "expected `module`"},
 		{"valueMatch", "module m\ntype T := | A | B\nlet S : T := A\nlet V : Int := match S with | A => 1 | B => 2", "cannot hoist at package level"},
 		{"valueIf", "module m\nlet V : Int := if C then 1 else 2", "cannot hoist at package level"},

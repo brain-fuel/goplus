@@ -32,6 +32,7 @@ type armAnalysis struct {
 	pat        *rpat
 	alts       []*rpat // additional alternatives of a multi-pattern arm (v0.12.0)
 	binderName string
+	guard      string // guard expression text; "" when unguarded (v0.20.0)
 	body       string // verbatim body text (chain mode)
 	nested     bool
 	refined    map[string]string // scrutinee tparam name -> ground type text
@@ -148,6 +149,7 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 	var dropped []*ast.CaseClause // checked impossible arms: emit nothing
 	sawWildcard := false
 	anyNested := false
+	anyGuarded := false
 	for i, raw := range rawArms {
 		if sawWildcard {
 			fail(raw.clause.Case, "'case _:' must be the last arm of a match")
@@ -160,6 +162,10 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 		// cannot occur for this scrutinee. It is checked, then dropped —
 		// an asserted arm emits nothing.
 		if impossibleArm(raw.clause.Body) {
+			if raw.guard != "" {
+				fail(raw.clause.Case, "an impossible arm cannot be guarded: it asserts the pattern is ruled out for every value")
+				continue
+			}
 			if raw.pat.Root.Wild {
 				fail(raw.clause.Case, "'case _:' cannot be impossible: a wildcard matches anything the indices allow")
 				continue
@@ -190,9 +196,13 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 			dropped = append(dropped, raw.clause)
 			continue
 		}
-		a := &armAnalysis{clause: raw.clause, carrier: raw.carrier, binderName: raw.pat.Binder}
+		a := &armAnalysis{clause: raw.clause, carrier: raw.carrier, binderName: raw.pat.Binder, guard: raw.guard}
 		a.body = r.armBodyText(sw, raw)
 		if raw.pat.Root.Wild {
+			if a.guard != "" {
+				fail(raw.clause.Case, "'case _:' cannot take a guard: a guarded wildcard would leave the match open; guard a constructor arm and keep an unguarded 'case _:'")
+				continue
+			}
 			sawWildcard = true
 			if i != len(rawArms)-1 {
 				fail(raw.clause.Case, "'case _:' must be the last arm of a match")
@@ -200,6 +210,13 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 			a.pat = &rpat{wild: true, col: rootCol}
 			arms = append(arms, a)
 			continue
+		}
+		if a.guard != "" {
+			if len(raw.pat.Alts) > 0 {
+				fail(raw.clause.Case, "a multi-pattern arm cannot take a guard; split the arm")
+				continue
+			}
+			anyGuarded = true
 		}
 		rp, errMsg := r.resolveRPat(raw.pat.Root, rootCol, true, tparamNames)
 		if errMsg != "" {
@@ -265,7 +282,9 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 		return
 	}
 
-	// Usefulness: reachability per arm, then exhaustiveness.
+	// Usefulness: reachability per arm, then exhaustiveness. A guarded
+	// arm contributes NOTHING to coverage — its guard may be false — so
+	// its row is checked for reachability but never accumulated.
 	u := &usefulCtx{r: r, tparamNames: tparamNames}
 	cols := []patCol{rootCol}
 	var rows [][]syntax.PatNode
@@ -275,7 +294,9 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 			if ok, _ := u.useful(cols, rows, row); !ok && !u.overflow {
 				fail(a.clause.Case, "unreachable match arm: %s is already covered by the arms above", renderWitness(row))
 			}
-			rows = append(rows, row)
+			if a.guard == "" {
+				rows = append(rows, row)
+			}
 		}
 	}
 	if !failed {
@@ -295,11 +316,12 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 	// arm; a later fixpoint iteration applies type-directed wraps at every
 	// mismatched conversion boundary (refine.go), once the arm's bindings
 	// have made its body typable.
+	chainMode := anyNested || anyGuarded
 	for _, a := range arms {
 		if len(a.refined) == 0 {
 			continue
 		}
-		if anyNested {
+		if chainMode {
 			a.body = refineCarrierLine(a.refined) + "\n" + a.body
 		}
 	}
@@ -314,15 +336,15 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 			needsErased = true
 		}
 	}
-	if needsErased && !anyNested {
+	if needsErased && !chainMode {
 		if r.erasedGADTFunction(sw, e, arms, subjText, sawWildcard) {
 			return
 		}
 	}
-	if anyNested {
+	if chainMode {
 		for _, a := range arms {
 			if len(a.alts) > 0 {
-				fail(a.clause.Case, "a multi-pattern arm cannot share a match with nested patterns; split the arm")
+				fail(a.clause.Case, "a multi-pattern arm cannot share a match with nested patterns or guards; split the arm")
 			}
 		}
 		if failed {
@@ -570,6 +592,7 @@ func (r *fileResolver) refineFromPat(pat ast.Expr, actual types.Type, tset map[s
 type matchArm struct {
 	clause  *ast.CaseClause
 	pat     syntax.PatText
+	guard   string // guard expression text; "" when unguarded (v0.20.0)
 	carrier [2]int // byte range of the carrier line (incl. newline)
 }
 
@@ -626,11 +649,19 @@ func (r *fileResolver) collectArms(sw *ast.TypeSwitchStmt) ([]*matchArm, bool) {
 			lineEnd++
 		}
 		patText := strings.TrimSpace(string(r.src[lineStart+len(lower.PatternCarrier) : lineEnd]))
+		guard := ""
+		// A guard travels textually after the pattern. ` if ` cannot
+		// occur inside a pattern (patterns admit no keywords) or inside
+		// a Go expression, so the first occurrence splits exactly.
+		if gi := strings.Index(patText, " if "); gi >= 0 {
+			guard = strings.TrimSpace(patText[gi+4:])
+			patText = strings.TrimSpace(patText[:gi])
+		}
 		pat, err := syntax.ParsePatternText(patText)
 		if err != nil {
 			return nil, false
 		}
-		arms = append(arms, &matchArm{clause: cc, pat: pat, carrier: [2]int{lineStart, lineEnd}})
+		arms = append(arms, &matchArm{clause: cc, pat: pat, guard: guard, carrier: [2]int{lineStart, lineEnd}})
 	}
 	return arms, len(arms) > 0
 }

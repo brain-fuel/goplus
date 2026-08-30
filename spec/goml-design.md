@@ -117,7 +117,7 @@ Helper       = identifier { Binder } [ ":" Type ] ":=" Expr .
                 closed — parent binders must be passed as parameters;
                 helper names are file-unique *)
 Clauses      = { "|" PatternList [ Guard ] "=>" Expr } .        (* clausal defs *)
-Guard        = "if" Expr .                                       (* reserved *)
+Guard        = "if" Expr .                        (* v0.20.0: shipped, both surfaces *)
 Binder       = identifier
              | "(" [ Quantity ] IdentList ":" Type ")"           (* explicit *)
              | "{" [ Quantity ] IdentList ":" Type "}"           (* implicit *)
@@ -738,9 +738,11 @@ pipeline. There is no second elaborator.
   both ways generates byte-identical Go modulo the header — runs in
   `goml/goml_test.go` for the pure and effectful fixtures.
 
-**Deliberate deferrals (parse errors or absences today):** guards and
-literal patterns (core-first, per §9 — both surfaces gain them from one
-shared-core milestone), bare `open` (auto-exposing needs export
+**Deliberate deferrals (parse errors or absences today):** literal
+patterns (gap program C2b — decider-driven interval coverage; guards
+shipped 2026-08-30 in both surfaces per grammar v0.20.0, contributing
+nothing to exhaustiveness until C3's decider-checked coverage),
+bare `open` (auto-exposing needs export
 knowledge the syntactic converter does not have; the exposing form
 below covers the ergonomics), tuples
 (deferred to the Stage F kernel's Sigma per the gap program),

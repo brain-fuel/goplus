@@ -202,6 +202,27 @@ Feature: goml, the ML-family surface
     Then the exit code is 2
     And stderr contains "this arm is not impossible"
 
+  Scenario: Guards flip on in goml and lower to guarded arms
+    Given a file "shape.goml":
+      """
+      module shape
+
+      type Shape :=
+        | Circle (r : Int)
+        | Rect (w : Int) (h : Int)
+
+      let Classify (s : Shape) : String :=
+        match s with
+        | Circle r if r > 10 => "big"
+        | Circle _ => "small"
+        | Rect w h if w == h => "square"
+        | Rect _ _ => "rect"
+      """
+    When I run goml with arguments "gen ."
+    Then the exit code is 0
+    And the file "shape_gml.go" is valid Go
+    And the file "shape_gml.go" contains "if r > 10 {"
+
   Scenario: do blocks and select lower to native Go statements
     Given a file "worker.goml":
       """

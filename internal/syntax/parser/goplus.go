@@ -402,6 +402,13 @@ func (p *parser) parseMatchCase() *CaseClause {
 	if _, wild := cc.Pattern.(*WildcardPattern); wild && len(cc.Alts) > 0 {
 		p.error(cc.Pattern.Pos(), "'_' matches everything; it cannot be combined with other patterns")
 	}
+	// A guard (v0.20.0): `case Cons(h, t) if h > n:`. The expression is
+	// recorded here and travels textually in the pattern carrier.
+	if p.tok == token.IF {
+		cc.If = p.pos
+		p.next()
+		cc.Guard = p.parseRhs()
+	}
 	cc.Colon = p.expect(token.COLON)
 	cc.Body = p.parseStmtList()
 	return cc

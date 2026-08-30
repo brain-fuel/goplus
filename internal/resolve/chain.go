@@ -137,12 +137,25 @@ func stmtTerminates(s ast.Stmt) bool {
 func (r *fileResolver) chainPattern(b *strings.Builder, arm *armAnalysis, rootVal string, temps *int, gotoDone string) {
 	var bindings []string
 	closers := 0
-	ok := r.emitPatChecks(b, arm.pat, rootVal, temps, &bindings, &closers, arm.binderName, arm.body)
+	// The guard sees the pattern's binders, so a binder referenced only
+	// there must still bind: reference analysis runs over guard + body.
+	refText := arm.body
+	if arm.guard != "" {
+		refText = arm.guard + "\n" + arm.body
+	}
+	ok := r.emitPatChecks(b, arm.pat, rootVal, temps, &bindings, &closers, arm.binderName, refText)
 	if !ok {
 		return
 	}
 	for _, bind := range bindings {
 		b.WriteString(bind + "\n")
+	}
+	// A guard is one more check, evaluated after the bindings so the
+	// pattern's binders are in scope; a false guard falls through to
+	// the next arm (v0.20.0).
+	if arm.guard != "" {
+		fmt.Fprintf(b, "if %s {\n", arm.guard)
+		closers++
 	}
 	b.WriteString(arm.body)
 	if gotoDone != "" {

@@ -1,0 +1,44 @@
+(* Go+ v0.20.0 grammar delta: match guards, in both surfaces.
+
+   The complete base grammar is Go plus the declarations and expressions
+   in grammar-v0.19.0.ebnf. One production changes (gap program C2a,
+   spec/gap-program-design.md; the reserved guard production from the
+   goml design flips on).
+*)
+
+CaseClause  = "case" [ identifier ":=" ] Pattern { "," Pattern }
+              [ "if" Expression ] ":" StatementList .        (* .gp *)
+            (* goml: Clauses = { "|" PatternList [ "if" Expr ] "=>" Expr } *)
+
+(*
+  ## A guard runs its arm only when it holds
+
+      case Cons(h, t) if h > n:      -- .gp
+      | Cons h t if h > n =>          -- goml
+
+  A false guard falls through to the next arm, in order. The guard is
+  evaluated after the pattern's bindings, so it sees the binders — and
+  a binder referenced only by the guard still binds.
+
+  ## Guards contribute nothing to exhaustiveness
+
+  This is the decided C2a policy: a guard may be false, so a guarded
+  arm covers no variant. Exhaustiveness still demands unguarded
+  coverage (an unguarded arm or a 'case _:'), and a guarded arm's own
+  reachability is judged by its pattern against the unguarded arms
+  above it. Decider-checked guard coverage (complement pairs proving a
+  variant covered) is deliberately later — it lands with views in C3,
+  where hypothesis-aware coverage has two consumers.
+
+  ## Lowering
+
+  A guarded match lowers through the goto chain (a type switch cannot
+  fall through on a failed check); the guard is one more check between
+  the bindings and the body. Refusals: a wildcard cannot be guarded (it
+  would leave the match open), a multi-pattern arm cannot be guarded
+  (split the arm), an impossible arm cannot be guarded (it asserts the
+  pattern is ruled out for every value).
+
+  Literal patterns — the other half of the reserved production — are
+  C2b, with decider-driven interval coverage.
+*)

@@ -150,7 +150,7 @@ func (c *converter) printLet(d *LetDecl, ns *NamespaceDecl) {
 			clauses := make([]*Clause, len(d.Clauses))
 			for i, cl := range d.Clauses {
 				if cl.Row != nil {
-					clauses[i] = &Clause{Alts: []Pattern{cl.Row[sig.matchCol]}, Body: cl.Body, Pos: cl.Pos}
+					clauses[i] = &Clause{Alts: []Pattern{cl.Row[sig.matchCol]}, Guard: cl.Guard, Body: cl.Body, Pos: cl.Pos}
 				} else {
 					clauses[i] = cl
 				}
@@ -826,6 +826,17 @@ func (w *fnWriter) writeArms(cl *Clause, ind string, body func(bodyInd string)) 
 	c := w.c
 	used := map[string]bool{}
 	usedNames(cl.Body, used)
+	if cl.Guard != nil {
+		// A binder referenced only in the guard still binds.
+		usedNames(cl.Guard, used)
+	}
+	guard := ""
+	if cl.Guard != nil {
+		if len(cl.Alts) > 1 {
+			c.failf(cl.Pos, "a multi-pattern arm cannot take a guard; split the arm")
+		}
+		guard = " if " + c.exprString(cl.Guard, 0)
+	}
 	if len(cl.Alts) > 1 && allNonBinding(cl.Alts) {
 		pats := make([]string, len(cl.Alts))
 		for i, p := range cl.Alts {
@@ -836,7 +847,7 @@ func (w *fnWriter) writeArms(cl *Clause, ind string, body func(bodyInd string)) 
 		return
 	}
 	for _, p := range cl.Alts {
-		fmt.Fprintf(c.b, "%scase %s:\n", ind, c.patString(p, used))
+		fmt.Fprintf(c.b, "%scase %s%s:\n", ind, c.patString(p, used), guard)
 		body(ind + "\t")
 	}
 }

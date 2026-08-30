@@ -155,6 +155,8 @@ type CaseClause struct {
 	Define  token.Pos  // position of ":="; NoPos if absent
 	Pattern Pattern    // WildcardPattern for `case _:`
 	Alts    []Pattern  // additional alternatives of a multi-pattern arm (v0.12.0); nil otherwise
+	If      token.Pos  // position of a guard's `if`; NoPos if absent (v0.20.0)
+	Guard   ast.Expr   // guard expression; nil if absent
 	Colon   token.Pos
 	Body    []ast.Stmt // stock statements; nested matches appear as *ast.BadStmt
 }

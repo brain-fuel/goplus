@@ -108,11 +108,17 @@ postfix `?` in Option-returning functions.
   indices) is precisely F4's surface dependency. Until then a dot
   pattern would have nothing to check. The sigil decision travels with
   F4.
-- **C2** guards + literal patterns, both surfaces simultaneously (the
-  reserved productions flip on). Coverage policy: nat literals count as
-  exhaustive when the decider proves interval exhaustion under
-  hypotheses; guarded arms contribute nothing to exhaustiveness in C2.
-  Interactive-hole **case split** attaches here.
+- **C2a — SHIPPED 2026-08-30 (grammar v0.20.0)**: guards, both surfaces
+  (`case Cons(h, t) if h > n:` / `| Cons h t if h > n =>`). Evaluated
+  after the pattern's bindings; false falls through in order; lowered
+  through the goto chain. Coverage policy as decided: a guarded arm
+  contributes nothing to exhaustiveness, and its own reachability is
+  judged by its pattern against the unguarded arms above. Wildcard,
+  multi-pattern, and impossible arms cannot be guarded. Carrier format
+  unchanged — the guard rides the pattern carrier textually.
+- **C2b** literal patterns (`case 0:`, `case Cons(0, t):`) with
+  decider-driven interval coverage under hypotheses; scalar scrutinees.
+  Interactive-hole **case split** attaches at C2b's close.
 - **C3** `with` abstraction/views (an extra scrutinee column whose
   unification substitution flows across columns) + decider-checked guard
   coverage.
