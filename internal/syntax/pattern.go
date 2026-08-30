@@ -18,6 +18,7 @@ type PatText struct {
 // PatNode is one node of a textual pattern tree.
 type PatNode struct {
 	Wild    bool   // `_`
+	Lit     string // integer literal text (v0.21.0 scalar arms); "" otherwise
 	Qual    string // qualifier before '.', e.g. "lib" or "Option"; "" if bare
 	Name    string // constructor (or binder) name
 	HasArgs bool   // distinguishes None from None()
@@ -76,6 +77,11 @@ func (p *patParser) next() {
 }
 
 func (p *patParser) pattern() (PatNode, error) {
+	if p.tok == token.INT {
+		n := PatNode{Lit: p.lit}
+		p.next()
+		return n, nil
+	}
 	if p.tok != token.IDENT {
 		return PatNode{}, fmt.Errorf("expected pattern, found %s", p.tok)
 	}
@@ -120,6 +126,9 @@ func (p *patParser) pattern() (PatNode, error) {
 func (n PatNode) String() string {
 	if n.Wild {
 		return "_"
+	}
+	if n.Lit != "" {
+		return n.Lit
 	}
 	out := n.Name
 	if n.Qual != "" {

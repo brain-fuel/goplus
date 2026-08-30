@@ -395,6 +395,9 @@ func (p *parser) parsePattern() Pattern {
 		inner := p.parsePattern()
 		p.expect(RParen, "`)` closing pattern")
 		return inner
+	case INT:
+		p.i++
+		return &PLit{Text: t.Text, Pos: t.Pos}
 	case IDENT:
 		p.i++
 		if t.Text == "_" {

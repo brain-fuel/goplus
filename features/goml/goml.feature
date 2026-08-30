@@ -223,6 +223,25 @@ Feature: goml, the ML-family surface
     And the file "shape_gml.go" is valid Go
     And the file "shape_gml.go" contains "if r > 10 {"
 
+  Scenario: Literal patterns prove coverage from goml hypotheses
+    Given a file "names.goml":
+      """
+      module names
+
+      let Name (n : Nat) (0 p : Lt n 3) : String :=
+        match n with
+        | 0 => "zero"
+        | 1 => "one"
+        | 2 => "two"
+      """
+    When I run goml with arguments "gen ."
+    Then the exit code is 0
+    And the file "names_gml.go" is valid Go
+    And the file "names_gml.go" contains:
+      """
+      panic("goplus: match on n: value outside the proven range")
+      """
+
   Scenario: do blocks and select lower to native Go statements
     Given a file "worker.goml":
       """
@@ -305,7 +324,7 @@ Feature: goml, the ML-family surface
       """
       module bad
 
-      let X := match y with | 0 => 1
+      let X := match y with | 1.5 => 1
       """
     When I run goml with arguments "gen ."
     Then the exit code is 2

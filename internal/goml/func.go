@@ -875,6 +875,8 @@ func (c *converter) patString(p Pattern, used map[string]bool) string {
 	switch p := p.(type) {
 	case *PWild:
 		return "_"
+	case *PLit:
+		return p.Text
 	case *PBind:
 		if used == nil || used[p.Name] {
 			return p.Name

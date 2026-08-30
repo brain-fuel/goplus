@@ -1,0 +1,54 @@
+(* Go+ v0.21.0 grammar delta: literal patterns and scalar matches.
+
+   The complete base grammar is Go plus the declarations and expressions
+   in grammar-v0.20.0.ebnf. Pattern gains a literal production, and
+   match gains a second scrutinee class (gap program C2b,
+   spec/gap-program-design.md).
+*)
+
+Pattern      = "_" | int_lit | ConstructorPattern .
+ScalarMatch  = "match" Expression "{"
+               { "case" ( int_lit [ "if" Expression ]
+                        | identifier | "_" ) ":" StatementList }
+               "}" .
+             (* goml: `| 0 => …`, `| k => …` through the same clauses *)
+
+(*
+  ## Exhaustiveness over literals is the decider's judgment
+
+  This is the work the guards-and-literals deferral named. A match over
+  an integer scrutinee accepts literal arms; without a binder or '_'
+  fallback, the arms must cover 0..k-1 contiguously AND a hypothesis in
+  scope must prove scrutinee < k:
+
+      func Name(n nat, 0 p Lt[n, 3]) string {
+      	match n {
+      	case 0: return "zero"
+      	case 1: return "one"
+      	case 2: return "two"
+      	}
+      }
+
+  The same `Lt[n, 3]` that prunes an enum variant proves this match
+  total. Without it the refusal names the missing fact. Contiguity is
+  required because the decider proves bounds, not disjunctions; a
+  gapped literal set needs a fallback arm.
+
+  ## Semantics and lowering
+
+  Literal arms select by equality in order; guards compose (`case 1 if
+  n > 0:`); the fallback arm binds (`case k:`) or discards (`case _:`),
+  is unguarded, and comes last. A duplicate literal is unreachable.
+  The lowering is an if-chain over a once-evaluated temporary, ending
+  in a boundary panic when coverage was proved — hypotheses are static
+  and plain Go callers are not, the same honesty as every erased
+  boundary.
+
+  ## Deliberately later
+
+  Literal patterns inside constructor arguments (`case Cons(0, t):`)
+  are C2c — they extend the Maranget universe per column; until then
+  the refusal spells the workaround: `case Cons(x, t) if x == 0:`.
+  Impossible arms on scalar matches likewise wait; omit the arm —
+  coverage is already decided from the hypotheses.
+*)

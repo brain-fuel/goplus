@@ -193,7 +193,7 @@ Feature: Match statements
     Then the exit code is 0
     And stdout contains "HT"
 
-  Scenario: A non-enum scrutinee is an error
+  Scenario: A constructor pattern cannot match a scalar scrutinee
     Given a Go+ file "main.gp":
       """
       package main
@@ -211,7 +211,23 @@ Feature: Match statements
       """
     When I run goplus with arguments "gen ."
     Then the exit code is 2
-    And stderr contains "match requires an enum-typed scrutinee; x has type int"
+    And stderr contains "pattern Point cannot match here: the value is not an enum"
+
+  Scenario: A non-enum, non-integer scrutinee is an error
+    Given a Go+ file "main.gp":
+      """
+      package main
+
+      func main() {
+      	x := "s"
+      	match x {
+      	case _:
+      	}
+      }
+      """
+    When I run goplus with arguments "gen ."
+    Then the exit code is 2
+    And stderr contains "match requires an enum-typed scrutinee; x has type string"
 
   Scenario: A bare break inside an arm is rejected
     Given a Go+ file "main.gp":

@@ -420,6 +420,11 @@ func (p *parser) parsePattern() Pattern {
 		p.next()
 		return w
 	}
+	if p.tok == token.INT {
+		lp := &LiteralPattern{ValuePos: p.pos, Value: p.lit}
+		p.next()
+		return lp
+	}
 	if p.tok != token.IDENT {
 		p.errorExpected(p.pos, "pattern")
 		w := &WildcardPattern{UnderscorePos: p.pos}

@@ -355,6 +355,51 @@ func Pick(xs []int, i int) int {
 	}
 }
 
+func TestConvertLiteralPatterns(t *testing.T) {
+	src := `module names
+
+let Name (n : Nat) (0 p : Lt n 3) : String :=
+  match n with
+  | 0 => "zero"
+  | 1 => "one"
+  | 2 => "two"
+
+let Describe (n : Nat) : String :=
+  match n with
+  | 0 => "none"
+  | 1 => "single"
+  | k => "many"
+`
+	got := convertOK(t, src)
+	want := `package names
+
+func Name(n nat, 0 p Lt[n, 3]) string {
+	match n {
+	case 0:
+		return "zero"
+	case 1:
+		return "one"
+	case 2:
+		return "two"
+	}
+}
+
+func Describe(n nat) string {
+	match n {
+	case 0:
+		return "none"
+	case 1:
+		return "single"
+	case _:
+		return "many"
+	}
+}
+`
+	if got != want {
+		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
 func TestConvertGuards(t *testing.T) {
 	src := `module shape
 
@@ -781,7 +826,7 @@ func TestConvertErrors(t *testing.T) {
 		{"impossibleValue", "module m\nlet X : Int := impossible", "whole match arm"},
 		{"openLower", "module m\nopen foo exposing (bar)\n", "exposed names are Capitalized"},
 		{"openClash", "module m\nopen foo exposing (Ok)\nopen bar exposing (Ok)\n", "exposed by both"},
-		{"literalPat", "module m\nlet F (x : Int) : Int := match x with | 0 => 1", "expected a pattern"},
+		{"floatPat", "module m\nlet F (x : Float64) : Int := match x with | 1.5 => 1", "expected a pattern"},
 		{"guardAlts", "module m\ntype T := | A (n : Int) | B\nlet F (t : T) : Int := match t with | A _ | B if true => 1", "cannot take a guard"},
 		{"noModule", "let X := 1\n", "expected `module`"},
 		{"valueMatch", "module m\ntype T := | A | B\nlet S : T := A\nlet V : Int := match S with | A => 1 | B => 2", "cannot hoist at package level"},

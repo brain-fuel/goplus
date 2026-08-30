@@ -485,6 +485,9 @@ func (r *fileResolver) resolveRPat(node syntax.PatNode, col patCol, topLevel boo
 	if node.Wild {
 		return &rpat{wild: true, col: col}, ""
 	}
+	if node.Lit != "" {
+		return nil, fmt.Sprintf("literal patterns inside constructor arguments arrive with C2c; bind and guard instead: `case Cons(x, t) if x == %s:`", node.Lit)
+	}
 	if col.enum == nil {
 		if node.HasArgs || node.Qual != "" {
 			return nil, fmt.Sprintf("pattern %s cannot match here: the value is not an enum", node.String())

@@ -739,10 +739,10 @@ pipeline. There is no second elaborator.
   `goml/goml_test.go` for the pure and effectful fixtures.
 
 **Deliberate deferrals (parse errors or absences today):** literal
-patterns (gap program C2b — decider-driven interval coverage; guards
-shipped 2026-08-30 in both surfaces per grammar v0.20.0, contributing
-nothing to exhaustiveness until C3's decider-checked coverage),
-bare `open` (auto-exposing needs export
+patterns inside constructor arguments (gap program C2c; guards and
+scalar-scrutinee literals shipped 2026-08-30 per grammars v0.20.0 and
+v0.21.0 — a bounded nat matches by literals alone when a hypothesis
+proves the bound), bare `open` (auto-exposing needs export
 knowledge the syntactic converter does not have; the exposing form
 below covers the ergonomics), tuples
 (deferred to the Stage F kernel's Sigma per the gap program),

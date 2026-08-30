@@ -433,6 +433,14 @@ type PCtor struct {
 
 func (p *PCtor) patPos() Pos { return p.Pos }
 
+// PLit is an integer-literal pattern on a scalar scrutinee (v0.21.0).
+type PLit struct {
+	Text string
+	Pos  Pos
+}
+
+func (p *PLit) patPos() Pos { return p.Pos }
+
 // LetStar is monadic bind: `let* pat = e in body` (lowers to `pat := e?`).
 type LetStar struct {
 	Pat  Pattern

@@ -116,9 +116,20 @@ postfix `?` in Option-returning functions.
   judged by its pattern against the unguarded arms above. Wildcard,
   multi-pattern, and impossible arms cannot be guarded. Carrier format
   unchanged — the guard rides the pattern carrier textually.
-- **C2b** literal patterns (`case 0:`, `case Cons(0, t):`) with
-  decider-driven interval coverage under hypotheses; scalar scrutinees.
-  Interactive-hole **case split** attaches at C2b's close.
+- **C2b — SHIPPED 2026-08-30 (grammar v0.21.0)**: literal patterns on
+  scalar scrutinees, both surfaces (`match n { case 0: … }` /
+  `| 0 => …`). Coverage is decided: without a binder/`_` fallback the
+  literals must cover 0..k-1 contiguously and a hypothesis must prove
+  scrutinee < k (`Lt[n, 3]` proves a three-arm match total — the same
+  fact that prunes an enum variant). Guards compose; duplicates are
+  unreachable; the lowering is an if-chain ending in a boundary panic.
+  Contiguity is required because the decider proves bounds, not
+  disjunctions.
+- **C2c** literal patterns inside constructor arguments
+  (`case Cons(0, t):`) — extends the Maranget universe per column; the
+  refusal meanwhile spells bind-and-guard. Impossible arms on scalar
+  matches ride along. Interactive-hole **case split** attaches at
+  C2c's close.
 - **C3** `with` abstraction/views (an extra scrutinee column whose
   unification substitution flows across columns) + decider-checked guard
   coverage.

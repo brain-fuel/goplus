@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"goforge.dev/goplus/internal/core"
 	"goforge.dev/goplus/internal/lower"
 	"goforge.dev/goplus/internal/registry"
 	"goforge.dev/goplus/internal/syntax"
@@ -89,6 +90,10 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 		}
 	}
 	if e == nil {
+		if bt, isBasic := tv.Type.Underlying().(*types.Basic); isBasic && bt.Info()&types.IsInteger != 0 {
+			r.scalarMatchCandidate(sw, subj, rawArms)
+			return
+		}
 		if r.report {
 			r.errorf(subj.Pos(), "match requires an enum-typed scrutinee; %s has type %s",
 				r.text(subj.Pos(), subj.End()), r.localTypeString(tv.Type))
@@ -445,6 +450,149 @@ func (r *fileResolver) matchCandidate(sw *ast.TypeSwitchStmt) {
 			New:   "",
 		})
 	}
+}
+
+// scalarMatchCandidate resolves a match over an integer scrutinee
+// (v0.21.0, gap program C2b): literal arms, guards, and an optional
+// trailing binder or wildcard arm, lowered to an if-chain. Coverage is
+// decided: without a fallback arm the literals must form the contiguous
+// prefix 0..k-1 and the hypotheses in scope must prove scrutinee < k.
+func (r *fileResolver) scalarMatchCandidate(sw *ast.TypeSwitchStmt, subj ast.Expr, rawArms []*matchArm) {
+	subjText := r.text(subj.Pos(), subj.End())
+	hyps := r.scopeHypothesesAt(subj.Pos())
+	resolve := fileCallResolver(r.pkg.PkgPath, r.file)
+	failed := false
+	fail := func(pos token.Pos, format string, args ...any) {
+		r.errorf(pos, format, args...)
+		failed = true
+	}
+
+	type scalarArm struct {
+		raw    *matchArm
+		lit    string // literal text; "" for the fallback arm
+		binder string // fallback binder name; "" for _ or literal arms
+		body   string
+	}
+	var arms []*scalarArm
+	seen := map[uint64]token.Pos{}
+	var values []uint64
+	hasFallback := false
+	for i, raw := range rawArms {
+		if impossibleArm(raw.clause.Body) {
+			fail(raw.clause.Case, "impossible arms on a scalar match are not supported yet; omit the arm — coverage is decided from the hypotheses in scope")
+			continue
+		}
+		if raw.pat.Binder != "" || len(raw.pat.Alts) > 0 || raw.pat.Root.HasArgs || raw.pat.Root.Qual != "" {
+			fail(raw.clause.Case, "a scalar match arm is a literal, a binder, or '_'")
+			continue
+		}
+		a := &scalarArm{raw: raw, body: r.armBodyText(sw, raw)}
+		switch {
+		case raw.pat.Root.Wild:
+			a.binder = ""
+		case raw.pat.Root.Lit != "":
+			v, err := strconv.ParseUint(raw.pat.Root.Lit, 0, 64)
+			if err != nil {
+				fail(raw.clause.Case, "cannot read literal pattern %q", raw.pat.Root.Lit)
+				continue
+			}
+			if prev, dup := seen[v]; dup {
+				_ = prev
+				fail(raw.clause.Case, "unreachable match arm: %s is already covered by the arms above", raw.pat.Root.Lit)
+				continue
+			}
+			if raw.guard == "" {
+				seen[v] = raw.clause.Case
+				values = append(values, v)
+			}
+			a.lit = raw.pat.Root.Lit
+		default:
+			// A bare lowercase name binds the value; Capitalized would be
+			// a constructor, which a scalar has none of.
+			if raw.pat.Root.Name != "" && raw.pat.Root.Name[0] >= 'A' && raw.pat.Root.Name[0] <= 'Z' {
+				fail(raw.clause.Case, "pattern %s cannot match here: the value is not an enum", raw.pat.Root.String())
+				continue
+			}
+			a.binder = raw.pat.Root.Name
+		}
+		if a.lit == "" {
+			// Fallback arm: unguarded, and last.
+			if raw.guard != "" {
+				fail(raw.clause.Case, "the fallback arm of a scalar match cannot take a guard: it is what makes the match exhaustive")
+				continue
+			}
+			if i != len(rawArms)-1 {
+				fail(raw.clause.Case, "the binder or '_' arm must be the last arm of a scalar match")
+				continue
+			}
+			hasFallback = true
+		}
+		arms = append(arms, a)
+	}
+	if failed {
+		return
+	}
+	if len(arms) == 0 {
+		fail(sw.Pos(), "a scalar match needs at least one arm")
+		return
+	}
+
+	if !hasFallback {
+		// Contiguity: the unguarded literals must be exactly 0..k-1.
+		k := uint64(len(values))
+		covered := true
+		for _, v := range values {
+			if v >= k {
+				covered = false
+				break
+			}
+		}
+		if !covered {
+			fail(sw.Pos(), "non-exhaustive match on %s: without a binder or '_' arm the literals must cover 0..k-1 contiguously", subjText)
+			return
+		}
+		ok, err := core.DecidePropNamed(r.reg.PropDefs(), hyps, core.PropLt, subjText, strconv.FormatUint(k, 10), nil, r.reg.TotalDefs(), resolve)
+		if err != nil || !ok {
+			fail(sw.Pos(), "non-exhaustive match on %s: the arms cover 0..%d, and no hypothesis in scope proves %s < %d; add a binder or '_' arm, or a proposition parameter",
+				subjText, k-1, subjText, k)
+			return
+		}
+	}
+
+	// Emission: an if-chain over a once-evaluated temporary. The decided
+	// coverage still ends in a boundary panic — hypotheses are static,
+	// and a plain Go caller can pass anything.
+	varName, _, _ := skeletonGuard(sw)
+	tmp := "__gp_s" + strings.TrimPrefix(varName, "__gp_m")
+	var b strings.Builder
+	b.WriteString("{\n")
+	fmt.Fprintf(&b, "%s := %s\n", tmp, subjText)
+	for i, a := range arms {
+		if i > 0 {
+			b.WriteString(" else ")
+		}
+		switch {
+		case a.lit != "":
+			cond := fmt.Sprintf("%s == %s", tmp, a.lit)
+			if a.raw.guard != "" {
+				cond += " && (" + a.raw.guard + ")"
+			}
+			fmt.Fprintf(&b, "if %s {\n%s\n}", cond, a.body)
+		case a.binder != "":
+			fmt.Fprintf(&b, "{\n%s := %s\n%s\n}", a.binder, tmp, a.body)
+		default:
+			fmt.Fprintf(&b, "{\n%s\n}", a.body)
+		}
+	}
+	if !hasFallback {
+		fmt.Fprintf(&b, " else {\npanic(\"goplus: match on %s: value outside the proven range\")\n}", subjText)
+	}
+	b.WriteString("\n}")
+	r.edits = append(r.edits, lower.Edit{
+		Start: r.off(sw.Pos()),
+		End:   r.off(sw.End()),
+		New:   b.String(),
+	})
 }
 
 func matchArmsTerminate(match *ast.TypeSwitchStmt) bool {

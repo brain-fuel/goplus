@@ -182,7 +182,7 @@ func TestREPLRejectsModuleInput(t *testing.T) {
 }
 
 func TestREPLParseErrorIsPositioned(t *testing.T) {
-	_, errOut := runREPLScript(t, "let F := match y with | 0 => 1\n:quit\n")
+	_, errOut := runREPLScript(t, "let F := match y with | 1.5 => 1\n:quit\n")
 	if !strings.Contains(errOut, "<stdin>:1:") {
 		t.Errorf("parse error not positioned at the user's line:\n%s", errOut)
 	}

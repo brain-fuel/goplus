@@ -175,6 +175,17 @@ func (p *WildcardPattern) Pos() token.Pos { return p.UnderscorePos }
 func (p *WildcardPattern) End() token.Pos { return p.UnderscorePos + 1 }
 func (p *WildcardPattern) pattern()       {}
 
+// LiteralPattern is an integer literal arm on a scalar scrutinee
+// (v0.21.0): `case 0:`.
+type LiteralPattern struct {
+	ValuePos token.Pos
+	Value    string
+}
+
+func (p *LiteralPattern) Pos() token.Pos { return p.ValuePos }
+func (p *LiteralPattern) End() token.Pos { return p.ValuePos + token.Pos(len(p.Value)) }
+func (p *LiteralPattern) pattern()       {}
+
 // ConstructorPattern is `Name(args…)` or a bare `Name`. With Lparen ==
 // token.NoPos it is a bare name: a nullary constructor or a field binder —
 // the parser does not decide; resolution does (a constructor name shadows
