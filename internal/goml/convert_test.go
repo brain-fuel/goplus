@@ -124,6 +124,54 @@ func Cast[a any](0 n nat, 0 m nat, 0 p Eq[n, m], v Vec[a, n]) Vec[a, m] {
 	}
 }
 
+func TestConvertPropDecl(t *testing.T) {
+	src := `module vec
+
+type Vec (a : Type) : Nat -> Type where
+  | Nil : Vec a 0
+  | Cons (head : a) (tail : Vec a n) : Vec a (n + 1)
+
+-- InRange names the bound facts, never a value.
+type InRange (i : Nat) (n : Nat) := prop { And (Le 0 i) (Lt i n) }
+
+type Same (n : Nat) (m : Nat) := prop { n = m }
+
+let At {0 i n : Nat} (0 p : InRange i n) (v : Vec a n) : a :=
+  match v with
+  | Cons h _ => h
+
+let Pick (v : Vec Int 3) : Int :=
+  At 1 3 decide v
+`
+	got := convertOK(t, src)
+	want := `package vec
+
+type Vec[a any, n nat] enum {
+	Nil() Vec[a, 0]
+	Cons(head a, tail Vec[a, n]) Vec[a, n+1]
+}
+
+// InRange names the bound facts, never a value.
+type InRange[i nat, n nat] prop { And[Le[0, i], Lt[i, n]] }
+
+type Same[n nat, m nat] prop { Eq[n, m] }
+
+func At[a any](0 i nat, 0 n nat, 0 p InRange[i, n], v Vec[a, n]) a {
+	match v {
+	case Cons(h, _):
+		return h
+	}
+}
+
+func Pick(v Vec[int, 3]) int {
+	return At(1, 3, decide, v)
+}
+`
+	if got != want {
+		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
 func TestConvertTailAndIf(t *testing.T) {
 	src := `module sums
 
@@ -233,6 +281,9 @@ func TestConvertErrors(t *testing.T) {
 		{"whileMatch", "module m\ntype T := | A | B\nlet F (t : T) : Int := do { while (match t with | A => true | B => false) do { }; 1 }", "while condition cannot contain a match"},
 		{"holeDuplicate", "module m\nlet F (a b : Int) : Int := ?gap + ?gap", "hole ?gap already appears"},
 		{"holeSpaced", "module m\nlet F (n : Int) : Int := ? gap", "a typed hole is spelled ?name"},
+		{"propDeriving", "module m\ntype P (n : Nat) := prop { Lt 0 n } deriving Eq", "cannot derive"},
+		{"propImplicitBinder", "module m\ntype P {n : Nat} := prop { Lt 0 n }", "prop parameters are explicit"},
+		{"propKind", "module m\ntype P : Nat -> Type := prop { Lt 0 n }", "takes binders, not a kind"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

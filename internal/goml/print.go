@@ -514,6 +514,19 @@ func (c *converter) printType(d *TypeDecl) {
 	case d.Refine != nil:
 		fmt.Fprintf(c.b, "type %s refine(%s %s) { %s }\n",
 			d.Name, d.Refine.Binder, c.typeString(d.Refine.Base), c.exprString(d.Refine.Pred, 0))
+	case d.Prop != nil:
+		var parts []string
+		for _, b := range d.Binders {
+			sort := c.binderSort(b)
+			for _, n := range b.Names {
+				parts = append(parts, n+" "+sort)
+			}
+		}
+		tparams := ""
+		if len(parts) > 0 {
+			tparams = "[" + strings.Join(parts, ", ") + "]"
+		}
+		fmt.Fprintf(c.b, "type %s%s prop { %s }\n", d.Name, tparams, c.fullTypeString(d.Prop))
 	case d.Alias != nil:
 		fmt.Fprintf(c.b, "type %s = %s\n", d.Name, c.typeString(d.Alias))
 	default:

@@ -51,6 +51,34 @@ Feature: goml, the ML-family surface
     And the file "vec_gml.go" contains "func First[a any](v Vec[a]) a"
     And the file "vec_gml.go" does not contain "func First[a any](n nat"
 
+  Scenario: A named proposition declares, erases, and prunes from goml
+    Given a file "vec.goml":
+      """
+      module vec
+
+      type Vec (a : Type) : Nat -> Type where
+        | Nil : Vec a 0
+        | Cons (head : a) (tail : Vec a n) : Vec a (n + 1)
+
+      type InRange (i : Nat) (n : Nat) := prop { And (Le 0 i) (Lt i n) }
+
+      let At {0 i n : Nat} (0 p : InRange i n) (v : Vec a n) : a :=
+        match v with
+        | Cons h _ => h
+
+      let Pick (v : Vec Int 3) : Int :=
+        At 1 3 decide v
+      """
+    When I run goml with arguments "gen ."
+    Then the exit code is 0
+    And the file "vec_gml.go" is valid Go
+    And the file "vec_gml.go" contains "//goplus:prop InRange[i, n] And[Le[0, i], Lt[i, n]]"
+    And the file "vec_gml.go" does not contain "prop {"
+    And the file "vec_gml.go" contains:
+      """
+      panic("goplus: At: v with index n cannot be Nil")
+      """
+
   Scenario: do blocks and select lower to native Go statements
     Given a file "worker.goml":
       """

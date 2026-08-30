@@ -63,6 +63,7 @@ const (
 	KwRecv
 	KwSend
 	KwDefault
+	KwProp
 
 	// Operators and punctuation.
 	Assign   // :=
@@ -113,7 +114,7 @@ var keywords = map[string]Kind{
 	"end": KwEnd, "do": KwDo, "mut": KwMut, "while": KwWhile,
 	"for": KwFor, "return": KwReturn, "defer": KwDefer, "go": KwGo,
 	"select": KwSelect, "recv": KwRecv, "send": KwSend,
-	"default": KwDefault,
+	"default": KwDefault, "prop": KwProp,
 }
 
 // Pos is a 1-based source position in the .goml file.

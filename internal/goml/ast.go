@@ -94,6 +94,7 @@ type TypeDecl struct {
 	Where    bool // GADT where-form
 	Record   []*Field
 	Refine   *Refine
+	Prop     Type // named proposition body: := prop { P }
 	Alias    Type
 	Deriving []string
 	Pos      Pos

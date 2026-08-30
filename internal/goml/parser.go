@@ -471,10 +471,26 @@ func (p *parser) parseTypeDecl(doc []string, attrs []Attr) *TypeDecl {
 		d.Sum = p.parseCtors(false)
 	case LBrace:
 		p.parseRecordOrRefine(d)
+	case KwProp:
+		p.i++
+		if len(d.Kind) > 0 {
+			p.fail(d.Pos, "a prop declaration takes binders, not a kind")
+		}
+		for _, b := range d.Binders {
+			if b.Implicit {
+				p.fail(b.Pos, "prop parameters are explicit `(i : Nat)` binders")
+			}
+		}
+		p.expect(LBrace, "`{` opening the proposition")
+		d.Prop = p.parseType()
+		p.expect(RBrace, "`}` closing the proposition")
 	default:
 		d.Alias = p.parseType()
 	}
 	d.Deriving = p.parseDeriving()
+	if d.Prop != nil && len(d.Deriving) > 0 {
+		p.fail(d.Pos, "a prop declaration names facts, not values; it cannot derive")
+	}
 	return d
 }
 

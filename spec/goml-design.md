@@ -113,7 +113,7 @@ Quantity     = "0" | "1" | identifier .                          (* QTT; ident n
 
 TypeDecl     = "type" identifier { Binder } [ ":" IndexArrow "Type" ]
                ( ":=" SumBody | "where" CtorSigs | ":=" RecordBody
-               | ":=" RefineBody | ":=" Type )
+               | ":=" RefineBody | ":=" PropBody | ":=" Type )
                [ "deriving" identifier { "," identifier } ] .
 IndexArrow   = { AtomicType "->" } .                             (* Nat -> State -> *)
 SumBody      = [ "|" ] Ctor { "|" Ctor } .
@@ -126,6 +126,7 @@ Field        = identifier ":" Type { Attr } .
              (* @[delegate]; @[json "port", yaml "port"] lowers to Go
                 struct tags `json:"port" yaml:"port"` *)
 RefineBody   = "{" identifier ":" Type "|" Expr "}" .            (* subset type *)
+PropBody     = "prop" "{" Type "}" .                             (* named proposition *)
 
 ClassDecl    = "class" identifier Binder [ "extends" Type { "," Type } ]
                "where" { ClassMember } .
@@ -629,7 +630,11 @@ pipeline. There is no second elaborator.
 - The declarative surface: sum types (leading `|` required), GADT
   `where`-form with inferred index binder names, records with
   `@[delegate]` and `@[json "…"]` tag attributes, refinement
-  comprehensions, aliases; classes (signature- and binder-form ops,
+  comprehensions, aliases, **named propositions**
+  (`type InRange (i : Nat) (n : Nat) := prop { And (Le 0 i) (Lt i n) }`
+  lowering to the v0.156.0 `.gp` form; explicit binders only, no
+  deriving — added 2026-08-30 under the gap program,
+  `spec/gap-program-design.md`); classes (signature- and binder-form ops,
   defaults, laws, `extends`), named instances with **typed or bare
   members** (bare members infer their types from a locally declared
   class through its extends chain), `deriving`, `@[box pointer]` /
