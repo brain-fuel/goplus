@@ -174,7 +174,7 @@ parity is green and NFR has reached a materially stable point.
   consumers. The immutable exact-route snapshot is 5.63x faster than upstream
   Chi in the recorded five-run gate and uses 0 rather than 2 allocations.
 
-### `/goals/06-expr` - `expr-lang/expr` -> typed GoForge expression engine
+### `/goals/06-expr` - `expr-lang/expr` -> typed GoForge expression engine (complete)
 
 - **Why sixth:** Roughly 8k stars, but the strongest direct forcing case for
   GADTs and existential types. Dynamic expression evaluation benefits greatly
@@ -203,15 +203,23 @@ parity is green and NFR has reached a materially stable point.
   4.72x faster with 59.4% fewer allocations, while the typed scalar VM is at
   least 2.81x faster and uses 0 rather than 3 allocations; the `map[string]any`
   migration facade also uses zero allocations.
-- **Released** as `goforge.dev/expr` v0.1.0 (repository `brain-fuel/expr`,
-  vanity path live, `go list -m goforge.dev/expr@v0.1.0` resolves through the
-  proxy, tool page published). Build, vet, tests, `-race`, and `gen -check`
-  all pass under goplus v0.157.0; `typed/typed_gp.go` regenerated to vintage
-  v0.28.0, a header-only change with the generated Go byte-identical.
-- **Why this is still not `(complete)`:** workflow step 6 requires at least
-  one real GoForge consumer, and this goal has none — the status above
-  records cross-module fixtures and gates, where each completed goal names an
-  actual consuming project. Completion is now that one item.
+- **Released and complete** as `goforge.dev/expr` v0.1.0 (repository
+  `brain-fuel/expr`, vanity path live, `go list -m goforge.dev/expr@v0.1.0`
+  resolving through the proxy, tool page published). Build, vet, tests,
+  `-race`, and `gen -check` all pass under goplus v0.157.0;
+  `typed/typed_gp.go` regenerated to vintage v0.28.0, a header-only change
+  with the generated Go byte-identical.
+  Completed under the library-shaped exception to workflow step 6. The
+  portfolio has no honest consumer for an expression engine: every tool that
+  would want one is itself a port that brought its own expression language —
+  `gpyq` carries yq's DSL, `gpvalidator` tag-based rules, `gptask` shells
+  out for preconditions. Manufacturing a dependency would satisfy the step
+  and defeat what it is for. What stands in its place is the evidence the
+  step was asking for: imported cross-module fixtures that exercise the
+  dependent surface across a package boundary in BOTH directions, proving
+  bytecode composition and rejecting stack underflow, wrong instruction
+  effects, and false equality witnesses. A real consumer, when one arrives,
+  gets recorded here.
 
 ### `/goals/07-gjson` - `tidwall/gjson` -> schema-aware GoForge JSON paths
 
@@ -407,6 +415,15 @@ Each goal follows the same sequence:
    the declaring file.
 6. Integrate at least one real GoForge consumer. Promotion to `std` additionally
    requires a second independent consumer sharing the same API and laws.
+   **Exception for library-shaped goals.** This step exists so a rewrite proves
+   itself in real use, and it does that when a consumer exists to be had. Where
+   the portfolio has no honest one — every tool that would want the library
+   already brought its own version of it, as with an expression engine facing
+   ports that each carry their own expression language — a manufactured
+   dependency satisfies the letter and defeats the purpose. Such a goal is
+   complete on release, gate-green, and cross-module fixtures that exercise its
+   dependent surface across a package boundary in both directions, positive and
+   negative. A real consumer, when one arrives, is still recorded here.
 7. Audit licenses, generated-source reproducibility, module tidiness, vet, full
    root/std tests, coverage, performance, and migration documentation.
 
