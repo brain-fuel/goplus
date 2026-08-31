@@ -525,24 +525,35 @@ it. This is the rule typed holes already followed, generalized.
 Stage B made preconditions statable. Matching is where they are CONSUMED,
 and it is the daily ergonomics gap against Idris2. Go+ already has GADT
 matching, index refinement, exhaustiveness, and (v0.154.0) pruning driven
-by a proposition in scope. What it does not have:
+by a proposition in scope. What it did not have, and where each stands
+(v0.158.0 opened the stage):
 
-- **Guards and literal patterns** (`case P if cond:` / `| P if cond =>`).
-  Reserved productions in both surfaces since the goml design, deferred
-  because exhaustiveness over literals needs decider work. They land in
-  `.gp` and goml simultaneously, per that decision.
-- **Dot patterns** — a pattern position forced by unification, written as
-  such rather than rebound. Today the forced value is either spelled again
-  (and must be proved equal) or the arm cannot be written.
+- **Explicit impossible arms** — SHIPPED (v0.158.0, grammar v0.19.0).
+  `case Nil(): impossible` / `| Nil => impossible` is checked against the
+  pruning the checker already infers, then dropped; the generated Go is
+  byte-identical to the omitted-arm form. `std/vec`'s `First` and `Rest`
+  state their own impossibility.
+- **Guards** — SHIPPED (v0.158.0, grammar v0.20.0), both surfaces
+  simultaneously per the goml-design decision. Evaluated after the
+  pattern's bindings, false falls through; a guarded arm contributes
+  nothing to exhaustiveness until decider-checked guard coverage lands
+  with `with`/views.
+- **Literal patterns** — SHIPPED for scalar scrutinees (v0.158.0,
+  grammar v0.21.0), with coverage DECIDED: contiguous literals `0..k-1`
+  are total under a hypothesis proving scrutinee `< k` — the decider
+  work the deferral named, actually done. Literals inside constructor
+  arguments (the Maranget per-column extension) are the next milestone.
+- **Dot patterns** — re-sequenced into the Stage F tranche (spike,
+  2026-08-30): a dot pattern marks a position *forced* by unification,
+  and before F4 no value-to-index linkage exists for it to check. The
+  sigil decision travels with F4.
 - **`with` abstraction / views** — matching on an intermediate whose type
   refines the scrutinee's indices. This is Idris2's central matching tool
-  and has no Go+ spelling.
-- **Explicit impossible arms.** Pruning is inferred from index clash; an
-  author cannot say "this arm cannot occur" and have it checked.
+  and has no Go+ spelling yet.
 - **Dependent motives** for a match in expression position.
 
-Forcing consumers: `std/vec` and `std/smt`, both of which currently spell
-around the gap.
+Forcing consumers: `std/vec` (reauthored at v0.158.0) and `std/smt`,
+which still spells around the remaining gap.
 
 ### Stage D - totality, completed
 

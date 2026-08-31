@@ -19,6 +19,139 @@ The package-rewrite program and opt-in dependent-typing sequence are tracked in
 [GOALS.md](GOALS.md); its stable names are `/goals/01-decimal` through
 `/goals/10-participle`.
 
+## v0.158.0 — dependent matching opens, Option rides the railway, goml closes its surface lag
+
+### Impossible arms: pruning becomes statable (grammar v0.19.0)
+
+Since v0.7.0 a match whose scrutinee's index rules out a variant has
+simply not required that arm — correct, and silent. The arm can now be
+written, in both surfaces:
+
+```go
+func First[T any](0 n nat, v Vec[T, n+1]) T {
+	match v {
+	case Cons(h, t):
+		_ = t
+		return h
+	case Nil():
+		impossible
+	}
+}
+```
+
+The claim is checked against the same pruning the checker already
+performs — index clash under hypotheses, GADT incompatibility — then the
+arm is dropped, so the generated Go is byte-identical to the omitted-arm
+form: `impossible` is an assertion, never an instruction. An arm the
+checker cannot rule out is a compile error naming what could still
+match; wildcard, multi-pattern, and binder-carrying impossible arms are
+guided errors. In `.gp` the spelling costs no parser change (a bare
+`impossible` statement is never valid Go); in goml it is a reserved
+word: `| Nil => impossible`. `std/vec`'s `First` and `Rest` now state
+their own impossibility.
+
+### Guards (grammar v0.20.0)
+
+`case Cons(h, t) if h > limit:` and `| Cons h t if h > limit =>` arrive
+in both surfaces at once. A guard is evaluated after its pattern's
+bindings, in arm order, and false falls through to the next arm; the
+lowering rides the same goto chain nested patterns use. The coverage
+policy is deliberate: a guarded arm contributes **nothing** to
+exhaustiveness — the checker does not read your boolean — so a match
+that leans on guards still names its fallback, and a guarded arm's own
+reachability is judged by its pattern against the unguarded arms above
+it. Decider-checked guard coverage is scheduled Stage C work, not a
+missing case. Wildcard, multi-pattern, and impossible arms cannot be
+guarded.
+
+### Literal patterns, and matches whose coverage is decided (grammar v0.21.0)
+
+Literal patterns land where they can be checked: scalar scrutinees. A
+match may now scrutinize an integer, and coverage is the arithmetic
+decider's judgment — the same judgment that prunes an impossible
+variant:
+
+```go
+func Name(n nat, 0 p Lt[n, 3]) string {
+	match n {
+	case 0:
+		return "zero"
+	case 1:
+		return "one"
+	case 2:
+		return "two"
+	}
+}
+```
+
+No fallback arm: `Lt[n, 3]` in scope proves three literals total.
+Without such a hypothesis the match demands a binder or `_` arm; the
+literals must cover `0..k-1` contiguously, because the decider proves
+bounds rather than disjunctions; and the generated Go still polices the
+erasure boundary with a panic, because hypotheses are static and
+plain-Go callers are not. Guards compose with literals, and a duplicate
+literal is an unreachable-arm error. Literal patterns inside
+constructor arguments are the next milestone; until then the refusal
+spells the workaround: `case Cons(x, t) if x == 0:`.
+
+### std/option joins the railway
+
+`Result` has had track-aware pipelines since v0.4.0; `Option` now gets
+the single-track version of the same stage table:
+
+```go
+n := option.Some(16) |> half |> strconv.Itoa |> .UnwrapOr("none")
+```
+
+`T → Option[U]` binds, `T → (U, ok)` adapts through `option.Of`,
+`T → U` maps, and `None` bypasses everything. There is deliberately no
+`Tee` — an `Option` carries no error to observe on the side, so a tee
+stage is refused by name rather than silently skipped. Recognition is
+nominal, not structural: a type gets railway semantics by *being*
+`std/option.Option`, not by coincidentally naming a method `Bind`; the
+sound generalization is a per-type opt-in and waits for the post-kernel
+`Monad` decision.
+
+### goml closes its surface lag
+
+Everything the core could do that goml could not spell, plus the ML
+ergonomics a reader of OCaml, Idris, or Lean expects:
+
+- **Named `prop` declarations** —
+  `type InRange (i : Nat) (n : Nat) := prop { And (Le 0 i) (Lt i n) }`
+  lowers to the v0.156.0 form, so a goml signature states its
+  precondition by name.
+- **Interface declarations** —
+  `type Clock := interface { Now : Unit -> time.Time; io.Closer }`
+  lowers to a native Go interface and `@[delegate]` consumes it — a
+  package no longer needs a `.gp` file just to declare its contract.
+- **Conversions, `make`, record update** — `Int64 n`,
+  `make (Chan Int) 4`, and `{ s with Port = p }`, which copies then
+  assigns, its base expression evaluated once.
+- **Expected types** — a signature threads into its body, so
+  unannotated lambdas (`fun x => x * 2`) and list literals
+  (`[2, 3, 4]`) need no spelled types where the signature already says
+  them. A spaced `[` is a list, a glued one indexes — ML's rule.
+- **`where` helpers** — `where loop (k : Int) (acc : Int) : Int := …`
+  lowers to a closed package-private function beside its owner.
+- **`open result exposing (Ok, Err)`** — unqualified constructors in
+  expressions *and* patterns. Only capitalized names may be exposed,
+  goml binders are lowercase, so shadowing is impossible by
+  construction.
+- **User infix operators** — `infixl 5 <+> := Combine` declares
+  precedence and associativity; every use rewrites to an ordinary call
+  at parse time, so the generated `.gp` — and the differential gate
+  that keeps the two surfaces honest — never sees an operator.
+
+### The gap program
+
+These land under a recorded program: `spec/gap-program-design.md`
+sequences the road from here to the Idris2/Lean4 feature set —
+dependent matching (now open), totality widening, automation, codata,
+and the kernel that will make the "dependently typed" claim earnable.
+It is normative for ordering; `GOALS.md`'s dependent-typing roadmap
+stays normative for what each stage means.
+
 ## v0.157.0 — inferred indices beside a spelled proof, and no half-written artifacts
 
 ### A spelled proof no longer forces spelled indices
@@ -1405,6 +1538,7 @@ The spec is executable: the Godog/Cucumber feature suite under
 | v0.25.0 | Goals 01–08 dependent rewrite foundations: indexed decimal, collections, config, HTTP routes, expressions, JSON paths, validation, and schedules — shipped |
 | v0.27.0 | Goal 10 foundations: consistent inferred indices across all imported runtime arguments — shipped |
 | v0.26.0 | Goal 09 foundations: inferred preserved indices across linear calls and shared overflow-safe retry primitives — shipped |
+| v0.158.0 | Stage C opens: impossible arms, guards, decided literal coverage; Option railway; goml surface tranche (prop, interfaces, open, fixity, expected types) — shipped |
 | v0.157.0 | A spelled proof no longer forces spelled indices; an unresolved skeleton is never written — shipped
 | v0.156.0 | Named propositions (`prop`), completing Stage B — shipped |
 | v0.155.0 | `And[P, Q]` conjunction: the whole precondition in one proof parameter — shipped |
